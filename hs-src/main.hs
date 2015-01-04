@@ -4,11 +4,9 @@
 import Options.Applicative
 import qualified Data.ByteString as B
 import qualified Network.Connection as N
-import Data.Default
-import qualified Network.TLS as TLS
-import qualified Network.TLS.Extra as TLS
 import System.X509 (getSystemCertificateStore)
 import qualified SpdyPing.TLSConnect as SP
+import SpdyPing.Utils(strToInt)
 
 data CmdConfig = CmdConfig
   { host :: String
@@ -22,14 +20,14 @@ sample = CmdConfig
         <> short 's'
         <> metavar "HOST"
         <> help "Target for the Ping" )
-     <*> ((fromIntegral . toInteger . read)
+     <*> ( strToInt
      <$> strOption
          ( long "port"
         <> short 'p'
         <> help "Port to connect to" ))
 
 greet :: CmdConfig -> IO ()
-greet (CmdConfig h p) = do
+greet CmdConfig{ host=h, port=p} = do
     ctx <- N.initConnectionContext
     scs <- getSystemCertificateStore
     con <- N.connectTo ctx $ N.ConnectionParams 
@@ -37,7 +35,7 @@ greet (CmdConfig h p) = do
             N.connectionHostname = h
             , N.connectionPort = fromInteger $ fromIntegral p
             , N.connectionUseSecure = Just $ N.TLSSettings ( SP.makeTLSParamsForSpdy
-                ctx (h,p) scs)
+                 (h,p) scs)
             , N.connectionUseSocks = Nothing
         }
     N.connectionPut con (B.singleton 0xa)
