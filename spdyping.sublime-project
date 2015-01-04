@@ -1,0 +1,19 @@
+{
+	"folders":
+	[
+		{
+			"file_exclude_patterns":
+			[
+				
+				".*.swp"
+			],
+			"folder_exclude_patterns":
+			[
+				"dist",
+				".cabal-sandbox",
+			],
+			"follow_symlinks": true,
+			"path": "."
+		}
+	]
+}
