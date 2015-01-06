@@ -9,18 +9,20 @@ import           Pipes
 import qualified Pipes.Core             as PC
 import qualified Pipes.Prelude          as P
 
-import           SpdyPing.Framing.AnyFrame (AnyFrame, PerfunctoryClassif,
-                                            lengthFromPerfunct,
-                                            perfunctoryClassify, readFrame)
-import           SpdyPing.Framing.Frame
+import           SpdyPing.Framing.AnyFrame (AnyFrame
+	                                       -- , PerfunctoryClassif
+                                           , lengthFromPerfunct
+                                           ,  perfunctoryClassify
+                                           , readFrame)
+-- import           SpdyPing.Framing.Frame
 
 
 chunkProducer :: IO B.ByteString    -- Generator
       -> LB.ByteString              -- Left-overs
       -> PC.Producer LB.ByteString IO ()
 chunkProducer gen leftovers = do 
-	(product, new_leftovers) <- lift $ chunkProducerHelper leftovers gen Nothing
-	yield product
+	(bytes_of_frame, new_leftovers) <- lift $ chunkProducerHelper leftovers gen Nothing
+	yield bytes_of_frame
 	chunkProducer gen new_leftovers
 
 

@@ -36,7 +36,7 @@ instance Binary DataFrame where
 	  do
 	  	stream_id <- getWord32be
 	  	flags_word <- getWord8
-	  	payload_length <- getWord24be
+	  	_ <- getWord24be
 	  	bs_payload <- get
 	  	return $ DataFrame
 	  		(fromIntegral stream_id) 

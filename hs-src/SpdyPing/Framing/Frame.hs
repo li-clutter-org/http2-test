@@ -13,7 +13,8 @@ module SpdyPing.Framing.Frame(
     cfFlags,
     getControlFrame,
     bitsetToWord8,
-    word8ToBitset
+    word8ToBitset,
+    resetControlFrameSize
     ) where 
 
 import           Data.Binary         (Binary,  putWord8, get, put, Get)
@@ -67,7 +68,8 @@ data ControlFrameType =
 
 
 data ControlFrameFlags = 
-    Fin_CFF
+    Null_CFF
+    |Fin_CFF
     deriving (Show, Enum)
 
 
@@ -82,8 +84,14 @@ data ControlFrame valid_flags where
 
 deriving instance Show valid_flags => Show (ControlFrame valid_flags)
 
+
 instance Measurable (ControlFrame a) where 
     measure cf = 8 + (cfLength cf)
+
+
+resetControlFrameSize :: ControlFrame vf -> Int -> ControlFrame vf 
+resetControlFrameSize (ControlFrame a b _) new_size =
+    (ControlFrame a  b new_size) 
 
 
 cfType :: ControlFrame vf -> ControlFrameType 

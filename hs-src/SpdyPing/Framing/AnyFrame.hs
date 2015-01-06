@@ -44,7 +44,7 @@ readControlFrame bs =
     	Ping_CFT      ->  PingFrame_ACF $ extract bs 
     	RstStream_CFT ->  RstStreamFrame_ACF $ extract bs
     	Settings_CFT  ->  SettingsFrame_ACF $ extract bs
-    	otherwise     ->  Ignored_ACF bs
+    	_             ->  Ignored_ACF bs
   where 
   	control_frame = runGet getControlFrame bs 
   	frame_type = cfType control_frame
@@ -64,7 +64,6 @@ perfunctoryClassify :: LB.ByteString -> PerfunctoryClassif
 perfunctoryClassify bs = 
     runGet scanning bs 	 
   where
-  	bytes_read = LB.length bs
   	scanning = do 
   		first_byte <- G.getWord8
   		if first_byte >= 128 then 
@@ -83,9 +82,9 @@ perfunctoryClassify bs =
 
 
 readFrame :: LB.ByteString -> PerfunctoryClassif -> AnyFrame
-readFrame bs (ControlFrame_PC total_length) = 
+readFrame bs (ControlFrame_PC _) = 
   AnyControl_AF (readControlFrame bs) 
-readFrame bs (DataFrame_PC total_length) = 
+readFrame bs (DataFrame_PC _) = 
   DataFrame_AF  (runGet get bs)
 
 
