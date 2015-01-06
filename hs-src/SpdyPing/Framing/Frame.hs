@@ -11,7 +11,9 @@ module SpdyPing.Framing.Frame(
     cfType,
     cfLength,
     cfFlags,
-    getControlFrame
+    getControlFrame,
+    bitsetToWord8,
+    word8ToBitset
     ) where 
 
 import           Data.Binary         (Binary,  putWord8, get, put, Get)
@@ -23,6 +25,7 @@ import qualified Data.BitSet.Generic as GenericBitset
 import qualified Data.ByteString     as B
 -- import           Data.Monoid
 import           Data.Word
+import           SpdyPing.Utils(getWord24be, putWord24be)
 
 
 type FlagsBitSet = GenericBitset.BitSet Word8
@@ -98,30 +101,22 @@ instance Enum valid_flags => Binary (ControlFrame valid_flags) where
         do 
             let 
                 frame_length = cfLength cf 
-                high_stuff   = frame_length `shiftR` 24 
-                low_stuff    = frame_length `mod`  (1 `shiftL` 24)    
+                flags_word = bitsetToWord8 $ cfFlags cf    
             putWord16be $ controlSet 3 -- Set the version in the first two bytes
             putWord16be $ fromIntegral $ fromEnum $ cfType cf
-            putWord8 $ foldl (.|.) 0 $ map (fromIntegral . (shiftL (1::Word8)) . fromEnum) $ GenericBitset.toList $ cfFlags cf
-            putWord8 $ fromIntegral high_stuff
-            putWord16be $ fromIntegral low_stuff
+            putWord8 $ flags_word
+            putWord24be frame_length
 
     get  = do 
         getWord16be 
         type_int <- getWord16be
         flags_word <- getWord8
-        high_stuff <- getWord8 
-        low_stuff  <- getWord16be
+        frame_length <- getWord24be
         return $ let
-                    numbers = [0..7]
-                    frame_length = (fromIntegral low_stuff) + ( (fromIntegral high_stuff) `shiftL` 24 ) 
-                    sieves  = map (\ x -> 1 `shiftL` x) numbers 
-                    -- actual_flags  :: [valid_flags]
-                    actual_flags   = map (toEnum . fst) $ filter (\ (_, sieve) -> 
-                        (sieve .&. flags_word) /= 0 )  $ zip numbers sieves
+                    actual_flags   = word8ToBitset flags_word
                     in ControlFrame 
                         (toEnum $ fromIntegral type_int) 
-                        (GenericBitset.fromList actual_flags)
+                        actual_flags
                         frame_length
 
 
@@ -132,3 +127,25 @@ getControlFrame = get
 controlSet :: Word16 -> Word16
 controlSet = (32768 .|. ) 
 
+
+bitsetToWord8 :: Enum valid_flags => 
+    FlagsBitSet valid_flags -> Word8
+bitsetToWord8 flags_bitset = 
+    foldl (.|.) 0 shifted_bits
+  where
+    bitset_as_list = GenericBitset.toList $ flags_bitset
+    shifted_bits = map flag_to_word8 bitset_as_list
+    flag_to_word8 = (fromIntegral . (shiftL (1::Word8)) . fromEnum) 
+
+
+word8ToBitset :: Enum valid_flags =>
+    Word8 -> FlagsBitSet valid_flags
+word8ToBitset word8 = 
+    GenericBitset.fromList flags_list
+  where
+    -- Lazy evaluation avoids errors here for short enumerations
+    numbers = [0..7]
+    possible_flags = map toEnum numbers
+    sieves  = map (\ x -> 1 `shiftL` x) numbers
+    filter_present_pairs = filter (\ (_, sieve) -> (sieve .&. word8) /= 0 )
+    flags_list = map fst $ filter_present_pairs  $ zip possible_flags sieves

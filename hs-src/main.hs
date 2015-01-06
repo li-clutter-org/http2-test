@@ -57,10 +57,9 @@ greet CmdConfig{ host=h, port=p} = do
                  (h,p) scs)
             , N.connectionUseSocks = Nothing
         }
-    N.connectionPut con pingOne
-    sequence $ repeat $ do
-      r <- N.connectionGet con (measure $ pingFrame 0)
-      putStrLn $ show $ readFrame $ LB.fromChunks [r]
+    -- N.connectionPut con pingOne
+    showFrames (N.connectionGet con 4096)
+      -- putStrLn $ show $ readFrame $ LB.fromChunks [r]
     N.connectionClose con
     return ()
 
