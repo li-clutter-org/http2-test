@@ -34,6 +34,7 @@ data AnyControlFrame =
 	PingFrame_ACF PingFrame
 	|RstStreamFrame_ACF RstStreamFrame
 	|SettingsFrame_ACF SettingsFrame
+	|Ignored_ACF LB.ByteString
 	deriving Show
 
 
@@ -43,6 +44,7 @@ readControlFrame bs =
     	Ping_CFT      ->  PingFrame_ACF $ extract bs 
     	RstStream_CFT ->  RstStreamFrame_ACF $ extract bs
     	Settings_CFT  ->  SettingsFrame_ACF $ extract bs
+    	otherwise     ->  Ignored_ACF bs
   where 
   	control_frame = runGet getControlFrame bs 
   	frame_type = cfType control_frame

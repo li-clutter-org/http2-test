@@ -57,7 +57,7 @@ greet CmdConfig{ host=h, port=p} = do
                  (h,p) scs)
             , N.connectionUseSocks = Nothing
         }
-    -- N.connectionPut con pingOne
+    N.connectionPut con pingOne
     showFrames (N.connectionGet con 4096)
       -- putStrLn $ show $ readFrame $ LB.fromChunks [r]
     N.connectionClose con
