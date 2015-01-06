@@ -1,12 +1,21 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-import Options.Applicative
-import qualified Data.ByteString as B
-import qualified Network.Connection as N
-import System.X509 (getSystemCertificateStore)
+import qualified Data.ByteString     as B
+import qualified Data.ByteString.Lazy as LB
+import Data.Binary.Put(runPut)
+-- import Data.Binary.Get(runGet)
+import Data.Binary(put)
+import qualified Network.Connection  as N
+import           Options.Applicative
 import qualified SpdyPing.TLSConnect as SP
-import SpdyPing.Utils(strToInt)
+import           SpdyPing.Utils      (strToInt)
+import           SpdyPing.Framing.Ping
+import           SpdyPing.Framing.Frame(measure)
+import           SpdyPing.Framing.AnyFrame
+import           System.X509         (getSystemCertificateStore)
+import           SpdyPing.MainLoop 
+
 
 data CmdConfig = CmdConfig
   { host :: String
@@ -26,6 +35,16 @@ sample = CmdConfig
         <> short 'p'
         <> help "Port to connect to" ))
 
+pingOne :: B.ByteString
+pingOne = B.concat . LB.toChunks $ runPut $ put $ pingFrame 5
+
+
+-- withLengthRead :: (IO B.ByteString) 
+--                   -> (LB.ByteString -> Maybe Int)
+--                   -> IO LB.ByteString
+-- withLengthRead retriever lengthSearch 
+
+
 greet :: CmdConfig -> IO ()
 greet CmdConfig{ host=h, port=p} = do
     ctx <- N.initConnectionContext
@@ -38,9 +57,10 @@ greet CmdConfig{ host=h, port=p} = do
                  (h,p) scs)
             , N.connectionUseSocks = Nothing
         }
-    N.connectionPut con (B.singleton 0xa)
-    r <- N.connectionGet con 1
-    putStrLn $ show r
+    N.connectionPut con pingOne
+    sequence $ repeat $ do
+      r <- N.connectionGet con (measure $ pingFrame 0)
+      putStrLn $ show $ readFrame $ LB.fromChunks [r]
     N.connectionClose con
     return ()
 

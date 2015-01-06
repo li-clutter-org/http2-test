@@ -17,7 +17,7 @@ import           Control.Monad (forM_)
 import qualified Network.TLS                as TLS
 import qualified Network.TLS.Extra          as TLS
 
-
+import SpdyPing.Constants
 
 
 -- | Create a final TLS 'ClientParams' according to the destination and the
@@ -36,11 +36,6 @@ makeTLSParamsForSpdy cid scs  =
         }
   where  portString = BC.pack $ show $ snd cid
 
-whichSPDY :: ByteString
-whichSPDY = "spdy/3.1"
-
-whichHTTP :: ByteString 
-whichHTTP = "http/1.1"
 
 selectSPDY :: [ByteString] -> IO ByteString
 selectSPDY protocols = do
