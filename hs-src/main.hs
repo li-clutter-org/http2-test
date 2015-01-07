@@ -57,8 +57,7 @@ greet CmdConfig{ host=h, port=p} = do
                  (h,p) scs)
             , N.connectionUseSocks = Nothing
         }
-    N.connectionPut con pingOne
-    showFrames (N.connectionGet con 4096)
+    framesTranslator1_Program (N.connectionGet con 4096) (N.connectionPut con)
       -- putStrLn $ show $ readFrame $ LB.fromChunks [r]
     N.connectionClose con
     return ()
@@ -70,5 +69,5 @@ opts :: ParserInfo CmdConfig
 opts = info (sample <**> helper)
   ( fullDesc
  <> progDesc "Ping a SPDY host"
- <> header "hello - a test for optparse-applicative" )
+ <> header "Let's learn everything there is to learn about that host..." )
 

@@ -6,7 +6,8 @@ module SpdyPing.Framing.AnyFrame(
 	,PerfunctoryClassif
 	,readFrame
 	,lengthFromPerfunct
-	,AnyFrame
+	,AnyFrame(..)
+	,writeFrame
 	) where 
 
 import           SpdyPing.Framing.Frame
@@ -16,10 +17,10 @@ import           SpdyPing.Framing.Settings
 import           SpdyPing.Framing.DataFrame
 import           SpdyPing.Utils( getWord24be )
 
-import           Data.Binary            (Binary,  get)
+import           Data.Binary            (Binary,  get, put)
 import           Data.Binary.Get        (runGet)
 import qualified Data.Binary.Get as G
--- import           Data.Binary.Put        (runPut)
+import           Data.Binary.Put        (Put, runPut)
 -- import qualified Data.ByteString        as B
 import qualified Data.ByteString.Lazy   as LB
 
@@ -87,6 +88,20 @@ readFrame bs (ControlFrame_PC _) =
 readFrame bs (DataFrame_PC _) = 
   DataFrame_AF  (runGet get bs)
 
+
+writeFrame :: AnyFrame -> Put  
+writeFrame (AnyControl_AF acf) = writeControlFrame acf 
+writeFrame (DataFrame_AF  acf) = writeDataFrame acf 
+
+
+writeControlFrame :: AnyControlFrame -> Put 
+writeControlFrame (PingFrame_ACF a) = put a
+writeControlFrame (RstStreamFrame_ACF a) = put a
+writeControlFrame (SettingsFrame_ACF a) = put a
+
+
+writeDataFrame :: DataFrame -> Put 
+writeDataFrame df = put df
 
 
 extract :: Binary a => LB.ByteString -> a 
