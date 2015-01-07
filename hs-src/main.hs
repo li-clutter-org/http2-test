@@ -1,18 +1,12 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-import qualified Data.ByteString     as B
-import qualified Data.ByteString.Lazy as LB
-import Data.Binary.Put(runPut)
--- import Data.Binary.Get(runGet)
-import Data.Binary(put)
+
 import qualified Network.Connection  as N
 import           Options.Applicative
 import qualified SpdyPing.TLSConnect as SP
 import           SpdyPing.Utils      (strToInt)
-import           SpdyPing.Framing.Ping
-import           SpdyPing.Framing.Frame(measure)
-import           SpdyPing.Framing.AnyFrame
+
 import           System.X509         (getSystemCertificateStore)
 import           SpdyPing.MainLoop 
 
@@ -34,15 +28,6 @@ sample = CmdConfig
          ( long "port"
         <> short 'p'
         <> help "Port to connect to" ))
-
-pingOne :: B.ByteString
-pingOne = B.concat . LB.toChunks $ runPut $ put $ pingFrame 5
-
-
--- withLengthRead :: (IO B.ByteString) 
---                   -> (LB.ByteString -> Maybe Int)
---                   -> IO LB.ByteString
--- withLengthRead retriever lengthSearch 
 
 
 greet :: CmdConfig -> IO ()

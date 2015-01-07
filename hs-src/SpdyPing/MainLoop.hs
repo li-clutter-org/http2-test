@@ -1,14 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 module SpdyPing.MainLoop (showFrames, framesTranslator1_Program) where 
 
-import           Control.Monad          (unless)
-import           Data.Binary.Get        (runGet)
+-- import           Control.Monad          (unless)
+-- import           Data.Binary.Get        (runGet)
 import           Data.Binary.Put        (runPut)
 import qualified Data.ByteString        as B
 import qualified Data.ByteString.Lazy   as LB
 import           Pipes
 import qualified Pipes.Core             as PC
-import qualified Pipes.Prelude          as P
+-- import qualified Pipes.Prelude          as P
 import qualified System.Clock as        SC
 import Text.Printf(printf)
 
@@ -123,11 +123,10 @@ frameTranslator1 =
     lift $ putStrLn $ show f2
     t3 <- lift $ getTimeDiff ts0
     lift $ printf "t3: %0.4f -- \n" t3
-    f2 <- await
-    lift $ putStrLn $ show f2
+    f3 <- await
+    lift $ putStrLn $ show f3
     t4 <- lift $ getTimeDiff ts0
     lift $ printf "t4: %0.4f -- \n" t4
-
 
 
 frameTranslator1_Pipe :: IO B.ByteString  -> (B.ByteString -> IO () ) -> PC.Effect IO ()

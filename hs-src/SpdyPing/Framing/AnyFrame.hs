@@ -17,10 +17,10 @@ import           SpdyPing.Framing.Settings
 import           SpdyPing.Framing.DataFrame
 import           SpdyPing.Utils( getWord24be )
 
-import           Data.Binary            (Binary,  get, put)
+import           Data.Binary            (Binary,  get, put, Put)
 import           Data.Binary.Get        (runGet)
 import qualified Data.Binary.Get as G
-import           Data.Binary.Put        (Put, runPut)
+-- import           Data.Binary.Put        (Put)
 -- import qualified Data.ByteString        as B
 import qualified Data.ByteString.Lazy   as LB
 
