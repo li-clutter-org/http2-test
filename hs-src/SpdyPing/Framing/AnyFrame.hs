@@ -15,6 +15,7 @@ import           SpdyPing.Framing.Ping
 import           SpdyPing.Framing.RstStream
 import           SpdyPing.Framing.Settings
 import           SpdyPing.Framing.DataFrame
+import           SpdyPing.Framing.WindowUpdate
 import           SpdyPing.Utils( getWord24be )
 
 import           Data.Binary            (Binary,  get, put, Put)
@@ -35,6 +36,7 @@ data AnyControlFrame =
 	PingFrame_ACF PingFrame
 	|RstStreamFrame_ACF RstStreamFrame
 	|SettingsFrame_ACF SettingsFrame
+	|WindowUpdateFrame_ACF WindowUpdateFrame
 	|Ignored_ACF LB.ByteString
 	deriving Show
 
@@ -42,9 +44,10 @@ data AnyControlFrame =
 readControlFrame :: LB.ByteString -> AnyControlFrame
 readControlFrame bs = 
     case frame_type of 
-    	Ping_CFT      ->  PingFrame_ACF $ extract bs 
-    	RstStream_CFT ->  RstStreamFrame_ACF $ extract bs
-    	Settings_CFT  ->  SettingsFrame_ACF $ extract bs
+    	Ping_CFT         ->  PingFrame_ACF $ extract bs 
+    	RstStream_CFT    ->  RstStreamFrame_ACF $ extract bs
+    	Settings_CFT     ->  SettingsFrame_ACF $ extract bs
+    	WindowUpdate_CFT ->  WindowUpdateFrame_ACF $ extract bs
     	_             ->  Ignored_ACF bs
   where 
   	control_frame = runGet getControlFrame bs 
@@ -98,6 +101,7 @@ writeControlFrame :: AnyControlFrame -> Put
 writeControlFrame (PingFrame_ACF a) = put a
 writeControlFrame (RstStreamFrame_ACF a) = put a
 writeControlFrame (SettingsFrame_ACF a) = put a
+writeControlFrame (WindowUpdateFrame_ACF a) = put a
 
 
 writeDataFrame :: DataFrame -> Put 

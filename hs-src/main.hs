@@ -8,13 +8,14 @@ import qualified SpdyPing.TLSConnect as SP
 import           SpdyPing.Utils      (strToInt)
 
 import           System.X509         (getSystemCertificateStore)
-import           SpdyPing.MainLoop 
+import           SpdyPing.Subprograms.BasicPing(basicPingProgram)
 
 
 data CmdConfig = CmdConfig
   { host :: String
   , port :: Int }
   deriving Show
+
 
 sample :: Parser CmdConfig
 sample = CmdConfig
@@ -42,13 +43,15 @@ greet CmdConfig{ host=h, port=p} = do
                  (h,p) scs)
             , N.connectionUseSocks = Nothing
         }
-    framesTranslator1_Program (N.connectionGet con 4096) (N.connectionPut con)
+    basicPingProgram (N.connectionGet con 4096) (N.connectionPut con)
       -- putStrLn $ show $ readFrame $ LB.fromChunks [r]
     N.connectionClose con
     return ()
 
+
 main :: IO ()
 main = execParser opts >>= greet
+
 
 opts :: ParserInfo CmdConfig
 opts = info (sample <**> helper)
