@@ -9,6 +9,7 @@ import           SpdyPing.Utils      (strToInt)
 
 import           System.X509         (getSystemCertificateStore)
 import           SpdyPing.Subprograms.BasicPing(basicPingProgram)
+import           SpdyPing.Subprograms.BasicConnect(basicConnectProgram)
 
 
 data CmdConfig = CmdConfig
@@ -33,6 +34,7 @@ sample = CmdConfig
 
 greet :: CmdConfig -> IO ()
 greet CmdConfig{ host=h, port=p} = do
+    basicConnectProgram h p 
     ctx <- N.initConnectionContext
     scs <- getSystemCertificateStore
     con <- N.connectTo ctx $ N.ConnectionParams 
