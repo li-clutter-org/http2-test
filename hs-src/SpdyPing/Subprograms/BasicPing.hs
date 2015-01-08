@@ -1,52 +1,81 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module SpdyPing.Subprograms.BasicPing(
-	basicPingProgram
-	) where
+    basicPingProgram
+    ) where
 
 
-import Pipes
-import qualified Pipes.Core as PC
-import SpdyPing.Framing.AnyFrame
-import qualified System.Clock as SC
-import Text.Printf(printf)
-import SpdyPing.Framing.Ping
-import qualified Data.ByteString as B
-import SpdyPing.MainLoop
-import SpdyPing.Utils
+import qualified Data.ByteString           as B
+import           Pipes
+import qualified Pipes.Core                as PC
+import           SpdyPing.Framing.AnyFrame
+import           SpdyPing.Framing.Ping
+import           SpdyPing.MainLoop
+import           SpdyPing.Utils
+import qualified System.Clock              as SC
+import           Control.Concurrent(threadDelay, killThread)
+import qualified Pipes.Concurrent          as PC 
+import           Data.IORef
+import           GHC.Conc(STM)
 
 
--- The ping operation I have been building
-frameTranslator1 :: PC.Pipe AnyFrame AnyFrame IO ()
-frameTranslator1 = 
-  do 
-    -- Get the time 
-    ts0 <- lift $ SC.getTime SC.Monotonic
-    -- Get the first frame and print it
-    f1 <- await
-    -- Time it 
-    t1 <- lift $ getTimeDiff ts0
-    lift $ printf "t1: %0.4f -- \n" t1
-    lift $ putStrLn $ show f1 
-    -- Send a ping request
-    t2 <- lift $ getTimeDiff ts0
-    lift $ printf "t2: %0.4f -- \n" t2
-    yield $ AnyControl_AF $ PingFrame_ACF $ pingFrame 1
-    -- Get the second frame and print it 
-    f2 <- await
-    lift $ putStrLn $ show f2
-    t3 <- lift $ getTimeDiff ts0
-    lift $ printf "t3: %0.4f -- \n" t3
-    f3 <- await
-    lift $ putStrLn $ show f3
-    t4 <- lift $ getTimeDiff ts0
-    lift $ printf "t4: %0.4f -- \n" t4
+data Event = 
+      TimeGone_Ev 
+    | FrameReceived_Ev AnyFrame
+    deriving Show
 
 
-frameTranslator1_Pipe :: IO B.ByteString  -> (B.ByteString -> IO () ) -> PC.Effect IO ()
-frameTranslator1_Pipe gen pushToWire =  
-    (chunkProducer gen "") >-> inputToFrames >-> frameTranslator1 >-> framesToOutput >-> (outputConsumer pushToWire)
- 
+enoughWaited :: Producer Event IO ()
+enoughWaited = 
+  do
+    lift $ threadDelay 1000000  -- Wait 1 second
+    yield (TimeGone_Ev)
+
+
+framesProducer:: (IO B.ByteString ) -> PC.Producer AnyFrame IO ()
+framesProducer gen = ( (chunkProducer gen "") >-> inputToFrames )
+
+
+packetsEventProducer :: (IO B.ByteString ) -> PC.Producer Event IO ()
+packetsEventProducer gen = 
+    for (framesProducer gen) $ \x -> 
+      do
+        yield (FrameReceived_Ev x)
+
 
 basicPingProgram :: IO B.ByteString  -> (B.ByteString -> IO () ) -> IO ()
-basicPingProgram a b = runEffect (frameTranslator1_Pipe a b)
+basicPingProgram pullPacket pushPacket = 
+  do
+    (output, input, seal) <- PC.spawn' PC.Unbounded 
+    th1 <- PC.forkIO $ 
+      do 
+        runEffect $ (packetsEventProducer pullPacket) >-> PC.toOutput output
+    th2 <- PC.forkIO $
+      do 
+        runEffect $ enoughWaited >-> PC.toOutput output 
+    base_time     <- SC.getTime SC.Monotonic
+    base_time_Ref <- newIORef base_time
+    runEffect $ PC.fromInput input >-> (onEvent seal base_time_Ref) >-> framesToOutput >-> (outputConsumer pushPacket)
+    killThread th1
+    killThread th2
+
+
+onEvent :: STM () ->IORef SC.TimeSpec ->  PC.Pipe Event AnyFrame IO ()
+onEvent seal base_time  = 
+  do
+    ev <- await 
+    case ev of
+        TimeGone_Ev -> do
+            t <- lift $ SC.getTime SC.Monotonic
+            lift $ writeIORef base_time t
+            yield $ AnyControl_AF $ PingFrame_ACF $ pingFrame 1
+            onEvent seal base_time
+        (FrameReceived_Ev (AnyControl_AF (PingFrame_ACF _))) -> do
+            t <- lift $ readIORef base_time
+            lift $ reportTimedEvent t "Got ping back"
+            -- Don't recurse
+            lift $ PC.atomically seal 
+        (FrameReceived_Ev frame) -> do 
+            -- Just print and discard the frame...
+            lift $ putStrLn $ show frame 
+            onEvent seal base_time 
