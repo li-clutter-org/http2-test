@@ -20,8 +20,10 @@ following commands:
 
 * After the checkout:
 
-   $ cd spdy-ping-X.X.X/
-   $ cabal sandbox init
-   $ cabal install
+        $ cd spdy-ping-X.X.X/
+        $ cabal sandbox init
+        $ cabal install
+    
+That's it!
 
 
