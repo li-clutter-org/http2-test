@@ -13,10 +13,10 @@ name:                spdy-ping
 version:             0.1.0.0
 
 -- A short (one-line) description of the package.
--- synopsis:            
+synopsis: Use Spdy ping frames to do ping to spdy webservers.
 
 -- A longer description of the package.
--- description:         
+description:  Use Spdy ping frames to do ping to spdy webservers.
 
 -- URL for the project homepage or repository.
 homepage:            www.zunzun.se
@@ -43,7 +43,7 @@ build-type:          Simple
 
 -- Extra files to be distributed with the package, such as examples or a 
 -- README.
--- extra-source-files:  
+extra-source-files:  README.md
 
 -- Constraint on the version of Cabal needed to build this package.
 cabal-version:       >=1.10
@@ -54,7 +54,11 @@ executable spdy-ping
   main-is: main.hs            
   
   -- Modules included in this executable, other than Main.
-  -- other-modules:       
+  other-modules: SpdyPing.Constants  SpdyPing.MainLoop  SpdyPing.Subprograms.BasicConnect SpdyPing.Subprograms.BasicPing 
+                 SpdyPing.TLSConnect  SpdyPing.Utils 
+                 SpdyPing.Framing.AnyFrame   SpdyPing.Framing.Frame  SpdyPing.Framing.RstStream  SpdyPing.Framing.WindowUpdate
+                 SpdyPing.Framing.DataFrame  SpdyPing.Framing.Ping   SpdyPing.Framing.Settings
+
   
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:    
