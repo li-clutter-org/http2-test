@@ -54,7 +54,7 @@ executable spdy-ping
   main-is: main.hs            
   
   -- Modules included in this executable, other than Main.
-  other-modules: SpdyPing.Constants  SpdyPing.MainLoop  SpdyPing.Subprograms.BasicConnect SpdyPing.Subprograms.BasicPing 
+  other-modules: SpdyPing.Constants  SpdyPing.MainLoop.Pipes  SpdyPing.Subprograms.BasicConnect SpdyPing.Subprograms.BasicPing 
                  SpdyPing.TLSConnect  SpdyPing.Utils 
                  SpdyPing.Framing.AnyFrame   SpdyPing.Framing.Frame  SpdyPing.Framing.RstStream  SpdyPing.Framing.WindowUpdate
                  SpdyPing.Framing.DataFrame  SpdyPing.Framing.Ping   SpdyPing.Framing.Settings

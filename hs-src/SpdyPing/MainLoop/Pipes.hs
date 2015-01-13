@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module SpdyPing.MainLoop (
+module SpdyPing.MainLoop.Pipes (
     showFrames
     ,inputToFrames
     ,framesToOutput

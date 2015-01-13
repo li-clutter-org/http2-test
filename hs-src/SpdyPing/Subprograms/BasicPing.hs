@@ -10,7 +10,7 @@ import           Pipes
 import qualified Pipes.Core                as PC
 import           SpdyPing.Framing.AnyFrame
 import           SpdyPing.Framing.Ping
-import           SpdyPing.MainLoop
+import           SpdyPing.MainLoop.Pipes
 import           SpdyPing.Utils
 import qualified System.Clock              as SC
 import           Control.Concurrent(threadDelay, killThread)
