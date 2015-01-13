@@ -6,17 +6,16 @@ module SpdyPing.MainLoop.Pipes (
     ,outputConsumer
     ,chunkProducer) where 
 
--- import           Control.Monad          (unless)
--- import           Data.Binary.Get        (runGet)
+
 import           Data.Binary.Put        (runPut)
 import qualified Data.ByteString        as B
 import qualified Data.ByteString.Lazy   as LB
 import           Pipes
 import qualified Pipes.Core             as PC
--- import qualified Pipes.Prelude          as P
+import           SpdyPing.MainLoop.Common(chunkProducerHelper)
+
 
 import           SpdyPing.Framing.AnyFrame (AnyFrame(..)
-                                           , lengthFromPerfunct
                                            , perfunctoryClassify
                                            , readFrame
                                            , writeFrame)
@@ -31,32 +30,6 @@ chunkProducer gen leftovers = do
     chunkProducer gen new_leftovers
 
 
-chunkProducerHelper :: LB.ByteString 
-                       -> IO B.ByteString 
-                       -> Maybe Int -- Length to read
-                       -> IO (LB.ByteString, LB.ByteString)  -- To yield, left-overs...
-chunkProducerHelper pieces gen Nothing = 
-    let 
-        lazy = pieces 
-        length_lazy = LB.length lazy
-        perfunctory_classif = perfunctoryClassify lazy
-        total_length = lengthFromPerfunct perfunctory_classif
-    in if length_lazy >= 8 then
-          chunkProducerHelper pieces gen (Just total_length)
-       else do 
-          new_piece <- gen 
-          new_lazy <- return $ LB.append lazy (LB.fromChunks [new_piece]) 
-          chunkProducerHelper new_lazy gen Nothing 
-chunkProducerHelper lazy gen j@(Just length_to_read) =
-    let 
-        length_lazy = LB.length lazy
-        l64 = fromIntegral length_to_read
-    in if length_lazy >= l64 then
-            return $ LB.splitAt l64 lazy
-        else do 
-            new_piece <- gen 
-            new_lazy <- return $ LB.append lazy (LB.fromChunks [new_piece]) 
-            chunkProducerHelper new_lazy gen j
 
 
 -- Now let's define a pipe that converts ByteString representations of frames 
