@@ -1,13 +1,28 @@
-module Rede.MainLoop.Conduit where 
+module Rede.MainLoop.Conduit (
+  FrameConduit
+  ,ErrorCondition(..)
+  ,InputEvent(..)
+  ,OutputDecision(..)
+  ,runSimpleServer
+  ) where 
 
 
-import Rede.SpdyProtocol.Framing.AnyFrame(AnyFrame(..))
-import qualified Data.Conduit as C
-import qualified Data.Conduit.List as CL
-import           Data.Binary.Put        (runPut)
-import qualified Data.ByteString        as B
-import qualified Data.ByteString.Lazy   as LB
-import           Rede.MainLoop.Common (chunkProducerHelper)
+import Rede.SpdyProtocol.Framing.AnyFrame (AnyFrame(..))
+import qualified Data.Conduit                 as C
+import qualified Data.Conduit.List            as CL
+import           Data.Binary.Put          (runPut)
+import qualified Data.ByteString              as B
+import qualified Data.ByteString.Lazy         as LB
+import           Rede.MainLoop.Common     (chunkProducerHelper)
+import           Control.Concurrent
+import qualified Control.Exception            as E
+import qualified Data.ByteString.Lazy         as BL
+import qualified Network.TLS                  as T
+import           Rede.SimpleHTTP1Response (exampleHTTP11Response)
+import           System.Exit
+import           System.Posix.Signals
+
+import           Rede.MainLoop.PushPullType
 
 
 data ErrorCondition = 
@@ -24,16 +39,18 @@ data OutputDecision =
 	| Error_IE ErrorCondition
 
 
-type FrameConduit = C.Conduit InputEvent IO OutputDecision
+type FrameConduit m = C.Conduit InputEvent m OutputDecision
 
 
-chunkProducer :: IO B.ByteString    -- Generator
+
+chunkProducer :: Monad m => m B.ByteString    -- Generator
       -> LB.ByteString              -- Left-overs
       -> C.Source IO LB.ByteString
 chunkProducer gen leftovers = do 
     (bytes_of_frame, new_leftovers) <- lift $ chunkProducerHelper leftovers gen Nothing
     yield bytes_of_frame
     chunkProducer gen new_leftovers
+
 
 -- Now let's define a pipe that converts ByteString representations of frames 
 -- to AnyFrame
@@ -49,14 +66,22 @@ framesToOutput = CL.map $ \ the_frame ->
     runPut $ writeFrame the_frame
   
 
-outputConsumer :: (B.ByteString -> IO () ) -> C.Sink LB.ByteString IO ()
+outputConsumer :: Monad m => (B.ByteString -> m () ) -> C.Sink LB.ByteString m ()
 outputConsumer pushToWire = CL.mapM_ (pushToWire . LB.toStrict)
 
 
-runSimpleServer :: String                -- Certificate path 
-                   ->  String            -- Network interface
-                   ->  Int               -- Port 
-                   ->  FrameConduit      -- Frames logic callback 
-                   ->  IO ()             -- Doesn't get simpler than this
-runSimpleServer  certificate_path network_interface port frame_conduit = do 
+produceSessionManager :: MonadIO m => (m a -> IO a) ->  PushAction -> PullAction -> IO () 
+produceSessionManager session_producer push pull = 
+    session_producer (
+      (chunkProducer (liftIO pull)) $= inputToFrames =$= _middlepiece =$= framesToOutput =$ (outputConsumer (liftIO push))
+    )
+
+
+
+
+
+
+          
+
+
 	

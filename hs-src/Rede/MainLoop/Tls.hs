@@ -4,35 +4,30 @@ module Rede.MainLoop.Tls(readyTCPSocket
     , tcpServe
     , enchantSocket
     , buildContextParams
+    , tlsServe
+    , tlsServeProtocols 
     ) where 
 
 
-
--- import           Control.Concurrent
+import           Network.Socket 
+import           Control.Concurrent
 import qualified Crypto.PubKey.DH     as DH
--- import           Data.ASN1.Types      (ASN1 (OctetString), fromASN1)
 import qualified Data.ByteString      as B
--- import qualified Data.ByteString.Lazy as LB
 import           Data.Default         (def)
 import           Data.X509            (decodeSignedCertificate)
 import qualified Network.TLS          as T
 import           System.FilePath      ((</>))
 import           Crypto.Random
 import           Network.TLS.Extra.Cipher (ciphersuite_strong)
--- import           Control.Exception
--- import qualified System.FilePath      as FP
--- import           System.IO
-
+import           System.Exit
+import           System.Posix.Signals
+import qualified Control.Exception    as E
+import           Data.ByteString.Char8(pack, unpack)
+import           Data.List   (find)
 
 
 import Rede.MainLoop.ConfigHelp(configDir)
--- import qualified Control.Exception as E
-
-
-import Network.Socket 
-
-
--- type DHParams   = DH.Params
+import Rede.MainLoop.PushPullType
 
 
 readyTCPSocket :: String -> Int ->  IO Socket 
@@ -56,10 +51,10 @@ tcpServe  to_bind_socket action =
         listen to_bind_socket 10000
         accept_loop to_bind_socket 
   where 
-    accept_loop b = do 
-        (new_socket, _ ) <- accept b
+    accept_loop bind_socket = do 
+        (new_socket, _ ) <- accept bind_socket
         action new_socket
-        accept_loop b 
+        accept_loop bind_socket 
 
 
 buildContextParams :: IO T.ServerParams 
@@ -84,6 +79,35 @@ buildContextParams = do
             T.sharedCredentials = T.Credentials [ credential]
         }
         --,T.serverHooks = _sh
+        ,T.serverSupported = serverSupported
+        }
+
+
+buildNPNContextParams            :: [String] -> IO T.ServerParams 
+buildNPNContextParams protocols  = do 
+    config_dir <- configDir
+
+    -- CA certificates
+    cacert_fs_path <- return $ config_dir </> "ca/cacert.der" 
+    cacert_str <- B.readFile cacert_fs_path  
+    (Right casigned_certificate) <- return $ decodeSignedCertificate cacert_str 
+
+    -- My credential
+    (Right credential) <- T.credentialLoadX509 
+        (config_dir </> "servercert.pem")
+        (config_dir </> "privkey.pem")
+
+    return $ def {
+        T.serverCACertificates = [ casigned_certificate ]
+        ,T.serverWantClientCert = False 
+        ,T.serverDHEParams = Just dhParams 
+        ,T.serverShared = def {
+            T.sharedCredentials = T.Credentials [ credential]
+        }
+        ,T.serverHooks = def {
+            T.onSuggestNextProtocols = 
+                return $ Just $ map pack protocols
+        }
         ,T.serverSupported = serverSupported
         }
 
@@ -118,3 +142,48 @@ rngProduce = do
     rng_pool <- createEntropyPool 
     return $ cprgCreate rng_pool
 
+
+-- Serves always the same protocol in the session
+tlsServe :: (PushAction -> PullAction -> IO () ) -> String -> Int -> IO ()
+tlsServe session_attendant interface_name interface_port = do 
+    tid <- myThreadId
+    installHandler keyboardSignal (Catch (do 
+      E.throwTo tid ExitSuccess
+      )) Nothing
+    listening_socket <- readyTCPSocket interface_name interface_port
+    server_params <- buildContextParams
+    tcpServe listening_socket $ \ s -> do 
+      ctx <- enchantSocket s server_params
+      -- Time to say something
+      rd <- return $ (T.recvData ctx) 
+      sd <- return $ (T.sendData ctx)
+      session_attendant sd rd
+
+
+tlsServeProtocols :: [ (String, Attendant) ] -> String -> Int -> IO ()
+tlsServeProtocols attendants interface_name interface_port = do  
+    tid <- myThreadId
+    installHandler keyboardSignal (Catch (do 
+      E.throwTo tid ExitSuccess
+      )) Nothing
+    listening_socket <- readyTCPSocket interface_name interface_port
+    server_params <- buildNPNContextParams $ map fst attendants
+    tcpServe listening_socket $ \ s -> do 
+        
+        ctx <- enchantSocket s server_params
+        
+        selected_protocol_maybe <- T.getNegotiatedProtocol ctx
+        
+        session_attendant <- return $ case selected_protocol_maybe of 
+            Just next_protocol_bs -> let 
+                next_protocol = unpack next_protocol_bs
+                Just (_, attendant) = find 
+                     ( \ (p,_) -> p == next_protocol) 
+                     attendants
+              in attendant 
+            Nothing  -> (snd . head) attendants
+      
+        rd <- return $ (T.recvData ctx) 
+        sd <- return $ (T.sendData ctx)
+        
+        session_attendant sd rd
