@@ -1,5 +1,5 @@
 {-# LANGUAGE DefaultSignatures, DeriveGeneric, TypeOperators, FlexibleContexts #-}
-module SpdyPing.Framing.AnyFrame(
+module Rede.SpdyProtocol.Framing.AnyFrame(
   AnyControlFrame(..)
   ,readControlFrame
   ,perfunctoryClassify
@@ -10,17 +10,17 @@ module SpdyPing.Framing.AnyFrame(
   ,writeFrame
   ) where 
 
-import           SpdyPing.Framing.Frame
-import           SpdyPing.Framing.Ping
-import           SpdyPing.Framing.RstStream
-import           SpdyPing.Framing.Settings
-import           SpdyPing.Framing.DataFrame
-import           SpdyPing.Framing.WindowUpdate
-import           SpdyPing.Framing.SynReply
-import           SpdyPing.Framing.SynStream
-import           SpdyPing.Framing.Headers
-import           SpdyPing.Framing.GoAway
-import           SpdyPing.Utils( getWord24be )
+import           Rede.SpdyProtocol.Framing.Frame
+import           Rede.SpdyProtocol.Framing.Ping
+import           Rede.SpdyProtocol.Framing.RstStream
+import           Rede.SpdyProtocol.Framing.Settings
+import           Rede.SpdyProtocol.Framing.DataFrame
+import           Rede.SpdyProtocol.Framing.WindowUpdate
+import           Rede.SpdyProtocol.Framing.SynReply
+import           Rede.SpdyProtocol.Framing.SynStream
+import           Rede.SpdyProtocol.Framing.Headers
+import           Rede.SpdyProtocol.Framing.GoAway
+import           Rede.Utils( getWord24be )
 -- import qualified GHC.Generics as E
 
 import           Data.Binary            (Binary,  get, put, Put)

@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 
-module SpdyPing.SimpleHTTP1Response(exampleHTTP11Response) where
+module Rede.SimpleHTTP1Response(exampleHTTP11Response) where
 
 import qualified Data.ByteString as B 
 

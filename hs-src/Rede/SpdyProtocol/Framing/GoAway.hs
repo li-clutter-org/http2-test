@@ -1,5 +1,5 @@
 
-module SpdyPing.Framing.GoAway (
+module Rede.SpdyProtocol.Framing.GoAway (
 	GoAwayValidFlags
 	,GoAwayFrame
 	) where 
@@ -8,7 +8,7 @@ module SpdyPing.Framing.GoAway (
 
 import           Data.Word
 import           Data.Binary                    (Binary, Get, get, put)
-import           SpdyPing.Framing.Frame
+import           Rede.SpdyProtocol.Framing.Frame
 import           Data.Binary.Get                (getWord32be)
 import           Data.Binary.Put                (putWord32be)
 

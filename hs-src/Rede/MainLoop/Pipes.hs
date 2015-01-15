@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module SpdyPing.MainLoop.Pipes (
+module Rede.MainLoop.Pipes (
     showFrames
     ,inputToFrames
     ,framesToOutput
@@ -12,10 +12,10 @@ import qualified Data.ByteString        as B
 import qualified Data.ByteString.Lazy   as LB
 import           Pipes
 import qualified Pipes.Core             as PC
-import           SpdyPing.MainLoop.Common(chunkProducerHelper)
+import           Rede.MainLoop.Common(chunkProducerHelper)
 
 
-import           SpdyPing.Framing.AnyFrame (AnyFrame(..)
+import           Rede.SpdyProtocol.Framing.AnyFrame (AnyFrame(..)
                                            , perfunctoryClassify
                                            , readFrame
                                            , writeFrame)

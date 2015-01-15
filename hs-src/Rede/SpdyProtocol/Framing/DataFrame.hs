@@ -1,12 +1,12 @@
-module SpdyPing.Framing.DataFrame where 
+module Rede.SpdyProtocol.Framing.DataFrame where 
 
 import           Data.Bits
 -- import Data.Enum
 import           Data.Binary            (Binary, get, getWord8, put, putWord8)
 import           Data.Binary.Get        (getWord32be)
 import           Data.Binary.Put        (putWord32be)
-import           SpdyPing.Framing.Frame (FlagsBitSet, bitsetToWord8, word8ToBitset)
-import           SpdyPing.Utils         (getWord24be, putWord24be)
+import           Rede.SpdyProtocol.Framing.Frame (FlagsBitSet, bitsetToWord8, word8ToBitset)
+import           Rede.Utils         (getWord24be, putWord24be)
 import qualified Data.ByteString  as B 
 
 

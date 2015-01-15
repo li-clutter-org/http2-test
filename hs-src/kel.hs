@@ -1,7 +1,7 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-import SpdyPing.MainLoop.Tls(
+import Rede.MainLoop.Tls(
     readyTCPSocket 
     ,tcpServe
     ,enchantSocket
@@ -11,7 +11,7 @@ import           Control.Concurrent
 import qualified Control.Exception            as E
 import qualified Data.ByteString.Lazy         as BL
 import qualified Network.TLS                  as T
-import           SpdyPing.SimpleHTTP1Response (exampleHTTP11Response)
+import           Rede.SimpleHTTP1Response (exampleHTTP11Response)
 import           System.Exit
 import           System.Posix.Signals
 

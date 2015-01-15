@@ -1,6 +1,6 @@
 -- TLS is small hell to setup, let's do it here ...
 
-module SpdyPing.MainLoop.Tls(readyTCPSocket
+module Rede.MainLoop.Tls(readyTCPSocket
     , tcpServe
     , enchantSocket
     , buildContextParams
@@ -25,7 +25,7 @@ import           Network.TLS.Extra.Cipher (ciphersuite_strong)
 
 
 
-import SpdyPing.MainLoop.ConfigHelp(configDir)
+import Rede.MainLoop.ConfigHelp(configDir)
 -- import qualified Control.Exception as E
 
 

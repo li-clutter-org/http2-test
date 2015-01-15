@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module SpdyPing.Constants(
+module Rede.Constants(
 	whichSPDY,
 	whichHTTP
 )  where

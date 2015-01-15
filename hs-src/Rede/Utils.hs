@@ -1,4 +1,4 @@
-module SpdyPing.Utils (
+module Rede.Utils (
     strToInt
     ,Word24
     ,word24ToInt

@@ -1,5 +1,5 @@
 
-module SpdyPing.Framing.WindowUpdate(
+module Rede.SpdyProtocol.Framing.WindowUpdate(
 	WindowUpdateFrame
 	) where 
 
@@ -7,7 +7,7 @@ module SpdyPing.Framing.WindowUpdate(
 import           Data.Binary            (Binary, get, put)
 import           Data.Binary.Get        (getWord32be)
 import           Data.Binary.Put        (putWord32be)
-import           SpdyPing.Framing.Frame
+import           Rede.SpdyProtocol.Framing.Frame
 
 
 data WindowSizeValidFlags = None_WSVF

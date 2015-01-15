@@ -1,8 +1,8 @@
-module SpdyPing.Subprograms.BasicConnect(basicConnectProgram) where 
+module Rede.Subprograms.BasicConnect(basicConnectProgram) where 
 
 
 import qualified  System.Clock as SC
-import SpdyPing.Utils
+import Rede.Utils
 import Network.Simple.TCP (connect)
 
 

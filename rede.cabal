@@ -2,7 +2,7 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 -- The name of the package.
-name:                spdy-ping
+name:                rede
 
 -- The package version.  See the Haskell package versioning policy (PVP) 
 -- for standards guiding when and how versions should be incremented.
@@ -13,10 +13,10 @@ name:                spdy-ping
 version:             0.1.0.0
 
 -- A short (one-line) description of the package.
-synopsis: Use Spdy ping frames to do ping to spdy webservers.
+synopsis: Spdy musings.
 
 -- A longer description of the package.
-description:  Use Spdy ping frames to do ping to spdy webservers.
+description:  Spdy musings.
 
 -- URL for the project homepage or repository.
 homepage:            www.zunzun.se
@@ -82,10 +82,19 @@ executable spdy-ping
   main-is: main.hs            
   
   -- Modules included in this executable, other than Main.
-  other-modules: SpdyPing.Constants  SpdyPing.MainLoop.Pipes  SpdyPing.Subprograms.BasicConnect SpdyPing.Subprograms.BasicPing 
-                 SpdyPing.TLSConnect  SpdyPing.Utils 
-                 SpdyPing.Framing.AnyFrame   SpdyPing.Framing.Frame  SpdyPing.Framing.RstStream  SpdyPing.Framing.WindowUpdate
-                 SpdyPing.Framing.DataFrame  SpdyPing.Framing.Ping   SpdyPing.Framing.Settings
+  other-modules:   Rede.Constants  
+                  ,Rede.MainLoop.Pipes  
+                  ,Rede.Subprograms.BasicConnect 
+                  ,Rede.Subprograms.BasicPing 
+                  ,Rede.TLSConnect  
+                  ,Rede.Utils 
+                  ,Rede.SpdyProtocol.Framing.AnyFrame   
+                  ,Rede.SpdyProtocol.Framing.Frame  
+                  ,Rede.SpdyProtocol.Framing.RstStream  
+                  ,Rede.SpdyProtocol.Framing.WindowUpdate
+                  ,Rede.SpdyProtocol.Framing.DataFrame  
+                  ,Rede.SpdyProtocol.Framing.Ping   
+                  ,Rede.SpdyProtocol.Framing.Settings
 
   
   -- LANGUAGE extensions used by modules in this package.

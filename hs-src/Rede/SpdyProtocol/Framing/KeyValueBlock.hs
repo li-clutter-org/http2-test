@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 
-module SpdyPing.Framing.KeyValueBlock(
+module Rede.SpdyProtocol.Framing.KeyValueBlock(
     UnpackedNameValueList(..)
     ,CompressedKeyValueBlock(..)
     ) where 

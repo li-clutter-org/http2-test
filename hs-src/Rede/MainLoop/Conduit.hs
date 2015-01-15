@@ -1,13 +1,13 @@
-module SpdyPing.MainLoop.Conduit where 
+module Rede.MainLoop.Conduit where 
 
 
-import SpdyPing.Framing.AnyFrame(AnyFrame(..))
+import Rede.SpdyProtocol.Framing.AnyFrame(AnyFrame(..))
 import qualified Data.Conduit as C
 import qualified Data.Conduit.List as CL
 import           Data.Binary.Put        (runPut)
 import qualified Data.ByteString        as B
 import qualified Data.ByteString.Lazy   as LB
-import           SpdyPing.MainLoop.Common (chunkProducerHelper)
+import           Rede.MainLoop.Common (chunkProducerHelper)
 
 
 data ErrorCondition = 

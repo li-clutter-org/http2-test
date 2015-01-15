@@ -1,11 +1,11 @@
-module SpdyPing.MainLoop.Common(
+module Rede.MainLoop.Common(
 	chunkProducerHelper
 	) where
 
 
 import qualified Data.ByteString        as B
 import qualified Data.ByteString.Lazy   as LB
-import           SpdyPing.Framing.AnyFrame ( lengthFromPerfunct
+import           Rede.SpdyProtocol.Framing.AnyFrame ( lengthFromPerfunct
                                            , perfunctoryClassify )
 
 chunkProducerHelper :: LB.ByteString 

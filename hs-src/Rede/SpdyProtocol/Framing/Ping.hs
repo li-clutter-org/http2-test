@@ -1,11 +1,11 @@
-module SpdyPing.Framing.Ping(
+module Rede.SpdyProtocol.Framing.Ping(
 	 PingFrame
 	, pingFrame
     , getPingFrame) where 
 
 import           Data.Binary            (Binary, Get, get, put)
 import           Data.BitSet.Generic    (empty)
-import           SpdyPing.Framing.Frame
+import           Rede.SpdyProtocol.Framing.Frame
 import           Data.Binary.Get        (getWord32be)
 import           Data.Binary.Put        (putWord32be)
 

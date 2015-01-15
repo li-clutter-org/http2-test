@@ -1,7 +1,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
-module SpdyPing.Framing.Frame(
+module Rede.SpdyProtocol.Framing.Frame(
     FrameControlOrData(..),
     Frame,
     ControlFrame(..),
@@ -26,7 +26,7 @@ import qualified Data.BitSet.Generic as GenericBitset
 import qualified Data.ByteString     as B
 -- import           Data.Monoid
 import           Data.Word
-import           SpdyPing.Utils(getWord24be, putWord24be)
+import           Rede.Utils(getWord24be, putWord24be)
 
 
 type FlagsBitSet = GenericBitset.BitSet Word8

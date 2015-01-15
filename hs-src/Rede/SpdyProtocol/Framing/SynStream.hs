@@ -1,4 +1,4 @@
-module SpdyPing.Framing.SynStream(
+module Rede.SpdyProtocol.Framing.SynStream(
     SynStreamValidFlags
     ,SynStreamFrame
     ) where 
@@ -6,10 +6,10 @@ module SpdyPing.Framing.SynStream(
 
 import           Data.Word
 import           Data.Binary                    (Binary, Get, get, put)
-import           SpdyPing.Framing.Frame
+import           Rede.SpdyProtocol.Framing.Frame
 import           Data.Binary.Get                (getWord32be, getByteString, getWord16be)
 import           Data.Binary.Put                (putWord32be, putWord16be, putByteString)
-import           SpdyPing.Framing.KeyValueBlock (CompressedKeyValueBlock(..))
+import           Rede.SpdyProtocol.Framing.KeyValueBlock (CompressedKeyValueBlock(..))
 import qualified Data.ByteString as BS
 
 

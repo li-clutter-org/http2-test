@@ -4,12 +4,12 @@
 
 import qualified Network.Connection  as N
 import           Options.Applicative
-import qualified SpdyPing.TLSConnect as SP
-import           SpdyPing.Utils      (strToInt)
+import qualified Rede.TLSConnect as SP
+import           Rede.Utils      (strToInt)
 
 import           System.X509         (getSystemCertificateStore)
-import           SpdyPing.Subprograms.BasicPing(basicPingProgram)
-import           SpdyPing.Subprograms.BasicConnect(basicConnectProgram)
+import           Rede.Subprograms.BasicPing(basicPingProgram)
+import           Rede.Subprograms.BasicConnect(basicConnectProgram)
 
 
 data CmdConfig = CmdConfig

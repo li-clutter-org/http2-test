@@ -1,12 +1,12 @@
 
-module SpdyPing.Framing.RstStream (
+module Rede.SpdyProtocol.Framing.RstStream (
 	RstStreamFrame
 	,RstStreamValidFlags
 	,getRstStreamFrame
 	,rstStreamFrame) where 
 
 
-import SpdyPing.Framing.Frame
+import Rede.SpdyProtocol.Framing.Frame
 import Data.BitSet.Generic(empty)
 import           Data.Binary         (Binary,  get, put, Get)
 -- import           Data.Binary.Builder (Builder)

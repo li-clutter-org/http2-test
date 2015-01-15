@@ -1,5 +1,5 @@
 {-# LANGUAGE StandaloneDeriving #-}
-module SpdyPing.Framing.Settings (
+module Rede.SpdyProtocol.Framing.Settings (
     SettingsFrame
     ,SettingsValidFlags
     ,getSettingsFrame
@@ -7,12 +7,12 @@ module SpdyPing.Framing.Settings (
     ) where 
 
 
-import SpdyPing.Framing.Frame
+import Rede.SpdyProtocol.Framing.Frame
 import Data.Word(Word32)
 -- import Data.BitSet.Generic(empty)
 import Control.Monad
 import           Data.Binary         (Binary,  get, put, Get, putWord8, getWord8)
-import SpdyPing.Utils
+import Rede.Utils
 -- import           Data.Binary.Builder (Builder)
 import           Data.Binary.Put     (putWord32be)
 import           Data.Binary.Get     (getWord32be)

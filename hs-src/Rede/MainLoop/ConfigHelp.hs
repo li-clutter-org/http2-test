@@ -1,4 +1,4 @@
-module SpdyPing.MainLoop.ConfigHelp(configDir) where 
+module Rede.MainLoop.ConfigHelp(configDir) where 
 
 -- import System.FilePath
 import System.Environment
