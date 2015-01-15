@@ -36,13 +36,13 @@ main = do
     putStrLn "Socket was opened"
     server_params <- buildContextParams
     tcpServe listening_socket $ \ s -> do 
-        putStrLn "Connection opened"
+        -- putStrLn "Connection opened"
         -- h <- socketToHandle s ReadWriteMode 
         -- hPutStrLn h "heythere"
         -- hClose h
         E.catch (do
             ctx <- enchantSocket s server_params
-            putStrLn "Socket enchanted"
+            putStrLn "Socket upgraded"
             -- Time to say something
             T.sendData ctx $ BL.fromChunks [exampleHTTP11Response]
             ) 

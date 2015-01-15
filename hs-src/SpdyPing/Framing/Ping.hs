@@ -1,11 +1,13 @@
-module SpdyPing.Framing.Ping(PingFrame, pingFrame, getPingFrame) where 
+module SpdyPing.Framing.Ping(
+	 PingFrame
+	, pingFrame
+    , getPingFrame) where 
 
-import SpdyPing.Framing.Frame
-import Data.BitSet.Generic(empty)
-import           Data.Binary         (Binary,  get, put, Get)
--- import           Data.Binary.Builder (Builder)
-import           Data.Binary.Put     (putWord32be)
-import           Data.Binary.Get     (getWord32be)
+import           Data.Binary            (Binary, Get, get, put)
+import           Data.BitSet.Generic    (empty)
+import           SpdyPing.Framing.Frame
+import           Data.Binary.Get        (getWord32be)
+import           Data.Binary.Put        (putWord32be)
 
 
 data PingFrameValidFlags = None_F
