@@ -1,7 +1,7 @@
-
+{-# LANGUAGE FlexibleInstances #-}
 module Rede.SpdyProtocol.Framing.RstStream (
-	RstStreamFrame
-	,RstStreamValidFlags
+	RstStreamFrame(..)
+	,RstStreamValidFlags(..)
 	,getRstStreamFrame
 	,rstStreamFrame) where 
 
@@ -12,6 +12,7 @@ import           Data.Binary         (Binary,  get, put, Get)
 -- import           Data.Binary.Builder (Builder)
 import           Data.Binary.Put     (putWord32be)
 import           Data.Binary.Get     (getWord32be)
+import           Data.Default
 
 
 data RstStreamValidFlags = None_F
@@ -24,6 +25,11 @@ data RstStreamFrame =
 		, statusCode:: Int
 	}
 	deriving Show
+
+
+instance Default (ControlFrame RstStreamValidFlags) where 
+	def = ControlFrame RstStream_CFT (fbs1 None_F) 4
+
 
 instance Binary RstStreamFrame where 
 	put RstStreamFrame{prologue=pr, streamId=fi, statusCode=s} = 
@@ -42,10 +48,6 @@ instance Binary RstStreamFrame where
 
 getRstStreamFrame :: Get RstStreamFrame
 getRstStreamFrame = get
-
-
-instance Measurable RstStreamFrame where
-	measure x = measure $ prologue x
 
 
 rstStreamFrame :: Int -> Int -> RstStreamFrame

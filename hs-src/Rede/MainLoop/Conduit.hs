@@ -1,54 +1,40 @@
+{-# LANGUAGE OverloadedStrings, ExistentialQuantification #-}
+
+
 module Rede.MainLoop.Conduit (
-  FrameConduit
-  ,ErrorCondition(..)
-  ,InputEvent(..)
-  ,OutputDecision(..)
-  ,runSimpleServer
+  Session
+  ,activateSessionManager
   ) where 
 
 
-import Rede.SpdyProtocol.Framing.AnyFrame (AnyFrame(..))
+import           Control.Monad.Trans.Class(lift)
+import           Control.Monad.IO.Class(MonadIO, liftIO)
 import qualified Data.Conduit                 as C
+import           Data.Conduit
 import qualified Data.Conduit.List            as CL
 import           Data.Binary.Put          (runPut)
 import qualified Data.ByteString              as B
 import qualified Data.ByteString.Lazy         as LB
 import           Rede.MainLoop.Common     (chunkProducerHelper)
-import           Control.Concurrent
-import qualified Control.Exception            as E
-import qualified Data.ByteString.Lazy         as BL
-import qualified Network.TLS                  as T
-import           Rede.SimpleHTTP1Response (exampleHTTP11Response)
-import           System.Exit
-import           System.Posix.Signals
+-- import           Control.Concurrent
+-- import qualified Control.Exception            as E
+-- import qualified Data.ByteString.Lazy         as BL
+-- import qualified Network.TLS                  as T
+-- import           System.Exit
+-- import           System.Posix.Signals
 
 import           Rede.MainLoop.PushPullType
+import           Rede.SpdyProtocol.Framing.AnyFrame
 
-
-data ErrorCondition = 
-	Generic_EC
-
-
-data InputEvent = 
-	Frame_IE AnyFrame
-	| Error_IE ErrorCondition
-
-
-data OutputDecision =
-	Frame_OD AnyFrame
-	| Error_IE ErrorCondition
-
-
-type FrameConduit m = C.Conduit InputEvent m OutputDecision
-
+type Session m = C.Conduit AnyFrame m AnyFrame 
 
 
 chunkProducer :: Monad m => m B.ByteString    -- Generator
       -> LB.ByteString              -- Left-overs
-      -> C.Source IO LB.ByteString
+      -> C.Source m LB.ByteString
 chunkProducer gen leftovers = do 
     (bytes_of_frame, new_leftovers) <- lift $ chunkProducerHelper leftovers gen Nothing
-    yield bytes_of_frame
+    C.yield bytes_of_frame
     chunkProducer gen new_leftovers
 
 
@@ -66,15 +52,16 @@ framesToOutput = CL.map $ \ the_frame ->
     runPut $ writeFrame the_frame
   
 
-outputConsumer :: Monad m => (B.ByteString -> m () ) -> C.Sink LB.ByteString m ()
-outputConsumer pushToWire = CL.mapM_ (pushToWire . LB.toStrict)
+outputConsumer :: Monad m => (LB.ByteString -> m () ) -> C.Sink LB.ByteString m ()
+outputConsumer pushToWire = CL.mapM_ pushToWire
 
 
-produceSessionManager :: MonadIO m => (m a -> IO a) ->  PushAction -> PullAction -> IO () 
-produceSessionManager session_producer push pull = 
-    session_producer (
-      (chunkProducer (liftIO pull)) $= inputToFrames =$= _middlepiece =$= framesToOutput =$ (outputConsumer (liftIO push))
-    )
+activateSessionManager :: MonadIO m => (  m () -> IO () ) -> Session m ->  PushAction -> PullAction -> IO () 
+activateSessionManager session_start session push pull = 
+    session_start
+      (
+        (chunkProducer (liftIO pull) "") $= inputToFrames =$= session =$= framesToOutput $$ (outputConsumer (liftIO . push))
+      )
 
 
 

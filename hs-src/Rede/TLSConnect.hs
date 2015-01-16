@@ -32,6 +32,7 @@ makeTLSParamsForSpdy cid scs  =
             }
         , TLS.clientHooks = def 
             { TLS.onNPNServerSuggest    = Just selectSPDY
+            , TLS.onServerCertificate   = \ _ _ _ _  -> return []
             }
         }
   where  portString = BC.pack $ show $ snd cid

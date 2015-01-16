@@ -1,7 +1,8 @@
-
+{-# LANGUAGE StandaloneDeriving, FlexibleInstances, MultiParamTypeClasses, FunctionalDependencies #-}
 module Rede.SpdyProtocol.Framing.GoAway (
-	GoAwayValidFlags
-	,GoAwayFrame
+	GoAwayValidFlags(..)
+	,GoAwayFrame(..)
+    ,GoAwayReason(..)
 	) where 
 
 
@@ -11,6 +12,7 @@ import           Data.Binary                    (Binary, Get, get, put)
 import           Rede.SpdyProtocol.Framing.Frame
 import           Data.Binary.Get                (getWord32be)
 import           Data.Binary.Put                (putWord32be)
+import           Data.Default 
 
 
 data GoAwayValidFlags = None_GAVF    
@@ -28,6 +30,10 @@ data GoAwayFrame = GoAwayFrame {
     , lastGoodStream:: Int
     , statusCode:: GoAwayReason
   } deriving Show
+
+
+instance Default (ControlFrame GoAwayValidFlags) where 
+    def =  ControlFrame GoAway_CFT (fbs1 None_GAVF) 8
 
 
 instance Binary GoAwayFrame where

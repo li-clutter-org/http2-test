@@ -1,6 +1,6 @@
 module Rede.SpdyProtocol.Framing.SynStream(
-    SynStreamValidFlags
-    ,SynStreamFrame
+    SynStreamValidFlags(..)
+    ,SynStreamFrame(..)
     ) where 
 
 

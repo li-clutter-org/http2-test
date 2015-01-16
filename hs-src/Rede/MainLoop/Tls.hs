@@ -41,6 +41,7 @@ readyTCPSocket hostname portnumber = do
                        (addrAddress addr_info0) 
         }
     host_address <- return $ addrAddress addr_info1
+    setSocketOption the_socket ReusePort 1
     bindSocket the_socket host_address
     return the_socket
 
@@ -53,7 +54,13 @@ tcpServe  to_bind_socket action =
   where 
     accept_loop bind_socket = do 
         (new_socket, _ ) <- accept bind_socket
-        action new_socket
+        E.catch
+            (do 
+                action new_socket
+                putStrLn "tcpServer: action done"
+                sClose new_socket
+            )
+            ( (\ e -> putStrLn $ show e) :: E.SomeException -> IO ())
         accept_loop bind_socket 
 
 
@@ -105,7 +112,8 @@ buildNPNContextParams protocols  = do
             T.sharedCredentials = T.Credentials [ credential]
         }
         ,T.serverHooks = def {
-            T.onSuggestNextProtocols = 
+            T.onSuggestNextProtocols = do
+                -- putStrLn "Protocols asked"
                 return $ Just $ map pack protocols
         }
         ,T.serverSupported = serverSupported
@@ -152,12 +160,14 @@ tlsServe session_attendant interface_name interface_port = do
       )) Nothing
     listening_socket <- readyTCPSocket interface_name interface_port
     server_params <- buildContextParams
-    tcpServe listening_socket $ \ s -> do 
+    tcpServe listening_socket $ \ s -> do
+      -- Seems like a good place to move stuff to a thread... 
       ctx <- enchantSocket s server_params
       -- Time to say something
       rd <- return $ (T.recvData ctx) 
       sd <- return $ (T.sendData ctx)
       session_attendant sd rd
+      T.bye ctx
 
 
 tlsServeProtocols :: [ (String, Attendant) ] -> String -> Int -> IO ()
@@ -173,6 +183,7 @@ tlsServeProtocols attendants interface_name interface_port = do
         ctx <- enchantSocket s server_params
         
         selected_protocol_maybe <- T.getNegotiatedProtocol ctx
+        putStrLn $ "Protocol selected: " ++ (show selected_protocol_maybe)
         
         session_attendant <- return $ case selected_protocol_maybe of 
             Just next_protocol_bs -> let 

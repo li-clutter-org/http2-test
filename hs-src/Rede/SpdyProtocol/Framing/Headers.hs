@@ -1,6 +1,8 @@
+{-# LANGUAGE FlexibleInstances #-}
+
 module Rede.SpdyProtocol.Framing.Headers(
-	HeadersValidFlags
-	,HeadersFrame
+	HeadersValidFlags(..)
+	,HeadersFrame(..)
 	) where 
 
 
@@ -12,6 +14,7 @@ import           Data.Binary.Get                (getWord32be, getByteString)
 import           Data.Binary.Put                (putWord32be, putByteString)
 import           Rede.SpdyProtocol.Framing.KeyValueBlock (CompressedKeyValueBlock(..))
 import qualified Data.ByteString as BS
+import           Data.Default
 
 
 data HeadersValidFlags = None_HVF 
@@ -27,6 +30,10 @@ data HeadersFrame =
     -- To make sense of this, we need the state of the stream...
     , compressedKeyValueBlock:: CompressedKeyValueBlock
   } deriving Show
+
+
+instance Default (ControlFrame HeadersValidFlags) where 
+    def = ControlFrame Headers_CFT (fbs1 None_HVF) 0
 
 
 instance Binary HeadersFrame where

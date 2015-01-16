@@ -1,6 +1,7 @@
 
 module Rede.SpdyProtocol.Framing.WindowUpdate(
-	WindowUpdateFrame
+	WindowUpdateFrame(..)
+	,WindowSizeValidFlags(..)
 	) where 
 
 

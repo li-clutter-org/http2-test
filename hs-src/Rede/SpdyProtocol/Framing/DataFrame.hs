@@ -1,4 +1,7 @@
-module Rede.SpdyProtocol.Framing.DataFrame where 
+module Rede.SpdyProtocol.Framing.DataFrame(
+	DataFrame(..)
+	,DataFrameValidFlags(..)
+	) where 
 
 import           Data.Bits
 -- import Data.Enum

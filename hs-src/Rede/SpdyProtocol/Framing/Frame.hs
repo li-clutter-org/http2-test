@@ -1,20 +1,24 @@
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE StandaloneDeriving #-}
+
+{-# LANGUAGE StandaloneDeriving, MultiParamTypeClasses, FunctionalDependencies, GADTs #-}
 
 module Rede.SpdyProtocol.Framing.Frame(
-    FrameControlOrData(..),
-    Frame,
-    ControlFrame(..),
-    ControlFrameType(..),
-    FlagsBitSet,
-    Measurable(..),
-    cfType,
-    cfLength,
-    cfFlags,
-    getControlFrame,
-    bitsetToWord8,
-    word8ToBitset,
-    resetControlFrameSize
+     cfType
+    ,cfLength
+    ,cfFlags
+    ,getControlFrame
+    ,bitsetToWord8
+    ,word8ToBitset
+    ,resetControlFrameSize
+    ,fbs
+    ,fbs1
+
+    ,FrameControlOrData(..)
+    ,ControlFrame(..)
+    ,ControlFrameType(..)
+    ,FlagsBitSet
+
+    ,FrameIsControlOrData(..)
+    ,FrameFlagIsSettable(..)
     ) where 
 
 import           Data.Binary         (Binary,  putWord8, get, put, Get)
@@ -23,13 +27,23 @@ import           Data.Binary.Put     (putWord16be)
 import           Data.Binary.Get     (getWord16be, getWord8)
 import           Data.Bits
 import qualified Data.BitSet.Generic as GenericBitset
-import qualified Data.ByteString     as B
+-- import qualified Data.ByteString     as B
 -- import           Data.Monoid
 import           Data.Word
 import           Rede.Utils(getWord24be, putWord24be)
 
 
 type FlagsBitSet = GenericBitset.BitSet Word8
+
+fbs :: Enum a => [a] -> FlagsBitSet a 
+fbs l = GenericBitset.fromList l
+
+fbs1 :: Enum a => a -> FlagsBitSet a 
+fbs1 flag = GenericBitset.singleton flag
+
+
+class FrameFlagIsSettable frame flag | frame -> flag where 
+    setFrameFlag :: frame -> flag -> frame
 
 
 data FrameControlOrData = 
@@ -38,19 +52,8 @@ data FrameControlOrData =
     deriving (Show,Enum)
 
 
-class Frame a where 
-    classify:: a -> FrameControlOrData
-    classify x = 
-        if first_byte .&. 128 > 0 then FrameIsControl
-                                  else FrameIsData
-      where first_byte = B.head $ toBytes x
-
-    toBytes:: a -> B.ByteString
-
-
--- Computes a number of bytes
-class Measurable a where 
-    measure :: a -> Int 
+class FrameIsControlOrData a where 
+    isControlOrData:: a -> FrameControlOrData
 
 
 data ControlFrameType = 
@@ -83,10 +86,6 @@ data ControlFrame valid_flags where
 
 
 deriving instance Show valid_flags => Show (ControlFrame valid_flags)
-
-
-instance Measurable (ControlFrame a) where 
-    measure cf = 8 + (cfLength cf)
 
 
 resetControlFrameSize :: ControlFrame vf -> Int -> ControlFrame vf 

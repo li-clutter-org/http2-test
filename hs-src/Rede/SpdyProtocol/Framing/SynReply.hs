@@ -1,6 +1,8 @@
+{-# LANGUAGE StandaloneDeriving, MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, GADTs #-}
+
 module Rede.SpdyProtocol.Framing.SynReply(
-	SynReplyValidFlags
-	,SynReplyFrame
+	SynReplyValidFlags(..)
+	,SynReplyFrame(..)
 	) where 
 
 
@@ -12,6 +14,8 @@ import           Data.Binary.Get                (getWord32be, getByteString)
 import           Data.Binary.Put                (putWord32be, putByteString)
 import           Rede.SpdyProtocol.Framing.KeyValueBlock (CompressedKeyValueBlock(..))
 import qualified Data.ByteString as BS
+import           Data.Default
+import           Data.BitSet.Generic(insert)
 
 
 data SynReplyValidFlags = None_SRVF 
@@ -27,6 +31,18 @@ data SynReplyFrame =
     -- To make sense of this, we need the state of the stream...
     , compressedKeyValueBlock:: CompressedKeyValueBlock
   } deriving Show
+
+
+instance Default (ControlFrame SynReplyValidFlags) where 
+    def = ControlFrame SynReply_CFT (fbs1 None_SRVF) 0
+
+
+instance FrameFlagIsSettable SynReplyFrame SynReplyValidFlags where 
+    setFrameFlag frame flag = frame {
+        prologue = newpr }
+      where 
+        (ControlFrame cft flags len) = prologue frame 
+        newpr = ControlFrame cft (insert flag flags) len 
 
 
 instance Binary SynReplyFrame where

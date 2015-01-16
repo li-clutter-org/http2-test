@@ -8,10 +8,10 @@ import qualified Data.ByteString.Lazy   as LB
 import           Rede.SpdyProtocol.Framing.AnyFrame ( lengthFromPerfunct
                                            , perfunctoryClassify )
 
-chunkProducerHelper :: LB.ByteString 
-                       -> IO B.ByteString 
+chunkProducerHelper :: Monad m => LB.ByteString 
+                       -> m B.ByteString 
                        -> Maybe Int -- Length to read
-                       -> IO (LB.ByteString, LB.ByteString)  -- To yield, left-overs...
+                       -> m (LB.ByteString, LB.ByteString)  -- To yield, left-overs...
 chunkProducerHelper pieces gen Nothing = 
     let 
         lazy = pieces 

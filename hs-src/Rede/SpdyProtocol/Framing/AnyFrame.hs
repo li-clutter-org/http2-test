@@ -1,53 +1,95 @@
 {-# LANGUAGE DefaultSignatures, DeriveGeneric, TypeOperators, FlexibleContexts #-}
 module Rede.SpdyProtocol.Framing.AnyFrame(
-  AnyControlFrame(..)
-  ,readControlFrame
+   readControlFrame
   ,perfunctoryClassify
-  ,PerfunctoryClassif
   ,readFrame
-  ,lengthFromPerfunct
-  ,AnyFrame(..)
   ,writeFrame
+  ,lengthFromPerfunct
+  
+  ,PerfunctoryClassif
+  ,AnyControlFrame       (..)
+  ,AnyFrame              (..)
+  ,WrapControlFrame      (..)
+
+  -- These can lead to ambiguity...
+  ,ControlFrame         
+  ,PingFrame          
+  ,RstStreamFrame     
+  ,SettingsFrame      
+  ,DataFrame          
+  ,WindowUpdateFrame  
+  ,SynReplyFrame      
+  ,SynStreamFrame     
+  ,HeadersFrame       
+  ,GoAwayFrame        
   ) where 
 
-import           Rede.SpdyProtocol.Framing.Frame
-import           Rede.SpdyProtocol.Framing.Ping
-import           Rede.SpdyProtocol.Framing.RstStream
-import           Rede.SpdyProtocol.Framing.Settings
-import           Rede.SpdyProtocol.Framing.DataFrame
-import           Rede.SpdyProtocol.Framing.WindowUpdate
-import           Rede.SpdyProtocol.Framing.SynReply
-import           Rede.SpdyProtocol.Framing.SynStream
-import           Rede.SpdyProtocol.Framing.Headers
-import           Rede.SpdyProtocol.Framing.GoAway
-import           Rede.Utils( getWord24be )
--- import qualified GHC.Generics as E
-
-import           Data.Binary            (Binary,  get, put, Put)
-import           Data.Binary.Get        (runGet)
+import           Data.Binary             (Binary,  get, put, Put)
+import           Data.Binary.Get         (runGet)
 import qualified Data.Binary.Get as G
--- import           Data.Binary.Put        (Put)
--- import qualified Data.ByteString        as B
-import qualified Data.ByteString.Lazy   as LB
+import qualified Data.ByteString.Lazy as LB
+
+import           Rede.SpdyProtocol.Framing.Frame
+import           Rede.SpdyProtocol.Framing.Ping         (PingFrame(..))
+import           Rede.SpdyProtocol.Framing.RstStream    (RstStreamFrame(..))
+import           Rede.SpdyProtocol.Framing.Settings     (SettingsFrame(..))
+import           Rede.SpdyProtocol.Framing.DataFrame    (DataFrame(..))
+import           Rede.SpdyProtocol.Framing.WindowUpdate (WindowUpdateFrame(..))
+import           Rede.SpdyProtocol.Framing.SynReply     (SynReplyFrame(..))
+import           Rede.SpdyProtocol.Framing.SynStream    (SynStreamFrame(..))
+import           Rede.SpdyProtocol.Framing.Headers      (HeadersFrame(..))
+import           Rede.SpdyProtocol.Framing.GoAway       (GoAwayFrame(..))
+
+import           Rede.Utils              ( getWord24be )
 
 
 data AnyFrame = 
-  AnyControl_AF AnyControlFrame 
-  |DataFrame_AF DataFrame 
+  AnyControl_AF             AnyControlFrame 
+  |DataFrame_AF             DataFrame 
   deriving Show
 
 
 data AnyControlFrame =
-  PingFrame_ACF PingFrame
-  |SynStream_ACF SynStreamFrame
-  |SynReplyFrame_ACF SynReplyFrame
-  |RstStreamFrame_ACF RstStreamFrame
-  |SettingsFrame_ACF SettingsFrame
-  |WindowUpdateFrame_ACF WindowUpdateFrame
-  |GoAwayFrame_ACF GoAwayFrame
-  |HeadersFrame_ACF HeadersFrame
-  |Ignored_ACF LB.ByteString
+  PingFrame_ACF             PingFrame
+  |SynStream_ACF            SynStreamFrame
+  |SynReplyFrame_ACF        SynReplyFrame
+  |RstStreamFrame_ACF       RstStreamFrame
+  |SettingsFrame_ACF        SettingsFrame
+  |WindowUpdateFrame_ACF    WindowUpdateFrame
+  |GoAwayFrame_ACF          GoAwayFrame
+  |HeadersFrame_ACF         HeadersFrame
+  |Ignored_ACF              LB.ByteString
   deriving (Show)
+
+
+class WrapControlFrame a where 
+    wrapCF :: a -> AnyFrame
+
+
+instance WrapControlFrame   PingFrame where 
+    wrapCF frame = AnyControl_AF $ PingFrame_ACF frame
+
+instance WrapControlFrame  SynStreamFrame where 
+    wrapCF frame = AnyControl_AF $ SynStream_ACF frame
+
+instance WrapControlFrame  SynReplyFrame where 
+    wrapCF frame = AnyControl_AF $ SynReplyFrame_ACF frame
+
+instance WrapControlFrame  RstStreamFrame where 
+    wrapCF frame = AnyControl_AF $ RstStreamFrame_ACF frame
+
+instance WrapControlFrame  SettingsFrame where 
+    wrapCF frame = AnyControl_AF $ SettingsFrame_ACF frame
+
+instance WrapControlFrame  WindowUpdateFrame where 
+    wrapCF frame = AnyControl_AF $ WindowUpdateFrame_ACF frame
+
+instance WrapControlFrame  GoAwayFrame where 
+    wrapCF frame = AnyControl_AF $ GoAwayFrame_ACF frame
+
+instance WrapControlFrame  HeadersFrame where 
+    wrapCF frame = AnyControl_AF $ HeadersFrame_ACF frame
+
 
 
 readControlFrame :: LB.ByteString -> AnyControlFrame
@@ -58,8 +100,8 @@ readControlFrame bs =
       Settings_CFT      ->  SettingsFrame_ACF $ extract bs
       SynStream_CFT     ->  SynStream_ACF $ extract bs
       SynReply_CFT      ->  SynReplyFrame_ACF $ extract bs
-      GoAway_CFT        -> GoAwayFrame_ACF $ extract bs
-      Headers_CFT       -> HeadersFrame_ACF $ extract bs
+      GoAway_CFT        ->  GoAwayFrame_ACF $ extract bs
+      Headers_CFT       ->  HeadersFrame_ACF $ extract bs
       WindowUpdate_CFT  ->  WindowUpdateFrame_ACF $ extract bs
       _                 ->  Ignored_ACF bs
   where 
@@ -68,8 +110,13 @@ readControlFrame bs =
 
 
 data PerfunctoryClassif = 
-   ControlFrame_PC Int
-  |DataFrame_PC Int
+    ControlFrame_PC Int
+    |DataFrame_PC Int
+
+
+instance FrameIsControlOrData PerfunctoryClassif where 
+    isControlOrData (ControlFrame_PC _)  = FrameIsControl 
+    isControlOrData (DataFrame_PC _)     = FrameIsData
 
 
 lengthFromPerfunct :: PerfunctoryClassif -> Int 
@@ -117,7 +164,8 @@ writeControlFrame (SettingsFrame_ACF a)     = put a
 writeControlFrame (WindowUpdateFrame_ACF a) = put a
 writeControlFrame (SynStream_ACF a)         = put a
 writeControlFrame (SynReplyFrame_ACF a)     = put a
-
+writeControlFrame (GoAwayFrame_ACF a)       = put a
+writeControlFrame (HeadersFrame_ACF a)      = put a
 
 
 writeDataFrame :: DataFrame -> Put 

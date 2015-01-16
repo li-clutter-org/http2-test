@@ -1,5 +1,8 @@
+
+{-# LANGUAGE FlexibleInstances #-}
+
 module Rede.SpdyProtocol.Framing.Ping(
-	 PingFrame
+	 PingFrame(..)
 	, pingFrame
     , getPingFrame) where 
 
@@ -8,6 +11,7 @@ import           Data.BitSet.Generic    (empty)
 import           Rede.SpdyProtocol.Framing.Frame
 import           Data.Binary.Get        (getWord32be)
 import           Data.Binary.Put        (putWord32be)
+import           Data.Default
 
 
 data PingFrameValidFlags = None_F
@@ -19,6 +23,7 @@ data PingFrame =
 		, frameId:: Int 
 	}
 	deriving Show
+
 
 instance Binary PingFrame where 
 	put PingFrame{prologue=pr, frameId=fi} = 
@@ -33,12 +38,12 @@ instance Binary PingFrame where
 	  	return $ PingFrame pr $ fromIntegral w32
 
 
+instance Default (ControlFrame PingFrameValidFlags) where 
+	def = ControlFrame Ping_CFT (fbs1 None_F) 4
+	
+
 getPingFrame :: Get PingFrame
 getPingFrame = get
-
-
-instance Measurable PingFrame where
-	measure x = measure $ prologue x
 
 
 pingFrame :: Int -> PingFrame

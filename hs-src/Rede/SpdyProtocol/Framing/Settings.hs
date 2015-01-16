@@ -1,9 +1,12 @@
-{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneDeriving, FlexibleInstances, MultiParamTypeClasses, FunctionalDependencies #-}
 module Rede.SpdyProtocol.Framing.Settings (
-    SettingsFrame
-    ,SettingsValidFlags
-    ,getSettingsFrame
-    -- ,settingsFrame
+     getSettingsFrame
+
+    ,SettingsFrame(..)
+    ,SettingsValidFlags(..)
+    ,SettingsSettingsId(..)
+    ,SettingItem
+    ,PersistSettings(..)
     ) where 
 
 
@@ -16,11 +19,13 @@ import Rede.Utils
 -- import           Data.Binary.Builder (Builder)
 import           Data.Binary.Put     (putWord32be)
 import           Data.Binary.Get     (getWord32be)
+import           Data.Default
+import           Data.BitSet.Generic(insert)
 
 
 
 data SettingsValidFlags =
-     Null_SVF 
+     None_SVF 
     |Clear_SVF
     deriving (Show, Enum)
 
@@ -31,6 +36,19 @@ data SettingsFrame =
         ,persistSettings:: [SettingItem]
     }
     deriving Show
+
+
+instance FrameFlagIsSettable SettingsFrame SettingsValidFlags where 
+
+    setFrameFlag frame flag = frame {
+        prologue = newpr }
+      where 
+        (ControlFrame cft flags len) = prologue frame 
+        newpr = ControlFrame cft (insert flag flags) len 
+
+
+instance Default (ControlFrame SettingsValidFlags) where 
+  def = ControlFrame Settings_CFT (fbs1 None_SVF) (-1)
 
 
 data SettingsSettingsId =
