@@ -6,11 +6,17 @@ module Rede.SpdyProtocol.Session(
 
 import Data.Default
 import Data.Conduit
+import Data.Conduit.Lift( distribute )
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.IO.Class
 
 
 import Rede.SpdyProtocol.Framing.AnyFrame
 import qualified  Rede.SpdyProtocol.Framing.Settings as SeF 
 import qualified  Rede.SpdyProtocol.Framing.GoAway   as GoA
+import qualified  Rede.SpdyProtocol.Framing.SynStream as SyS
+import Rede.SpdyProtocol.Streams.State
+import Rede.SpdyProtocol.Framing.KeyValueBlock
 
 -- import qualified  Rede.SpdyProtocol.Framing.WindowUpdate as WuF
 
@@ -34,8 +40,30 @@ goAwayMsg = GoA.GoAwayFrame {
 
 
 -- Just for testing
-trivialSession  :: Monad m => Conduit AnyFrame m AnyFrame
-trivialSession  = do 
+trivialSessionWithState  :: Conduit AnyFrame (StreamStateT IO) AnyFrame
+trivialSessionWithState  = do 
 	yield $ wrapCF initialSettings
+	Just pck1 <- await 
+	liftIO $ putStrLn $ show pck1
+	Just pck2 <- await
+	liftIO $ putStrLn $ show pck2
+	Just pck3 <- await 
+	liftIO $ putStrLn $ show pck3 
+	lift $ showHeadersIfPresent pck3
 	yield $ wrapCF goAwayMsg
-	-- We start by informing the browser of the settings 
+	-- We start by informing the browser of the settings
+
+
+showHeadersIfPresent :: AnyFrame -> StreamStateT IO ()
+showHeadersIfPresent (AnyControl_AF (SynStream_ACF syn_stream)) = let 
+    CompressedKeyValueBlock hb = SyS.compressedKeyValueBlock syn_stream
+  in do 
+  	uncompressed <- unpackRecvHeaders hb
+  	liftIO $ putStrLn $ show uncompressed 
+showHeadersIfPresent _ = return ()
+
+
+-- Need to refactor....
+trivialSession ::  Conduit AnyFrame IO AnyFrame   
+trivialSession = 
+	initStreamState $ distribute $ trivialSessionWithState  

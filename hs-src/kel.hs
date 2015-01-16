@@ -15,8 +15,8 @@ import           Rede.SpdyProtocol.Session(trivialSession)
 
 main :: IO ()
 main = tlsServeProtocols [ 
-	("http/1.1",httpAttendant) 
-	,("spdy/3.1",spdyAttendant)
+	("spdy/3.1",spdyAttendant)
+	,("http/1.1",httpAttendant) 
 	] "127.0.0.1" 1060
 
 

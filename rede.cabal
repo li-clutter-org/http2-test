@@ -84,6 +84,7 @@ executable kel
       , streaming-commons == 0.1.8
       , conduit == 1.2.3.1
       , transformers >=0.3 && <= 0.5
+      , mmorph == 1.0.4
      -- , asn-data
   
   -- Directories containing source files.

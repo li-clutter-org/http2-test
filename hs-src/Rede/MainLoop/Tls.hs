@@ -57,8 +57,6 @@ tcpServe  to_bind_socket action =
         E.catch
             (do 
                 action new_socket
-                putStrLn "tcpServer: action done"
-                sClose new_socket
             )
             ( (\ e -> putStrLn $ show e) :: E.SomeException -> IO ())
         accept_loop bind_socket 
@@ -197,4 +195,10 @@ tlsServeProtocols attendants interface_name interface_port = do
         rd <- return $ (T.recvData ctx) 
         sd <- return $ (T.sendData ctx)
         
-        session_attendant sd rd
+        forkIO $ do 
+            session_attendant sd rd
+            threadDelay 1000000
+            T.bye ctx 
+            sClose s
+            putStrLn "Socket closed"
+        return ()
