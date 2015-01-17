@@ -4,22 +4,21 @@ module Rede.SpdyProtocol.Session(
 	) where
 
 
-import Data.Default
-import Data.Conduit
-import Data.Conduit.Lift( distribute )
-import Control.Monad.Trans.Class (lift)
-import Control.Monad.IO.Class
+import           Control.Monad.IO.Class                  (liftIO)
+import           Control.Monad.Trans.Class               (lift)
+import           Data.Conduit
+import           Data.Conduit.Lift                       (distribute)
+import           Data.Default                            (def)
 
 
-import Rede.SpdyProtocol.Framing.AnyFrame
-import qualified  Rede.SpdyProtocol.Framing.Settings as SeF 
-import qualified  Rede.SpdyProtocol.Framing.GoAway   as GoA
-import qualified  Rede.SpdyProtocol.Framing.SynStream as SyS
-import Rede.SpdyProtocol.Streams.State
-import Rede.SpdyProtocol.Framing.KeyValueBlock
-
--- import qualified  Rede.SpdyProtocol.Framing.WindowUpdate as WuF
-
+import qualified Rede.SpdyProtocol.Framing.AnyFrame      as AnFr
+import qualified Rede.SpdyProtocol.Framing.GoAway        as GoA
+import           Rede.SpdyProtocol.Framing.KeyValueBlock
+import qualified Rede.SpdyProtocol.Framing.Settings      as SeF
+import qualified Rede.SpdyProtocol.Framing.SynStream     as SyS
+import           Rede.SpdyProtocol.Streams.State         (StreamStateT,
+                                                          initStreamState,
+                                                          unpackRecvHeaders)
 
 
 initialSettings :: SeF.SettingsFrame
@@ -40,9 +39,9 @@ goAwayMsg = GoA.GoAwayFrame {
 
 
 -- Just for testing
-trivialSessionWithState  :: Conduit AnyFrame (StreamStateT IO) AnyFrame
+trivialSessionWithState  :: Conduit AnFr.AnyFrame (StreamStateT IO) AnFr.AnyFrame
 trivialSessionWithState  = do 
-	yield $ wrapCF initialSettings
+	yield $ AnFr.wrapCF initialSettings
 	Just pck1 <- await 
 	liftIO $ putStrLn $ show pck1
 	Just pck2 <- await
@@ -50,12 +49,12 @@ trivialSessionWithState  = do
 	Just pck3 <- await 
 	liftIO $ putStrLn $ show pck3 
 	lift $ showHeadersIfPresent pck3
-	yield $ wrapCF goAwayMsg
+	yield $ AnFr.wrapCF goAwayMsg
 	-- We start by informing the browser of the settings
 
 
-showHeadersIfPresent :: AnyFrame -> StreamStateT IO ()
-showHeadersIfPresent (AnyControl_AF (SynStream_ACF syn_stream)) = let 
+showHeadersIfPresent :: AnFr.AnyFrame -> StreamStateT IO ()
+showHeadersIfPresent (AnFr.AnyControl_AF (AnFr.SynStream_ACF syn_stream)) = let 
     CompressedKeyValueBlock hb = SyS.compressedKeyValueBlock syn_stream
   in do 
   	uncompressed <- unpackRecvHeaders hb
@@ -64,6 +63,6 @@ showHeadersIfPresent _ = return ()
 
 
 -- Need to refactor....
-trivialSession ::  Conduit AnyFrame IO AnyFrame   
+trivialSession ::  Conduit AnFr.AnyFrame IO AnFr.AnyFrame   
 trivialSession = 
 	initStreamState $ distribute $ trivialSessionWithState  

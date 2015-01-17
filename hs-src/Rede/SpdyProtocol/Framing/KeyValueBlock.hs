@@ -10,7 +10,7 @@ module Rede.SpdyProtocol.Framing.KeyValueBlock(
 
 import           Control.Monad                  (forM_, replicateM)
 import           Data.Binary                    (Binary,  get, put)
-import qualified Data.ByteString          as BS
+import qualified Data.ByteString                as BS
 import           Data.Word
 import           Data.Binary.Get                (getByteString, getWord32be)
 import           Data.Binary.Put                (putWord32be)
@@ -25,8 +25,6 @@ newtype UnpackedNameValueList = UnpackedNameValueList [(BS.ByteString, BS.ByteSt
 -- To use raw
 newtype CompressedKeyValueBlock = CompressedKeyValueBlock BS.ByteString
     deriving Show
-
-
 
 instance Binary UnpackedNameValueList where 
     put unvl = 
