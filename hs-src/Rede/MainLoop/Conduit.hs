@@ -27,7 +27,12 @@ import           Rede.MainLoop.PushPullType
 import           Rede.SpdyProtocol.Framing.AnyFrame
 
 
-type Session m = C.Conduit AnyFrame m AnyFrame 
+--  Generalized Session type....
+--  frames to engine      ---v  frames from engine---v
+type SessionM m = m ( (C.Sink AnyFrame m () ), (C.Source m AnyFrame ) )
+
+--  Concrete, good-for-now session type ....
+type Session = SessionM IO
 
 
 chunkProducer :: Monad m => m B.ByteString    -- Generator
