@@ -1,6 +1,6 @@
 module Rede.StreamToken( StreamToken ) where
 
-
+rsdfs 
 import qualified Data.ByteString as B
 
 

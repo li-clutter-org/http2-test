@@ -10,17 +10,16 @@ module Rede.SpdyProtocol.Framing.Settings (
     ) where 
 
 
-import Rede.SpdyProtocol.Framing.Frame
-import Data.Word(Word32)
--- import Data.BitSet.Generic(empty)
-import Control.Monad
-import           Data.Binary         (Binary,  get, put, Get, putWord8, getWord8)
-import Rede.Utils
--- import           Data.Binary.Builder (Builder)
-import           Data.Binary.Put     (putWord32be)
-import           Data.Binary.Get     (getWord32be)
+import           Data.Word                       (Word32)
+import           Rede.SpdyProtocol.Framing.Frame
+import           Control.Monad
+import           Data.Binary                     (Binary, Get, get, getWord8,
+                                                  put, putWord8)
+import           Rede.Utils
+import           Data.Binary.Get                 (getWord32be)
+import           Data.Binary.Put                 (putWord32be)
+import           Data.BitSet.Generic             (delete, insert, member)
 import           Data.Default
-import           Data.BitSet.Generic(insert)
 
 
 
@@ -38,13 +37,20 @@ data SettingsFrame =
     deriving Show
 
 
-instance FrameFlagIsSettable SettingsFrame SettingsValidFlags where 
+instance HasFrameFlags SettingsFrame SettingsValidFlags where 
 
-    setFrameFlag frame flag = frame {
+    applyFrameFlag frame flag set_value = frame {
         prologue = newpr }
       where 
         (ControlFrame cft flags len) = prologue frame 
-        newpr = ControlFrame cft (insert flag flags) len 
+        newpr = if set_value 
+          then ControlFrame cft (insert flag flags) len
+          else ControlFrame cft (delete flag flags) len 
+
+    getFrameFlag frame flag = let 
+        (ControlFrame _ flags _) = prologue frame 
+      in member flag flags
+
 
 
 instance Default (ControlFrame SettingsValidFlags) where 

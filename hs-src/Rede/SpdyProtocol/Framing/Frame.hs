@@ -12,13 +12,14 @@ module Rede.SpdyProtocol.Framing.Frame(
     ,fbs
     ,fbs1
 
-    ,FrameControlOrData(..)
-    ,ControlFrame(..)
-    ,ControlFrameType(..)
+    ,FrameControlOrData  (..)
+    ,ControlFrame        (..)
+    ,ControlFrameType    (..)
     ,FlagsBitSet
 
     ,FrameIsControlOrData(..)
-    ,FrameFlagIsSettable(..)
+    ,HasFrameFlags       (..)
+    ,HasStreamId         (..)
     ) where 
 
 import           Data.Binary         (Binary,  putWord8, get, put, Get)
@@ -42,8 +43,17 @@ fbs1 :: Enum a => a -> FlagsBitSet a
 fbs1 flag = GenericBitset.singleton flag
 
 
-class FrameFlagIsSettable frame flag | frame -> flag where 
-    setFrameFlag :: frame -> flag -> frame
+class HasFrameFlags frame flag | frame -> flag where 
+    applyFrameFlag :: frame -> flag -> Bool -> frame
+    getFrameFlag :: frame -> flag -> Bool
+
+    -- Auto
+    setFrameFlag :: frame -> flag -> frame 
+    setFrameFlag frame flag = applyFrameFlag frame flag True  
+
+
+class HasStreamId a where 
+    streamIdFromFrame :: a -> Int
 
 
 data FrameControlOrData = 
