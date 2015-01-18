@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, ExistentialQuantification #-}
+{-# LANGUAGE OverloadedStrings, ExistentialQuantification, Rank2Types #-}
 
 
 module Rede.MainLoop.Conduit (
@@ -9,6 +9,7 @@ module Rede.MainLoop.Conduit (
 
 import           Control.Monad.Trans.Class(lift)
 import           Control.Monad.IO.Class(MonadIO, liftIO)
+import           Control.Concurrent
 import qualified Data.Conduit                 as C
 import           Data.Conduit
 import qualified Data.Conduit.List            as CL
@@ -62,12 +63,24 @@ outputConsumer :: Monad m => (LB.ByteString -> m () ) -> C.Sink LB.ByteString m 
 outputConsumer pushToWire = CL.mapM_ pushToWire
 
 
-activateSessionManager :: MonadIO m => (  m () -> IO () ) -> Session m ->  PushAction -> PullAction -> IO () 
-activateSessionManager session_start session push pull = 
-    session_start
-      (
-        (chunkProducer (liftIO pull) "") $= inputToFrames =$= session =$= framesToOutput $$ (outputConsumer (liftIO . push))
-      )
+activateSessionManager :: MonadIO m =>  (forall a . m a -> IO a) -> SessionM m ->  PushAction -> PullAction -> IO () 
+activateSessionManager session_start session push pull = let
+    input_to_session  = (chunkProducer (liftIO pull) "") $= inputToFrames
+    output_to_session = framesToOutput =$ (outputConsumer (liftIO . push))
+
+  in session_start $ do
+    (session_sink, session_source) <- session
+    liftIO $ forkIO $ session_start $ (input_to_session $$ session_sink)
+    -- This thread itself will take care of the outputs...
+    liftIO $ session_start $ (session_source $$ output_to_session) 
+    return ()
+
+
+
+    -- session_start
+    --   (
+    --     (chunkProducer (liftIO pull) "") $= inputToFrames =$= session =$= framesToOutput $$ (outputConsumer (liftIO . push))
+    --   )
 
 
 
