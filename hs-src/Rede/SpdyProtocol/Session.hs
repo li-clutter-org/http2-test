@@ -58,54 +58,66 @@ type SessionM = ReaderT SimpleSessionStateRecord
 -- Super-simple session manager without flow control and such.... 
 -- but using StreamWorkers already....
 -- TODO: without proper flow control, we are in troubles....
--- superSimpleSessionWithState :: Conduit AnyFrame (SessionM IO) AnyFrame
--- superSimpleSessionWithState = do
+superSimpleSessionWithState :: IO ( (Sink AnyFrame IO () ), (Source IO AnyFrame ) )
+superSimpleSessionWithState = do
+    input_mvar <- (newEmptyMVar :: IO (MVar AnyFrame))
+    packet_sink <- return $ createTrivialSink input_mvar
+    output_mvar <- (newEmptyMVar :: IO (MVar (Maybe AnyFrame)))
+    packet_source <- return $ createTrivialSource output_mvar
+    
 
---     -- Sends starting frames
---     startConduit
+    stream_inputs     <- newIORef $ MA.empty
+    session_record    <- return $ SimpleSessionStateRecord {
+        streamInputs = stream_inputs
+        }
 
---     session_record    <- lift $ ask
---     output_place      <- liftIO $ newEmptyMVar
+    forkIO $ processInput  session_record input_mvar 
+    forkIO $ processOutput session_record output_mvar 
 
---     processInput session_record output_place
-
+    return (packet_sink, packet_source)
     
                          
---   where
---     startConduit = yield $  wrapCF initialSettings
---     takesInput input_mvar = do 
---         anyframe <- liftIO $ takeMVar input_mvar
---         yield anyframe
---         -- TODO: Check for signs of stream termination 
---         takesInput input_mvar
---     streamConduit input_mvar output_mvar = ( (takesInput input_mvar)  $= inputPlug 
---             =$= (transPipe liftIO trivialWorker) 
---             =$= (outputPlug :: Conduit StreamOutputAction (StreamStateT IO) AnyFrame)
---             $$  ( CL.mapM_ $ \ any_frame -> liftIO $ putMVar output_mvar any_frame ) 
---         ) :: StreamStateT IO ()
---     iDropThisFrame  (SettingsFrame_ACF _ ) = True 
---     -- iDropThisFrame  (Ping_CFT) 
---     processInput session_record output_place = do 
+  where
 
---         maybe_anyframe <- await 
---         case maybe_anyframe of 
+    -- asyncWork :: (MVar AnyFrame) -> (MVar (Maybe AnyFrame)) -> SimpleSessionStateRecord -> IO ()
+    asyncWork input_mvar output_mvar session_state_record = do
 
---             -- Some of the frames won't be handled.
---             Just (AnyControl_AF control_frame)  | iDropThisFrame control_frame -> return () 
+    startConduit = yield $  wrapCF initialSettings
 
---             -- -- We started here 
---             -- Just (AnyControl_AF (PingFrame_ACF ping_frame)) -> _handle_ping_frame
+    -- streamConduit :: MVar AnyFrame -> MVar AnyFrame -> streamMonad ()
+    streamConduit input_mvar output_mvar = ( (takesInput input_mvar)  $= inputPlug 
+            =$= (transPipe liftIO trivialWorker) 
+            =$= (outputPlug :: Conduit StreamOutputAction (StreamStateT IO) AnyFrame)
+            $$  ( CL.mapM_ $ \ any_frame -> liftIO $ putMVar output_mvar any_frame ) 
+        ) :: StreamStateT IO ()
 
---             Just (AnyControl_AF (SynStream_ACF syn_stream)) ->  let 
---                     stream_id = streamIdFromFrame syn_stream
---                     inputs = streamInputs session_record
---                 in do 
---                     stream_inputs <- liftIO $ readIORef $ inputs
---                     input_place   <- liftIO $ newEmptyMVar
---                     liftIO $ writeIORef inputs $ MA.insert stream_id input_place stream_inputs
---                     liftIO $ forkIO $ initStreamState $ streamConduit input_place output_place
---                     return ()
---         processInput session_record output_place
+    -- iDropThisFrame :: AnyControlFrame -> Bool
+    iDropThisFrame  (SettingsFrame_ACF _ ) = True 
+    iDropThisFrame  _                      = False
+    -- IMPLEMENT: iDropThisFrame  (Ping_CFT) 
+
+    -- processInput :: Session
+    processInput session_record input_mvar = do 
+        anyframe <- takeMVar input_mvar
+        maybe_anyframe <- await 
+        case maybe_anyframe of 
+
+            -- Some of the frames won't be handled.
+            Just (AnyControl_AF control_frame)  | iDropThisFrame control_frame -> return () 
+
+            -- -- We started here 
+            -- Just (AnyControl_AF (PingFrame_ACF ping_frame)) -> _handle_ping_frame
+
+            Just (AnyControl_AF (SynStream_ACF syn_stream)) ->  let 
+                    stream_id = streamIdFromFrame syn_stream
+                    inputs = streamInputs session_record
+                in do 
+                    stream_inputs <- liftIO $ readIORef $ inputs
+                    input_place   <- liftIO $ newEmptyMVar
+                    liftIO $ writeIORef inputs $ MA.insert stream_id input_place stream_inputs
+                    liftIO $ forkIO $ initStreamState $ streamConduit input_place output_place
+                    return ()
+        processInput session_record output_place
 
 
 
@@ -123,36 +135,14 @@ showHeadersIfPresent _ = return ()
 -- Just for testing
 trivialSession  :: IO ( (Sink AnyFrame IO () ), (Source IO AnyFrame ) )
 trivialSession  = do 
-
-
     input_mvar <- (newEmptyMVar :: IO (MVar AnyFrame))
-    packet_sink <- return $ createSink input_mvar
+    packet_sink <- return $ createTrivialSink input_mvar
     output_mvar <- (newEmptyMVar :: IO (MVar (Maybe AnyFrame)))
-    packet_source <- return $ createSource output_mvar
+    packet_source <- return $ createTrivialSource output_mvar
     forkIO $ trivialAsync input_mvar output_mvar
     return (packet_sink, packet_source)
 
   where 
-
-    -- MVar AnyFrame -> Sink AnyFrame IO
-    createSink input_mvar = do 
-        anyframe_maybe <- await 
-        case anyframe_maybe of 
-            Just anyframe -> do 
-                liftIO $ putMVar input_mvar anyframe
-                createSink input_mvar
-            Nothing -> return () 
-
-    -- MVar AnyFrame -> Source (Maybe AnyFrame) IO
-    createSource output_mvar = do 
-        anyframe_maybe <- liftIO $ readMVar output_mvar
-        case anyframe_maybe of 
-            Just anyframe -> do
-                yield anyframe
-                createSource output_mvar
-            Nothing       -> do
-                return () -- (done)
-
 
     -- IO ()
     trivialAsync input_mvar output_mvar = do 
@@ -163,5 +153,21 @@ trivialSession  = do
         pck3 <- takeMVar input_mvar
         putStrLn $ show pck3
 
+createTrivialSink :: MVar AnyFrame -> Sink AnyFrame IO
+createTrivialSink input_mvar = do 
+    anyframe_maybe <- await 
+    case anyframe_maybe of 
+        Just anyframe -> do 
+            liftIO $ putMVar input_mvar anyframe
+            createTrivialSink input_mvar
+        Nothing -> return () 
 
- 
+createTrivialSource ::  MVar AnyFrame -> Source (Maybe AnyFrame) IO
+createTrivialSource output_mvar = do 
+    anyframe_maybe <- liftIO $ readMVar output_mvar
+    case anyframe_maybe of 
+        Just anyframe -> do
+            yield anyframe
+            createTrivialSource output_mvar
+        Nothing       -> do
+            return () -- (done)
