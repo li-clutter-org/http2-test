@@ -5,11 +5,13 @@
 module Rede.MainLoop.Tokens(
 	packHeaderTuples
 	,unpackHeaderTuples
+    ,getHeader
 
 	,UnpackedNameValueList (..)
-	,StreamInputToken     (..)
-	,StreamOutputAction   (..)
+	,StreamInputToken      (..)
+	,StreamOutputAction    (..)
 	,StreamWorker
+    ,SessionMonad          (..)
 	) where 
 
 
@@ -21,7 +23,7 @@ import           Data.Binary.Put (putWord32be, putByteString)
 import qualified Data.ByteString as B
 import qualified Data.ByteString as BS
 import           Data.Conduit    (Conduit)
-import           Data.List       (sortBy)
+import           Data.List       (sortBy, find)
 import           Data.Word
 
 
@@ -36,6 +38,7 @@ data StreamInputToken =  Headers_STk  UnpackedNameValueList
                         | Finish_Stk
                         deriving Show
 
+
 data StreamOutputAction = SendHeaders_SOA UnpackedNameValueList 
                         | SendData_SOA B.ByteString 
                         | Finish_SOA
@@ -43,6 +46,11 @@ data StreamOutputAction = SendHeaders_SOA UnpackedNameValueList
 
 
 type StreamWorker = Conduit StreamInputToken IO StreamOutputAction
+
+
+-- TODO: this is part of a less ad-hoc design...
+class Monad s => SessionMonad s where 
+    spanWorker :: s StreamWorker
 
  
 instance Binary UnpackedNameValueList where 
@@ -71,7 +79,6 @@ instance Binary UnpackedNameValueList where
             return $ unpackHeaderTuples packed_entries     
 
 
-
 -- Just puts them together, as per the spec
 packHeaderTuples ::  UnpackedNameValueList -> [(BS.ByteString, BS.ByteString)]
 packHeaderTuples (UnpackedNameValueList uvl) = let
@@ -95,3 +102,11 @@ unpackHeaderTuples vl  =    UnpackedNameValueList $ step vl
     valueSplit v = BS.split 0 v
     step [] = []
     step ((h,v):rest) = [ (h,vv) | vv <- valueSplit v ] ++ (step rest) 
+
+
+getHeader :: UnpackedNameValueList -> BS.ByteString -> Maybe BS.ByteString
+getHeader (UnpackedNameValueList unvl) bs = 
+    case find (\ (x,_) -> x==bs ) unvl of
+        Just (_, found_value)  -> Just found_value 
+
+        Nothing                -> Nothing  

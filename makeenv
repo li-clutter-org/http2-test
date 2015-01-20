@@ -1,4 +1,4 @@
 export PATH=/home/alcides/.cabal/bin:/usr/local/haskell/ghc-7.8.3-x86_64/bin/:$PATH
 THIS_DIR=$(dirname `readlink -f ${BASH_SOURCE[0]}`)
-export KEL_DATA_DIR=$THIS_DIR/share/
+export KEL_DATA_DIR=$THIS_DIR/kel-data-dir/
 export PATH=$THIS_DIR/.cabal-sandbox/bin:$PATH

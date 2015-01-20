@@ -10,7 +10,7 @@ import qualified Data.ByteString.Lazy         as BL
 import           Rede.SimpleHTTP1Response (exampleHTTP11Response)
 import           Rede.MainLoop.PushPullType
 import           Rede.MainLoop.Conduit
-import           Rede.SpdyProtocol.Session(superSimpleSessionWithState)
+import           Rede.SpdyProtocol.Session(basicSession)
 -- import           Rede.Test(dotests)
 
 
@@ -35,5 +35,5 @@ httpAttendant push _ =
 spdyAttendant :: PushAction -> PullAction -> IO () 
 spdyAttendant = activateSessionManager 
 	id
-	superSimpleSessionWithState
+	basicSession
  

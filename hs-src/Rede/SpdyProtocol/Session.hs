@@ -1,7 +1,7 @@
 
 module Rede.SpdyProtocol.Session(
     -- trivialSession
-    superSimpleSessionWithState
+    basicSession
     ,showHeadersIfPresent
     ) where
 
@@ -29,7 +29,7 @@ import           Rede.SpdyProtocol.Framing.KeyValueBlock
 import qualified Rede.SpdyProtocol.Framing.Settings      as SeF
 import qualified Rede.SpdyProtocol.Framing.SynStream     as SyS
 import           Rede.SpdyProtocol.Streams.State
-import           Rede.SpdyProtocol.TrivialTestWorker     (trivialWorker)
+import           Rede.SpdyProtocol.TrivialTestWorker     (fsWorker)
 
 
 
@@ -66,8 +66,8 @@ type SessionM = ReaderT SimpleSessionStateRecord
 -- | Super-simple session manager without flow control and such.... 
 -- but using StreamWorkers already....
 -- TODO: without proper flow control, we are in troubles....
-superSimpleSessionWithState :: IO ( (Sink AnyFrame IO () ), (Source IO AnyFrame ) )
-superSimpleSessionWithState = do
+basicSession :: IO ( (Sink AnyFrame IO () ), (Source IO AnyFrame ) )
+basicSession = do
 
     -- Create the input record.... 
     stream_inputs     <- newMVar $ MA.empty
@@ -76,11 +76,6 @@ superSimpleSessionWithState = do
     send_zlib_mvar    <- newMVar send_zlib
     recv_zlib         <- Z.initInflateWithDictionary Z.defaultWindowBits zLibInitDict
     recv_zlib_mvar    <- newMVar recv_zlib
-
- 
-    -- streamInit <- return $ 
-    --     \ stream_id fin -> initStreamState stream_id fin send_zlib recv_zlib 
-
 
     session_record    <- return $ SimpleSessionStateRecord {
         streamInputs = stream_inputs
@@ -106,9 +101,9 @@ takesInput input_mvar = do
 
 streamConduit :: MVar AnyFrame -> MVar  AnyFrame -> StreamStateT IO ()
 streamConduit input_mvar drop_output_here_mvar = (takesInput input_mvar)  $= inputPlug 
-        =$= (transPipe liftIO trivialWorker) 
+        =$= (transPipe liftIO fsWorker) 
         =$= (outputPlug :: Conduit StreamOutputAction (StreamStateT IO) AnyFrame)
-        $$  (streamOutput drop_output_here_mvar) 
+        $$  (streamOutput drop_output_here_mvar)
 
 
 -- | Takes output from the stream conduit and puts it on the output mvar. 
