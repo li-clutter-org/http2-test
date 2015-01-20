@@ -9,6 +9,7 @@ module Rede.SpdyProtocol.Framing.Frame(
     ,bitsetToWord8
     ,word8ToBitset
     ,resetControlFrameSize
+    ,fbs0
     ,fbs
     ,fbs1
 
@@ -35,6 +36,9 @@ import           Rede.Utils(getWord24be, putWord24be)
 
 
 type FlagsBitSet = GenericBitset.BitSet Word8
+
+fbs0 :: Enum a => FlagsBitSet a 
+fbs0 = GenericBitset.empty
 
 fbs :: Enum a => [a] -> FlagsBitSet a 
 fbs l = GenericBitset.fromList l

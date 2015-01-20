@@ -6,15 +6,14 @@ module Rede.SpdyProtocol.Framing.DataFrame(
 import           Data.Bits
 -- import Data.Enum
 import           Data.Binary            (Binary, get, getWord8, put, putWord8)
-import           Data.Binary.Get        (getWord32be)
-import           Data.Binary.Put        (putWord32be)
+import           Data.Binary.Get        (getWord32be, getByteString)
+import           Data.Binary.Put        (putWord32be, putByteString)
 import           Rede.SpdyProtocol.Framing.Frame (FlagsBitSet, bitsetToWord8, word8ToBitset)
 import           Rede.Utils             (getWord24be, putWord24be)
 import qualified Data.ByteString  as B 
 
 
-data DataFrameValidFlags = None_F
-	| Fin_F   -- Signals stream termination
+data DataFrameValidFlags = Fin_F   -- Signals stream termination
 	deriving (Show, Enum)
 
 
@@ -33,14 +32,14 @@ instance Binary DataFrame where
 		putWord32be $ fromIntegral $ (stream_id .&. 2147483647)
 		putWord8 $ bitsetToWord8 flags
 		putWord24be $ B.length bs_payload 
-		put bs_payload
+		putByteString bs_payload
 
 	get = 
 	  do
 	  	stream_id <- getWord32be
 	  	flags_word <- getWord8
-	  	_ <- getWord24be
-	  	bs_payload <- get
+	  	data_length <- getWord24be
+	  	bs_payload <- getByteString data_length
 	  	return $ DataFrame
 	  		(fromIntegral stream_id) 
 	  		(word8ToBitset flags_word)

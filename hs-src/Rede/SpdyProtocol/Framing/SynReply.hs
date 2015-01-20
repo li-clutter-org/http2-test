@@ -22,8 +22,7 @@ import           Rede.SpdyProtocol.Framing.KeyValueBlock (CompressedKeyValueBloc
 
 
 
-data SynReplyValidFlags = None_SRVF 
-                         |Fin_SRVF
+data SynReplyValidFlags = Fin_SRVF
     deriving (Show, Enum)
 
 
@@ -38,7 +37,7 @@ data SynReplyFrame =
 
 
 instance Default (ControlFrame SynReplyValidFlags) where 
-    def = ControlFrame SynReply_CFT (fbs1 None_SRVF) 0
+    def = ControlFrame SynReply_CFT fbs0 0
 
 
 instance HasFrameFlags SynReplyFrame SynReplyValidFlags where 

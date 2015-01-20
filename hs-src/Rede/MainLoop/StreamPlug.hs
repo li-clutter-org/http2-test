@@ -23,13 +23,11 @@ class IdStream frame where
     idStream :: frame -> Maybe StreamId 
 
 
--- This interface says: m is a Monad that you can easily 
--- materialize out of thin IO-air, nothing is required 
--- from the embedded session (is this in general possible? 
--- I would answer yes for SPDY... so far). That's way 
--- "initStreamPlugs" can drop the monad in the IO space.
+-- This interface says: m is a Monad that you need to materialize
+-- from the embedding session somehow, everything else can be 
+-- well-encapsulated in this computation...
 class MonadIO m => StreamPlug m frame | m -> frame where
     inputPlug        :: Conduit frame m StreamInputToken
     outputPlug       :: Conduit StreamOutputAction m frame
-    initStreamPlugs  :: m a -> IO a
+
 

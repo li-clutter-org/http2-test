@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings, ExistentialQuantification, Rank2Types #-}
 
 
-module Rede.MainLoop.Conduit (
+module Rede.MainLoop.Conduit ( 
   Session
   ,activateSessionManager
   ) where 
@@ -54,15 +54,26 @@ inputToFrames = CL.map $ \ the_bytes -> let
     readFrame the_bytes perfunct_classif 
 
 
-framesToOutput :: Monad m => C.Conduit AnyFrame m LB.ByteString
-framesToOutput = CL.map $ \ the_frame ->  
-    runPut $ writeFrame the_frame
+framesToOutput :: MonadIO m => C.Conduit AnyFrame m LB.ByteString
+framesToOutput =  do  
+    the_frame_maybe <- await
+    case the_frame_maybe of 
+      (Just the_frame)    -> do
+        serialized <- return $ runPut $ writeFrame the_frame
+        C.yield serialized
+        framesToOutput
+      Nothing             -> return ()
   
 
 outputConsumer :: Monad m => (LB.ByteString -> m () ) -> C.Sink LB.ByteString m ()
 outputConsumer pushToWire = CL.mapM_ pushToWire
 
 
+-- | Creates the session source and the session sink. The session source is where 
+--   output frames appear, and the session sink is where input frames dissapear (this, 
+--   is is the entrance to the session manager). The session sink runs in its own 
+--   thread, while the session source runs in this thread. This manager exits when 
+--   the session source exits.
 activateSessionManager :: MonadIO m =>  (forall a . m a -> IO a) -> SessionM m ->  PushAction -> PullAction -> IO () 
 activateSessionManager session_start session push pull = let
     input_to_session  = (chunkProducer (liftIO pull) "") $= inputToFrames
@@ -72,15 +83,10 @@ activateSessionManager session_start session push pull = let
     (session_sink, session_source) <- session
     liftIO $ forkIO $ session_start $ (input_to_session $$ session_sink)
     -- This thread itself will take care of the outputs...
+    liftIO $ putStrLn "Taking care of the outputs"
     liftIO $ session_start $ (session_source $$ output_to_session) 
     return ()
 
-
-
-    -- session_start
-    --   (
-    --     (chunkProducer (liftIO pull) "") $= inputToFrames =$= session =$= framesToOutput $$ (outputConsumer (liftIO . push))
-    --   )
 
 
 

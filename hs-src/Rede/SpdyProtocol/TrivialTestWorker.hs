@@ -7,6 +7,7 @@ module Rede.SpdyProtocol.TrivialTestWorker(
 
 import Data.Conduit
 import qualified Data.ByteString as B
+-- import           Control.Monad.IO.Class
 import Data.ByteString.Char8(pack)
 
 import Rede.MainLoop.Tokens     (StreamWorker
@@ -15,7 +16,7 @@ import Rede.MainLoop.Tokens     (StreamWorker
                                  ,UnpackedNameValueList (..)
                                 )
 
-import Rede.SimpleHTTP1Response (exampleHTTP11Response)
+import Rede.SimpleHTTP1Response (shortResponse)
 
 
 trivialWorker :: StreamWorker
@@ -27,10 +28,14 @@ trivialWorker = do
 
         Just (Headers_STk _) -> do
             yield $ SendHeaders_SOA $ UnpackedNameValueList  [
-                ("content-length", (pack.show $ B.length exampleHTTP11Response))
+                 (":status", "200")
+                ,(":version", "HTTP/1.1")
+                ,("content-length", (pack.show $ B.length shortResponse))
                 ,("content-type", "text/html")
-                ,("server", "ReH v 0.0")
+                ,("server", "ReHv0.0")
                 ]
-            yield $ SendData_SOA exampleHTTP11Response
+            yield $ SendData_SOA shortResponse
+            yield $ Finish_SOA
+            -- liftIO $ putStrLn $ "Shit sent"
 
 

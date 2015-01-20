@@ -13,10 +13,11 @@ module Rede.MainLoop.Tokens(
 	) where 
 
 
+
 import           Control.Monad   (forM_, replicateM)
 import           Data.Binary     (Binary, get, put)
 import           Data.Binary.Get (getByteString, getWord32be)
-import           Data.Binary.Put (putWord32be)
+import           Data.Binary.Put (putWord32be, putByteString)
 import qualified Data.ByteString as B
 import qualified Data.ByteString as BS
 import           Data.Conduit    (Conduit)
@@ -43,16 +44,17 @@ data StreamOutputAction = SendHeaders_SOA UnpackedNameValueList
 
 type StreamWorker = Conduit StreamInputToken IO StreamOutputAction
 
-
+ 
 instance Binary UnpackedNameValueList where 
     put unvl = 
         do 
             putWord32be length32
             forM_ packed $ \ (h,v) -> do 
                 putWord32be $ fromIntegral (BS.length h)
-                put h 
+                putByteString h
+
                 putWord32be $ fromIntegral (BS.length v)
-                put v
+                putByteString v
       where 
         length32 = (fromIntegral $ length packed)::Word32 
         packed = packHeaderTuples unvl
@@ -68,8 +70,6 @@ instance Binary UnpackedNameValueList where
                 ; return (name, value) }
             return $ unpackHeaderTuples packed_entries     
 
-   
-        
 
 
 -- Just puts them together, as per the spec

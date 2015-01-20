@@ -46,7 +46,6 @@ greet CmdConfig{ host=h, port=p} = do
             , N.connectionUseSocks = Nothing
         }
     basicPingProgram (N.connectionGet con 4096) (N.connectionPut con)
-      -- putStrLn $ show $ readFrame $ LB.fromChunks [r]
     N.connectionClose con
     return ()
 

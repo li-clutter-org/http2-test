@@ -168,6 +168,13 @@ tlsServe session_attendant interface_name interface_port = do
       T.bye ctx
 
 
+-- | After the Next-Protocol-Negotiation (or its current counter-part), 
+--   this function decides who is going to take care of the serving the 
+--   protocol. A greenlet thread is forked to take care of it.
+--   First argument is a list of protocol names and the Attendant functions. 
+--   The second argument is the IP address of the network interface where
+--   the TLS socket will listen. The third argument is the port number of 
+--   said socket.
 tlsServeProtocols :: [ (String, Attendant) ] -> String -> Int -> IO ()
 tlsServeProtocols attendants interface_name interface_port = do  
     tid <- myThreadId
@@ -194,11 +201,13 @@ tlsServeProtocols attendants interface_name interface_port = do
       
         rd <- return $ (T.recvData ctx) 
         sd <- return $ (T.sendData ctx)
-        
+
+
         forkIO $ do 
-            session_attendant sd rd
-            threadDelay 1000000
-            T.bye ctx 
-            sClose s
-            putStrLn "Socket closed"
+             session_attendant sd rd 
+             putStrLn "Session attendant off"
+             threadDelay 1000000
+             T.bye ctx
+             sClose s
+             putStrLn "Socket closed"
         return ()
