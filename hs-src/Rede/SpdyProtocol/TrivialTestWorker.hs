@@ -10,7 +10,7 @@ import qualified Data.ByteString          as B
 import           Data.Conduit
 import           Control.Monad.IO.Class
 import           Data.ByteString.Char8    (pack, unpack)
-import           Data.List(isInfixOf, find)
+import           Data.List(isInfixOf, find, isSuffixOf)
 import qualified Network.URI as U
 import           System.Directory (doesFileExist)
 import           System.FilePath
@@ -64,24 +64,25 @@ fsWorker = do
 
                 (Just uu, "GET") -> do
                     liftIO $ putStrLn $ "Got relUri= " ++ the_path
-                    maybe_contents <- liftIO $ fetchFile www_dir relativized_path
-                    case maybe_contents of 
-                        Just contents -> do
-                            mimetype <- return $ getRelPathMime the_path
-                            yield $ SendHeaders_SOA $ UnpackedNameValueList  [
-                                 (":status", "200")
-                                ,(":version", "HTTP/1.1")
-                                ,("content-length", (pack.show $ B.length contents))
-                                ,("content-type",  mimetype)
+                    if  (".." `isInfixOf` the_path ) then 
+                        send404 
+                    else do
+                        full_path <- return $ www_dir </> relativized_path
+                        maybe_contents <- liftIO $ fetchFile full_path
+                        case maybe_contents of 
 
-                                -- TODO here: set the no-cache headers .... 
+                            Just contents -> do
+                                sendResponse the_path contents
 
-                                ,("server", "ReHv0.0")
-                                ]
-                            yield $ SendData_SOA contents
-                            yield $ Finish_SOA
+                            -- TODO: Refactor and remove duplications
+                            Nothing ->  do 
+                                check <- liftIO $ pathGoesToIndex full_path relativized_path
+                                case check of 
+                                    Just index_fname -> do
+                                        Just contents2 <- liftIO $ fetchFile index_fname
+                                        sendResponse index_fname contents2 
 
-                        Nothing -> send404
+                                    Nothing -> send404
                   where 
                     the_path = U.uriPath uu
                     relativized_path = tail the_path
@@ -96,27 +97,53 @@ fsWorker = do
             (Just method)   = getHeader headers ":method"
 
 
-fetchFile :: String -> String ->  IO (Maybe B.ByteString)
-fetchFile root_dir rel_path  = do
-    putStrLn full_path
-    -- Very primitive sanitation of rel_path
-    if ".." `isInfixOf` rel_path then 
-        return Nothing 
-    else 
-        do 
-            exists <- doesFileExist full_path
-            if exists then
-              do 
-                contents <- B.readFile full_path
-                putStrLn "EXISTS"
-                return $ Just contents
-            else 
-              do 
-                putStrLn "Notexists"
-                return $ Nothing
-  where 
-    full_path = root_dir </> rel_path
+sendResponse :: String -> B.ByteString -> StreamWorker
+sendResponse the_path contents = do 
+    mimetype <- return $ getRelPathMime the_path
+    yield $ SendHeaders_SOA $ UnpackedNameValueList  [
+         (":status", "200")
+        ,(":version", "HTTP/1.1")
+        ,("content-length", (pack.show $ B.length contents))
+        ,("content-type",  mimetype)
 
+        -- TODO here: set the no-cache headers .... 
+
+        ,("server", "ReHv0.0")
+        ]
+    yield $ SendData_SOA contents
+    yield $ Finish_SOA
+
+
+
+pathGoesToIndex :: String -> String -> IO (Maybe String)
+pathGoesToIndex abs_path relpath = do 
+    if perhaps then do
+        b <- doesFileExist index_html
+        if b then 
+            return $ Just index_html 
+        else
+            return Nothing
+    else
+        return Nothing
+  where
+    perhaps = "/" `isSuffixOf` abs_path || relpath == ""
+    index_html = if relpath == "" then
+        abs_path ++ "/index.html"
+    else 
+        abs_path ++ "index.html"
+
+
+fetchFile :: String ->  IO (Maybe B.ByteString)
+fetchFile full_path  = do
+    exists <- doesFileExist full_path
+    if exists then
+      do 
+        contents <- B.readFile full_path
+        return $ Just contents
+    else 
+      do 
+        return $ Nothing
+ 
 
 bad404ResponseData :: B.ByteString 
 bad404ResponseData = "404: ReH: Didn't find that"

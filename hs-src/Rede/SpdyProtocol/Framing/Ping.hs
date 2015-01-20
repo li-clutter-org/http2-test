@@ -17,6 +17,7 @@ import           Data.Default
 data PingFrameValidFlags = None_F
 	deriving (Show, Enum)
 
+
 data PingFrame = 
 	PingFrame {
 		prologue:: ControlFrame PingFrameValidFlags 

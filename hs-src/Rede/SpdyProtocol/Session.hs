@@ -23,6 +23,7 @@ import qualified Data.Map                                as MA
 
 import           Rede.SpdyProtocol.Framing.AnyFrame
 import           Rede.SpdyProtocol.Framing.Frame
+import           Rede.SpdyProtocol.Framing.Ping
 -- import qualified Rede.SpdyProtocol.Framing.GoAway        as GoA
 import           Rede.MainLoop.StreamPlug
 import           Rede.SpdyProtocol.Framing.KeyValueBlock
@@ -146,16 +147,25 @@ statefulSink  somebody_drops_outputs_here  = do
 
 
     case anyframe_maybe of 
+
         Just anyframe -> do 
 
             case anyframe of 
 
                 (AnyControl_AF control_frame)  | iDropThisFrame control_frame -> do 
                     liftIO $ putStrLn $ "Frame dropped: " ++ (show control_frame)
-                    return () 
+                    continue -- ##
 
-                -- -- We started here 
-                -- (AnyControl_AF (PingFrame_ACF ping_frame)) -> _handle_ping_frame
+                -- We started here: sending ping requests.... often we also 
+                -- need to answer to them...
+                (AnyControl_AF (PingFrame_ACF ping_frame)) -> do
+                    case handlePingFrame ping_frame of 
+                        Just  answer ->
+                            liftIO $ putMVar somebody_drops_outputs_here $ wrapCF answer 
+                        Nothing      ->
+                            return ()
+                    continue -- ##
+
 
                 frame@(AnyControl_AF (SynStream_ACF syn_stream)) ->  let 
                         stream_id = streamIdFromFrame syn_stream
@@ -170,15 +180,28 @@ statefulSink  somebody_drops_outputs_here  = do
                         liftIO $ putMVar inputs $ MA.insert stream_id input_place stream_inputs
                         liftIO $ forkIO $ stream_init stream_id fin $ streamConduit input_place somebody_drops_outputs_here
                         liftIO $ putMVar input_place frame
-                        return ()
+                        continue -- ##
 
                 frame -> do 
                         liftIO $ putStrLn  $ "Dont't know how to handle ... " ++ (show frame)
+                        continue -- ##
+
+                (AnyControl_AF (GoAwayFrame_ACF goaway)) -> do 
+                        -- To test: the socket should be closed here
+                        liftIO $ putStrLn $ "GOAWAY (closing this sink) " ++ (show goaway)
+                        -- Don't continue here
             
             -- Come and recurse... 
-            statefulSink somebody_drops_outputs_here
-
+           
         Nothing -> return ()  -- So must one finish here...
+  where 
+    continue =  statefulSink somebody_drops_outputs_here
+
+
+
+handlePingFrame :: PingFrame -> Maybe PingFrame
+handlePingFrame p@(PingFrame _ frame_id) |  odd frame_id = Just p
+handlePingFrame _ = Nothing  
 
 
 showHeadersIfPresent ::  AnyFrame -> StreamStateT IO ()
@@ -198,7 +221,7 @@ createTrivialSource output_mvar = do
     createTrivialSourceLoop = do
         anyframe <- liftIO $ (takeMVar output_mvar :: IO AnyFrame)
 
-        liftIO $ putStrLn $ "SENDING: " ++ (show anyframe)
+        -- liftIO $ putStrLn $ "SENDING: " ++ (show anyframe)
         yield anyframe
         createTrivialSourceLoop
 
