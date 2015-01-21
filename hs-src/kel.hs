@@ -11,6 +11,8 @@ import           Rede.SimpleHTTP1Response (exampleHTTP11Response)
 import           Rede.MainLoop.PushPullType
 import           Rede.MainLoop.Conduit
 import           Rede.SpdyProtocol.Session(basicSession)
+import           Rede.SpdyProtocol.TrivialTestWorker(FsWorkerServicePocket)
+import           Rede.MainLoop.Tokens
 -- import           Rede.Test(dotests)
 
 
@@ -33,7 +35,7 @@ httpAttendant push _ =
 
 
 spdyAttendant :: PushAction -> PullAction -> IO () 
-spdyAttendant = activateSessionManager 
-	id
-	basicSession
+spdyAttendant push pull = do 
+	fs_worker_service_pocket <- initService :: IO FsWorkerServicePocket
+	activateSessionManager 	id (basicSession fs_worker_service_pocket) push pull
  

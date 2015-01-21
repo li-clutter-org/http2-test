@@ -1,4 +1,4 @@
-
+{-# LANGUAGE FlexibleContexts, Rank2Types #-}
 module Rede.SpdyProtocol.Session(
     -- trivialSession
     basicSession
@@ -30,7 +30,7 @@ import           Rede.SpdyProtocol.Framing.KeyValueBlock
 import qualified Rede.SpdyProtocol.Framing.Settings      as SeF
 import qualified Rede.SpdyProtocol.Framing.SynStream     as SyS
 import           Rede.SpdyProtocol.Streams.State
-import           Rede.SpdyProtocol.TrivialTestWorker     (fsWorker)
+import           Rede.MainLoop.Tokens
 
 
 
@@ -67,16 +67,20 @@ type SessionM = ReaderT SimpleSessionStateRecord
 -- | Super-simple session manager without flow control and such.... 
 -- but using StreamWorkers already....
 -- TODO: without proper flow control, we are in troubles....
-basicSession :: IO ( (Sink AnyFrame IO () ), (Source IO AnyFrame ) )
-basicSession = do
+basicSession :: (StreamWorkerClass  servicePocket sessionPocket) =>
+  servicePocket -> IO ( (Sink AnyFrame IO () ), (Source IO AnyFrame ) )
+basicSession worker_service_pocket = do
 
     -- Create the input record.... 
-    stream_inputs     <- newMVar $ MA.empty
-    output_mvar       <- (newEmptyMVar :: IO (MVar AnyFrame) )
-    send_zlib         <- Z.initDeflateWithDictionary 2 zLibInitDict Z.defaultWindowBits
-    send_zlib_mvar    <- newMVar send_zlib
-    recv_zlib         <- Z.initInflateWithDictionary Z.defaultWindowBits zLibInitDict
-    recv_zlib_mvar    <- newMVar recv_zlib
+    stream_inputs         <- newMVar $ MA.empty
+    output_mvar           <- (newEmptyMVar :: IO (MVar AnyFrame) )
+    send_zlib             <- Z.initDeflateWithDictionary 2 zLibInitDict Z.defaultWindowBits
+    send_zlib_mvar        <- newMVar send_zlib
+    recv_zlib             <- Z.initInflateWithDictionary Z.defaultWindowBits zLibInitDict
+    recv_zlib_mvar        <- newMVar recv_zlib
+    worker_session_pocket <- initSession worker_service_pocket
+    -- Preserve the IO wrapper
+    make_worker           <- return $ initStream worker_service_pocket worker_session_pocket
 
     session_record    <- return $ SimpleSessionStateRecord {
         streamInputs = stream_inputs
@@ -86,7 +90,7 @@ basicSession = do
         }
 
 
-    packet_sink <- return $ transPipe (\ x -> runReaderT x session_record)  (statefulSink output_mvar)
+    packet_sink <- return $ transPipe (\ x -> runReaderT x session_record)  (statefulSink make_worker output_mvar)
     packet_source <- return (createTrivialSource output_mvar)
     
     return (packet_sink, packet_source)
@@ -100,11 +104,18 @@ takesInput input_mvar = do
     takesInput input_mvar
 
 
-streamConduit :: MVar AnyFrame -> MVar  AnyFrame -> StreamStateT IO ()
-streamConduit input_mvar drop_output_here_mvar = (takesInput input_mvar)  $= inputPlug 
-        =$= (transPipe liftIO fsWorker) 
-        =$= (outputPlug :: Conduit StreamOutputAction (StreamStateT IO) AnyFrame)
-        $$  (streamOutput drop_output_here_mvar)
+plugStream :: 
+    IO StreamWorker ->
+    MVar AnyFrame -> MVar  AnyFrame -> IO ( StreamStateT IO () )
+plugStream 
+    workerStart
+    input_mvar 
+    drop_output_here_mvar = do 
+        worker <-  workerStart
+        return  (( (takesInput input_mvar)  $= inputPlug 
+            =$= (transPipe liftIO (worker::StreamWorker)) 
+            =$= (outputPlug :: Conduit StreamOutputAction (StreamStateT IO) AnyFrame)
+            $$  (streamOutput drop_output_here_mvar) ))
 
 
 -- | Takes output from the stream conduit and puts it on the output mvar. 
@@ -138,9 +149,13 @@ iDropThisFrame  (WindowUpdateFrame_ACF _ )    = True
 iDropThisFrame  _                             = False
 
 
-
-statefulSink :: MVar  AnyFrame -> Sink AnyFrame (SessionM IO) ()
-statefulSink  somebody_drops_outputs_here  = do 
+-- | Takes a stream worker constructor and properly sets its connections so that 
+--   it can take and place data in the multi-threaded pipeline.
+statefulSink :: 
+    IO StreamWorker                        -- ^ When needed, create a new stream worker here.
+    -> MVar  AnyFrame                      -- ^ All outputs of this session should be placed here
+    -> Sink AnyFrame (SessionM IO) ()      
+statefulSink  init_worker somebody_drops_outputs_here  = do 
     anyframe_maybe <- await 
     session_record <- lift $ ask
     stream_init     <- return $ streamInit session_record 
@@ -173,13 +188,16 @@ statefulSink  somebody_drops_outputs_here  = do
                         fin = do 
                             stream_inputs <- takeMVar inputs
                             putMVar inputs $ MA.delete stream_id stream_inputs 
+                        stream_create = do 
+                            putStrLn $ "Opening stream " ++ (show stream_id)
+                            stream_inputs <- takeMVar inputs
+                            input_place   <- newEmptyMVar
+                            stream_worker <- plugStream init_worker input_place somebody_drops_outputs_here
+                            putMVar inputs $ MA.insert stream_id input_place stream_inputs
+                            forkIO $ stream_init stream_id fin $ stream_worker
+                            putMVar input_place frame    
                     in do 
-                        liftIO $ putStrLn $ "Opening stream " ++ (show stream_id)
-                        stream_inputs <- liftIO $ takeMVar inputs
-                        input_place   <- liftIO $ newEmptyMVar
-                        liftIO $ putMVar inputs $ MA.insert stream_id input_place stream_inputs
-                        liftIO $ forkIO $ stream_init stream_id fin $ streamConduit input_place somebody_drops_outputs_here
-                        liftIO $ putMVar input_place frame
+                        liftIO stream_create 
                         continue -- ##
 
                 frame -> do 
@@ -195,7 +213,7 @@ statefulSink  somebody_drops_outputs_here  = do
            
         Nothing -> return ()  -- So must one finish here...
   where 
-    continue =  statefulSink somebody_drops_outputs_here
+    continue =  statefulSink init_worker somebody_drops_outputs_here
 
 
 

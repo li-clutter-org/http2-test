@@ -1,6 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
-
+{-# LANGUAGE FunctionalDependencies, FlexibleInstances  #-} 
 
 module Rede.MainLoop.Tokens(
 	packHeaderTuples
@@ -11,7 +11,7 @@ module Rede.MainLoop.Tokens(
 	,StreamInputToken      (..)
 	,StreamOutputAction    (..)
 	,StreamWorker
-    ,SessionMonad          (..)
+    ,StreamWorkerClass     (..)
 	) where 
 
 
@@ -33,6 +33,8 @@ newtype UnpackedNameValueList = UnpackedNameValueList [(B.ByteString, B.ByteStri
     deriving Show
 
 
+
+
 data StreamInputToken =  Headers_STk  UnpackedNameValueList
                         | Data_Stk     B.ByteString
                         | Finish_Stk
@@ -48,9 +50,16 @@ data StreamOutputAction = SendHeaders_SOA UnpackedNameValueList
 type StreamWorker = Conduit StreamInputToken IO StreamOutputAction
 
 
--- TODO: this is part of a less ad-hoc design...
-class Monad s => SessionMonad s where 
-    spanWorker :: s StreamWorker
+class StreamWorkerClass  servicePocket sessionPocket | 
+        servicePocket -> sessionPocket,
+        sessionPocket -> servicePocket where
+
+    initService :: IO servicePocket
+
+    initSession :: servicePocket -> IO sessionPocket
+
+    initStream :: servicePocket -> sessionPocket ->  IO StreamWorker
+
 
  
 instance Binary UnpackedNameValueList where 

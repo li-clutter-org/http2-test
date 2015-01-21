@@ -1,29 +1,38 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings 
+            , GeneralizedNewtypeDeriving
+            , TypeSynonymInstances
+            , FlexibleInstances 
+            , MultiParamTypeClasses
+            #-}
 
 module Rede.SpdyProtocol.TrivialTestWorker(
     trivialWorker
     ,fsWorker
+    ,FsWorkerServicePocket
+    ,FsWorkerSessionPocket
     ) where
 
 
-import qualified Data.ByteString          as B
-import           Data.Conduit
 import           Control.Monad.IO.Class
-import           Data.ByteString.Char8    (pack, unpack)
-import           Data.List(isInfixOf, find, isSuffixOf)
-import qualified Network.URI as U
-import           System.Directory (doesFileExist)
+import qualified Data.ByteString            as B
+import           Data.ByteString.Char8      (pack, unpack)
+import           Data.Conduit
+import           Data.List                  (find, isInfixOf, isSuffixOf)
+import qualified Network.URI                as U
+import           System.Directory           (doesFileExist)
 import           System.FilePath
 
 
 
-import           Rede.MainLoop.Tokens     (StreamInputToken (..),
-                                           StreamOutputAction (..),
-                                           StreamWorker,
-                                           UnpackedNameValueList (..),
-                                           getHeader)
 import           Rede.MainLoop.ConfigHelp
-import           Rede.SimpleHTTP1Response (shortResponse)
+import           Rede.MainLoop.Tokens       (StreamInputToken       (..)
+                                             ,StreamOutputAction    (..)
+                                             ,StreamWorker
+                                             ,UnpackedNameValueList (..)
+                                             ,StreamWorkerClass     (..)
+                                             
+                                             ,getHeader)
+import           Rede.SimpleHTTP1Response   (shortResponse)
 
 
 --
@@ -48,6 +57,23 @@ trivialWorker = do
                 ]
             yield $ SendData_SOA shortResponse
             yield $ Finish_SOA
+
+
+
+data FsWorkerSessionPocket  = FsWorkerSessionPocket {}
+
+
+data FsWorkerServicePocket  = FsWorkerServicePocket {}
+
+
+instance StreamWorkerClass FsWorkerServicePocket FsWorkerSessionPocket where
+
+    --prepareStreamWorkerFactory :: base (servicePocket, sessionPocket)
+    initService = return FsWorkerServicePocket
+
+    initSession _ = return FsWorkerSessionPocket
+
+    initStream _ _ = return fsWorker
 
 
 fsWorker :: StreamWorker 

@@ -99,9 +99,7 @@ executable kel
 
 executable spdy-ping
   -- .hs or .lhs file containing the Main module.
-  main-is: main.hs 
-
-  Link-Options: "-rtsopts"           
+  main-is: main.hs      
   
   -- Modules included in this executable, other than Main.
   other-modules:   Rede.Constants  
@@ -131,6 +129,7 @@ executable spdy-ping
      x509-store ==  1.5.0, x509-system == 1.5.0, bitset == 1.4.8,
      binary == 0.7.1.0, pipes == 4.1.4, containers == 0.5.5.1, clock == 0.4.1.3,
      network-simple == 0.4.0.2, pipes-concurrency == 2.0.2      , conduit == 1.2.3.1
+     , transformers >=0.3 && <= 0.5
   
   -- Directories containing source files.
   hs-source-dirs: hs-src
