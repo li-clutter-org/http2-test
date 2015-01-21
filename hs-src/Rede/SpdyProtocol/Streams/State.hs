@@ -78,13 +78,33 @@ instance Default WindowBookkeeping where
 -- makes sense inside the IO monad (or equivalent)
 data StreamState = StreamState {
       stage      :: IORef StreamStage
+
+    -- Not making much use of these right now...
     , receiveWin :: IORef WindowBookkeeping
     , sendWin    :: IORef WindowBookkeeping 
+
+    -- These ones  are shared for the whole session
     , sendZlib   :: MVar Z.Deflate
     , recvZlib   :: MVar Z.Inflate 
+
+    -- This main stream Id. This should be an odd number, because
+    -- the stream is always started by the browser
     , sstreamId  :: Int
+
+    -- Did I Acknowledged the string already with SynReply?
     , mustAck    :: IORef Bool
+
+    -- What should I do when this stream finishes?
     , finalizer  :: IO ()
+
+    -- Often, a subordinate stream will be also active. In the current 
+    -- implementation, subordinate (pushed) streams are sequentialized 
+    -- and completely nested on the main thread, so, for now at least, 
+    -- we can warantee that there is only this one active...
+    , currentPushStream :: IORef Int  
+
+    -- What should be the id of the next pushed stream?
+    , nextPushStreamId :: MVar Int 
     }
 
 
@@ -92,15 +112,10 @@ newtype MonadIO m => StreamStateT m a = StreamStateT (ReaderT StreamState m a)
     deriving (Functor, Applicative, Monad, MonadTrans, MFunctor)
 
 
-
-
 instance MonadIO m => MonadIO (StreamStateT m) where 
     -- liftIO :: IO a -> m a 
     liftIO iocomp = StreamStateT (liftIO iocomp) 
 
-
--- unStreamState :: StreamStateT m a -> StateT StreamState m a 
--- unStreamState (StreamStateT s) = s
 
 instance StreamPlug (StreamStateT IO) AnyFrame where
     inputPlug = do 
@@ -141,6 +156,7 @@ instance StreamPlug (StreamStateT IO) AnyFrame where
 
             -- Stream worker asks to send data 
             Just (SendData_SOA bs_data)     -> do
+                liftIO $ putStrLn "Send main stream data"
                 current_stage <- lift getCurrentStreamStage
                 must_ack      <- lift getMustAck
                 stream_id     <- lift getStreamId
@@ -177,6 +193,7 @@ instance StreamPlug (StreamStateT IO) AnyFrame where
 
             Just something_else             -> do 
                 liftIO $ putStrLn $ "Got: " ++ (show something_else)
+                outputPlug
 
             Nothing                         -> 
                 return ()
@@ -319,26 +336,29 @@ streamFinalize = StreamStateT $ do
     liftIO fin
 
 
-initStreamState :: MonadIO m => Int -> (IO () ) -> MVar Z.Deflate -> MVar Z.Inflate -> StreamStateT m a -> m a 
-initStreamState stream_id fin send_zlib recv_zlib (StreamStateT sm)  = do 
-    s <- liftIO $ defaultStreamState stream_id fin send_zlib recv_zlib 
+initStreamState :: MonadIO m => Int -> (IO () ) -> MVar Z.Deflate -> MVar Z.Inflate -> MVar Int -> StreamStateT m a -> m a 
+initStreamState stream_id fin send_zlib recv_zlib next_pushed_stream (StreamStateT sm)  = do 
+    s <- liftIO $ defaultStreamState stream_id fin send_zlib recv_zlib next_pushed_stream
     runReaderT sm s
 
 
-defaultStreamState :: Int -> (IO () ) -> MVar Z.Deflate -> MVar Z.Inflate -> IO StreamState 
-defaultStreamState stream_id fin sendZlib_ recvZlib_ = do
+defaultStreamState :: Int -> (IO () ) -> MVar Z.Deflate -> MVar Z.Inflate -> MVar Int -> IO StreamState 
+defaultStreamState stream_id fin sendZlib_ recvZlib_ next_push_id = do
     stage_ioref <- newIORef Closed_StS
-    rw <- newIORef def 
-    sw <- newIORef def 
-    ma <- newIORef True
+    rw                  <- newIORef def 
+    sw                  <- newIORef def 
+    ma                  <- newIORef True
+    current_push_stream <- newIORef 0 
     return $ StreamState {
-        stage        = stage_ioref
-        ,receiveWin  = rw 
-        ,sendWin     = sw 
-        ,sendZlib    = sendZlib_
-        ,recvZlib    = recvZlib_
-        ,sstreamId   = stream_id
-        ,mustAck     = ma
-        ,finalizer   = fin
+        stage              = stage_ioref
+        ,receiveWin        = rw 
+        ,sendWin           = sw 
+        ,sendZlib          = sendZlib_
+        ,recvZlib          = recvZlib_
+        ,sstreamId         = stream_id
+        ,mustAck           = ma
+        ,finalizer         = fin
+        ,currentPushStream = current_push_stream
+        ,nextPushStreamId  = next_push_id
     }
 

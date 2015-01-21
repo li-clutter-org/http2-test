@@ -81,12 +81,18 @@ basicSession worker_service_pocket = do
     worker_session_pocket <- initSession worker_service_pocket
     -- Preserve the IO wrapper
     make_worker           <- return $ initStream worker_service_pocket worker_session_pocket
+    next_stream_id        <- newMVar 2 -- Stream ids pushed from the server start at two
 
     session_record    <- return $ SimpleSessionStateRecord {
         streamInputs = stream_inputs
         ,sendZLib    = send_zlib_mvar
         ,recvZLib    = recv_zlib_mvar
-        ,streamInit  = \ stream_id fin -> initStreamState stream_id fin send_zlib_mvar recv_zlib_mvar 
+        ,streamInit  = \ stream_id fin -> initStreamState 
+                                                stream_id 
+                                                fin 
+                                                send_zlib_mvar 
+                                                recv_zlib_mvar
+                                                next_stream_id 
         }
 
 

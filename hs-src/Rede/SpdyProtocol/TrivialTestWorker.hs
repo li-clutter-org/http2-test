@@ -136,8 +136,9 @@ fsWorker service_pocket session_pocket = return $ do
                             Just contents -> do
 
                                 -- Seems I can deliver something.... 
-                                cacheInteract the_path full_path service_pocket session_pocket
+                                continuation <- cacheInteract the_path full_path service_pocket session_pocket
                                 sendResponse the_path contents
+                                continuation
 
                             -- TODO: Refactor and remove duplications
                             Nothing ->  do 
@@ -145,8 +146,9 @@ fsWorker service_pocket session_pocket = return $ do
                                 case check of 
                                     Just index_fname -> do
                                         Just contents2 <- liftIO $ fetchFile index_fname
-                                        cacheInteract the_path index_fname service_pocket session_pocket
+                                        continuation <- cacheInteract the_path index_fname service_pocket session_pocket
                                         sendResponse index_fname contents2 
+                                        continuation
 
                                     Nothing -> send404
                   where 
@@ -163,11 +165,14 @@ fsWorker service_pocket session_pocket = return $ do
             (Just method)   = getHeader headers ":method"
 
 
+type ContinuationWorker a = ConduitM StreamInputToken StreamOutputAction IO a
+
+
 cacheInteract :: String
                  -> String 
                  -> FsWorkerServicePocket
                  -> FsWorkerSessionPocket
-                 -> ConduitM StreamInputToken StreamOutputAction IO ()
+                 -> ContinuationWorker StreamWorker
 cacheInteract the_path full_filename service_pocket session_pocket = do
 
     session_is_new <- liftIO $ modifyMVar (sessionIsNew session_pocket) $ \ session_is_new -> do 
@@ -179,27 +184,42 @@ cacheInteract the_path full_filename service_pocket session_pocket = do
 
         if head_is_known then 
             pushResourcesOfHead  service_pocket the_path
-        else liftIO $ do
-            registerHead service_pocket the_path
-            setSessionOnRecordingMode session_pocket the_path
+        else do 
+            liftIO $ do
+                registerHead service_pocket the_path
+                setSessionOnRecordingMode session_pocket the_path
+            nothingToSend
     else do
         recording_for <- liftIO $ getRecordingState session_pocket
         case (head_is_known, recording_for) of
 
-            (False, (Just  url_head))  -> 
+            (False, (Just  url_head))  -> do
                 liftIO $ recordThis service_pocket url_head the_path full_filename
+                nothingToSend
 
             (True, Nothing)            ->  
                 pushResourcesOfHead service_pocket the_path
 
 
-            (True, (Just _))           ->
-                -- Deactivate the  ecording function 
+            (True, (Just _))           -> do
+                -- Deactivate the  recording function 
                 liftIO $ disableRecordingOnSession session_pocket
-
+                pushResourcesOfHead service_pocket the_path
 
             _                        ->
-                                  return ()
+                nothingToSend
+
+
+nothingToSend :: ConduitM StreamInputToken StreamOutputAction IO StreamWorker
+nothingToSend = return $ liftIO $ putStrLn "Nothing to send"
+
+-- Continuation style for push-resources
+pushResourcesOfHead :: FsWorkerServicePocket
+                 -> String
+                 -> ConduitM StreamInputToken StreamOutputAction IO StreamWorker
+pushResourcesOfHead service_pocket the_path = do 
+    pushHeadersOfHead service_pocket the_path 
+    return $ pushContentsOfHead service_pocket the_path
 
 
 headIsKnown :: FsWorkerServicePocket -> String -> IO Bool
@@ -228,9 +248,9 @@ registerHead service_pocket head_url = do
     ht_mvar = headsHashTable service_pocket
 
 
-pushResourcesOfHead ::  FsWorkerServicePocket
+pushHeadersOfHead ::  FsWorkerServicePocket
                  -> String -> ConduitM StreamInputToken StreamOutputAction IO ()
-pushResourcesOfHead service_pocket the_path = do 
+pushHeadersOfHead service_pocket the_path = do 
 
     urls_and_filepaths <- liftIO $ do 
         ht     <- readMVar ht_mvar
@@ -238,12 +258,34 @@ pushResourcesOfHead service_pocket the_path = do
         return urls_and_filepaths
 
     -- And send associated files, marking them as such.... 
-    mapM_ (\ (a_url, a_filepath) -> do 
-            Just contents <- liftIO $ fetchFile a_filepath
-            sendAssociatedResponse a_url contents
-        ) urls_and_filepaths
+    mapM_ (\ (i, (a_url, a_filepath)) -> do
+            -- TODO: I'm reading off the resource just to have its length ...
+            -- I seriously need to consider using an in-memory cache.
+            Just contents <- liftIO $ fetchFile a_filepath 
+            sendAssociatedHeaders i a_url contents
+        ) (enum urls_and_filepaths)
   where 
     ht_mvar = headsHashTable service_pocket
+    enum x = zip [0 .. ] x
+
+
+pushContentsOfHead ::  FsWorkerServicePocket
+                 -> String -> ConduitM StreamInputToken StreamOutputAction IO ()
+pushContentsOfHead service_pocket the_path = do 
+
+    urls_and_filepaths <- liftIO $ do 
+        ht     <- readMVar ht_mvar
+        Just ( urls_and_filepaths ) <- H.lookup ht (pack the_path)
+        return urls_and_filepaths
+
+    -- And send associated files, marking them as such.... 
+    mapM_ (\ (i, (_, a_filepath)) -> do 
+            Just contents <- liftIO $ fetchFile a_filepath
+            sendAssociatedData i contents
+        ) (enum urls_and_filepaths)
+  where 
+    ht_mvar = headsHashTable service_pocket
+    enum x = zip [0 .. ] x
 
 
 setSessionOnRecordingMode  :: FsWorkerSessionPocket -> String -> IO ()
@@ -259,7 +301,7 @@ disableRecordingOnSession :: FsWorkerSessionPocket -> IO ()
 disableRecordingOnSession session_pocket = do 
     maybe_could_take <- tryTakeMVar (sessionIsRecording session_pocket)
     case maybe_could_take of 
-        Just _ -> putStrLn "Could disable session recording"
+        Just _ -> return ()
         _      -> putStrLn "COULD NOT!! disable session recording"
 
 
@@ -274,11 +316,11 @@ recordThis :: FsWorkerServicePocket
                  -> String 
                  -> IO ()
 recordThis service_pocket  head_path this_path full_filepath = do
-    ht <- takeMVar ht_mvar
+    ht              <- takeMVar ht_mvar
     (Just the_list) <- H.lookup ht head_path_bs
-    new_list <- return $ (this_path, full_filepath):the_list
+    new_list        <- return $ (this_path, full_filepath):the_list
     H.insert ht head_path_bs new_list 
-    putMVar ht_mvar ht
+    putMVar  ht_mvar ht
   where 
     ht_mvar = headsHashTable service_pocket
     head_path_bs = pack head_path
@@ -295,17 +337,19 @@ sendResponse the_path contents = do
 
         -- TODO here: set the no-cache headers .... 
 
-        ,("server", "ReHv0.0")
+        ,("server", "ReH v0.0")
         ]
     yield $ SendData_SOA contents
     yield $ Finish_SOA
 
-
-sendAssociatedResponse :: String -> B.ByteString -> StreamWorker
-sendAssociatedResponse the_path contents = do 
+-- subid: a local stream id. The output plug is in charge of translating
+-- this to an actual stream id. This local stream id is needed to match 
+-- headers and body data
+sendAssociatedHeaders :: Int -> String -> B.ByteString  -> StreamWorker
+sendAssociatedHeaders subid the_path  contents = do 
     mimetype <- return $ getRelPathMime the_path
     liftIO $ putStrLn $ "Warning: host header is wired!!!"
-    yield $ SendAssociatedHeaders_SOA $ UnpackedNameValueList  [
+    yield $ SendAssociatedHeaders_SOA subid $ UnpackedNameValueList  [
          (":status", "200")
         ,(":version", "HTTP/1.1")
         ,(":scheme", "https")
@@ -316,10 +360,14 @@ sendAssociatedResponse the_path contents = do
 
         -- TODO here: set the no-cache headers .... 
 
-        ,("server", "ReHv0.0")
+        ,("server", "ReH v0.0")
         ]
-    yield $ SendAssociatedData_SOA contents
-    yield $ SendAssociatedFinish_SOA
+
+
+sendAssociatedData :: Int -> B.ByteString -> StreamWorker
+sendAssociatedData  subid contents = do
+    yield $ SendAssociatedData_SOA subid contents
+    yield $ SendAssociatedFinish_SOA subid
 
 
 pathGoesToIndex :: String -> String -> IO (Maybe String)

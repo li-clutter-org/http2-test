@@ -42,10 +42,10 @@ data StreamInputToken =  Headers_STk  UnpackedNameValueList
 
 
 data StreamOutputAction = SendHeaders_SOA UnpackedNameValueList 
-                        | SendAssociatedHeaders_SOA UnpackedNameValueList
+                        | SendAssociatedHeaders_SOA Int UnpackedNameValueList
                         | SendData_SOA B.ByteString 
-                        | SendAssociatedData_SOA B.ByteString
-                        | SendAssociatedFinish_SOA
+                        | SendAssociatedData_SOA Int B.ByteString
+                        | SendAssociatedFinish_SOA Int
                         | Finish_SOA
     deriving Show
 
