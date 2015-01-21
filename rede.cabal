@@ -99,7 +99,9 @@ executable kel
 
 executable spdy-ping
   -- .hs or .lhs file containing the Main module.
-  main-is: main.hs            
+  main-is: main.hs 
+
+  Link-Options: "-rtsopts"           
   
   -- Modules included in this executable, other than Main.
   other-modules:   Rede.Constants  

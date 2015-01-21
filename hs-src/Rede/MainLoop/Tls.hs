@@ -42,6 +42,8 @@ readyTCPSocket hostname portnumber = do
         }
     host_address <- return $ addrAddress addr_info1
     setSocketOption the_socket ReusePort 1
+    setSocketOption the_socket RecvBuffer 128000
+    setSocketOption the_socket RecvLowWater 8
     bindSocket the_socket host_address
     return the_socket
 
