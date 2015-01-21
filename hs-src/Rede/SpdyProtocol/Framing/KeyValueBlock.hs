@@ -16,10 +16,16 @@ import Rede.MainLoop.Tokens                     (
                                                 -- ,packHeaderTuples
                                                 -- ,unpackHeaderTuples )
 
--- To use raw
-newtype CompressedKeyValueBlock = CompressedKeyValueBlock BS.ByteString
+
+data CompressedKeyValueBlock =
+	-- To use raw
+	 CompressedKeyValueBlock BS.ByteString
+	-- Compromise: sometimes the headers can't be compressed until the very last 
+	-- moment. 
+	|UncompressedKeyValueBlock UnpackedNameValueList
     deriving Show
 
 
 class CompressedHeadersOnFrame a where 
     getCompressedHeaders :: a ->  CompressedKeyValueBlock
+    setCompressedHeaders :: a -> CompressedKeyValueBlock -> a

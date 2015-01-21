@@ -18,7 +18,8 @@ import qualified Data.ByteString                         as BS
 import           Data.Default
 import           Data.Word
 import           Rede.SpdyProtocol.Framing.Frame
-import           Rede.SpdyProtocol.Framing.KeyValueBlock (CompressedKeyValueBlock (..))
+import           Rede.SpdyProtocol.Framing.KeyValueBlock (CompressedKeyValueBlock (..)
+                                                          ,CompressedHeadersOnFrame (..) )
 
 
 
@@ -53,6 +54,14 @@ instance HasFrameFlags SynReplyFrame SynReplyValidFlags where
     getFrameFlag frame flag = let 
         (ControlFrame _ flags _) = prologue frame 
       in member flag flags
+
+
+instance CompressedHeadersOnFrame SynReplyFrame where 
+    getCompressedHeaders = compressedKeyValueBlock
+    setCompressedHeaders synstreamframe compressedkvb = synstreamframe {
+        compressedKeyValueBlock = compressedkvb
+        }
+
 
 
 instance Binary SynReplyFrame where

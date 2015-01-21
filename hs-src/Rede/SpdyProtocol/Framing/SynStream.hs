@@ -18,6 +18,9 @@ import qualified Data.ByteString                         as BS
 import           Data.BitSet.Generic                     (delete, insert,
                                                           member)
 import           Data.Word
+import           Data.Default
+
+
 import           Rede.SpdyProtocol.Framing.Frame
 import           Rede.SpdyProtocol.Framing.KeyValueBlock (
 
@@ -27,8 +30,7 @@ import           Rede.SpdyProtocol.Framing.KeyValueBlock (
 
 
 
-data SynStreamValidFlags = None_SSVF 
-                           |Fin_SSVF
+data SynStreamValidFlags =  Fin_SSVF
                            |Unidirectional_SSVF
     deriving (Show, Enum)
 
@@ -47,6 +49,9 @@ data SynStreamFrame =
 instance HasStreamId SynStreamFrame where
   streamIdFromFrame = streamId
 
+instance Default (ControlFrame SynStreamValidFlags) where 
+    def = ControlFrame SynStream_CFT fbs0 0
+
 
 instance HasFrameFlags SynStreamFrame SynStreamValidFlags where 
     applyFrameFlag frame flag set_value = frame {
@@ -64,6 +69,9 @@ instance HasFrameFlags SynStreamFrame SynStreamValidFlags where
 
 instance CompressedHeadersOnFrame SynStreamFrame where 
     getCompressedHeaders = compressedKeyValueBlock
+    setCompressedHeaders synstreamframe compressedkvb = synstreamframe {
+        compressedKeyValueBlock = compressedkvb
+        }
 
 
 instance Binary SynStreamFrame where

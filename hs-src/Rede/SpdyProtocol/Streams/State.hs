@@ -31,6 +31,7 @@ import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Reader
 import           Control.Concurrent.MVar
+import qualified Data.HashTable.IO          as H
 
 
 -- import Rede.MainLoop.ConfigHelp(configDir)
@@ -74,6 +75,11 @@ instance Default WindowBookkeeping where
     }
 
 
+-- A dictionary from local id to (global) stream id
+type PushStreamsHashTable = H.BasicHashTable Int Int
+
+
+
 -- Due to the use of Z here, this struct only
 -- makes sense inside the IO monad (or equivalent)
 data StreamState = StreamState {
@@ -97,11 +103,7 @@ data StreamState = StreamState {
     -- What should I do when this stream finishes?
     , finalizer  :: IO ()
 
-    -- Often, a subordinate stream will be also active. In the current 
-    -- implementation, subordinate (pushed) streams are sequentialized 
-    -- and completely nested on the main thread, so, for now at least, 
-    -- we can warantee that there is only this one active...
-    , currentPushStream :: IORef Int  
+    , pushStreamHashTable :: PushStreamsHashTable  
 
     -- What should be the id of the next pushed stream?
     , nextPushStreamId :: MVar Int 
@@ -191,6 +193,34 @@ instance StreamPlug (StreamStateT IO) AnyFrame where
 
                 outputPlug
 
+            -- Let's work with associated streams... 
+            Just (SendAssociatedHeaders_SOA local_stream_id unmvl) -> do
+                -- Get a global id for this dear ... 
+                stream_id        <- lift getStreamId
+                global_stream_id <- lift $ getGlobalPushStreamId local_stream_id 
+
+                -- Now, I need to open a new stream for this.... 
+                anyframe         <- lift $ prepareSynStreamFrame global_stream_id stream_id unmvl
+                yield anyframe
+
+                outputPlug
+
+
+            Just (SendAssociatedData_SOA local_stream_id contents)  -> do 
+                -- Global id 
+                global_stream_id <- lift $ getGlobalPushStreamId local_stream_id
+
+                anyframe         <- return $ prepareDataFrame contents global_stream_id
+                yield anyframe
+                outputPlug
+
+
+            Just (SendAssociatedFinish_SOA local_stream_id)  -> do 
+                global_stream_id  <- lift $ getGlobalPushStreamId local_stream_id
+                yield $ prepareFinishDataFrame global_stream_id
+                outputPlug
+
+
             Just something_else             -> do 
                 liftIO $ putStrLn $ "Got: " ++ (show something_else)
                 outputPlug
@@ -215,6 +245,9 @@ prepareFinishDataFrame stream_id = DataFrame_AF $ DataFrame {
                             }
 
 
+
+
+
 anyFrameToInput :: MonadIO m => AnyFrame ->  StreamStateT m StreamInputToken
 anyFrameToInput any_frame = 
 
@@ -236,12 +269,43 @@ anyFrameToInput any_frame =
                 return $ Headers_STk unvl
 
 
+getGlobalPushStreamId :: MonadIO m => Int -> StreamStateT m Int 
+getGlobalPushStreamId local_stream_id = StreamStateT $ do
+    ht <- asks pushStreamHashTable
+
+    -- Do I have already an id for this one?
+    global_id_maybe <- liftIO $ H.lookup ht local_stream_id
+    case global_id_maybe of 
+
+        Just global_id    -> 
+            -- Great, return it 
+            return global_id
+
+        Nothing -> do
+            -- Complicated dance 
+            next_pushed_stream_mvar <- asks nextPushStreamId
+            next_pushed_stream_id <- liftIO $ modifyMVar next_pushed_stream_mvar $ \ n -> do 
+                H.insert ht local_stream_id n
+                -- Must keep the pushed streams even....
+                return (n+2, n)
+            return next_pushed_stream_id
+
+
 prepareSynReplyFrame :: UnpackedNameValueList -> StreamStateT IO AnyFrame 
 prepareSynReplyFrame unmvl = do 
     compressed_headers <- packSendHeaders unmvl
     stream_id          <- getStreamId
     syn_reply          <- return $ SynReplyFrame def stream_id compressed_headers
-    return (AnyControl_AF (SynReplyFrame_ACF syn_reply))   
+    return $ wrapCF  syn_reply   
+
+
+prepareSynStreamFrame :: Int -> Int -> UnpackedNameValueList -> StreamStateT IO AnyFrame 
+prepareSynStreamFrame global_stream_id associated_to_stream unmvl = do 
+    compressed_headers <- packSendHeaders unmvl 
+    syn_stream         <- return $ setFrameFlag (
+                                SyS.SynStreamFrame def global_stream_id associated_to_stream compressed_headers 
+                                )  SyS.Unidirectional_SSVF
+    return $ wrapCF syn_stream
 
 
 prepareHeadersFrame :: UnpackedNameValueList -> StreamStateT IO AnyFrame 
@@ -291,15 +355,7 @@ exhaustPopper popper = do
 
 packSendHeaders :: MonadIO m => UnpackedNameValueList -> StreamStateT m CompressedKeyValueBlock
 packSendHeaders uncompressed_uvl = do 
-    uncompressed_bytes <- return $ LB.toStrict $ runPut $ Bi.put $ uncompressed_uvl
-    send_zlib_mvar <- StreamStateT $ asks sendZlib
-    liftIO $ do
-        withMVar send_zlib_mvar $ \ send_zlib -> do
-            popper       <-  Z.feedDeflate send_zlib uncompressed_bytes
-            list_piece_1 <-  exhaustPopper popper 
-            latest_piece <-  exhaustPopper $ Z.flushDeflate send_zlib
-            return $ CompressedKeyValueBlock $ B.concat (list_piece_1 ++ latest_piece)
-    
+    return $ UncompressedKeyValueBlock uncompressed_uvl
 
 
 ioSet :: MonadIO m => (StreamState -> IORef a) -> a -> StreamStateT m ()
@@ -345,20 +401,20 @@ initStreamState stream_id fin send_zlib recv_zlib next_pushed_stream (StreamStat
 defaultStreamState :: Int -> (IO () ) -> MVar Z.Deflate -> MVar Z.Inflate -> MVar Int -> IO StreamState 
 defaultStreamState stream_id fin sendZlib_ recvZlib_ next_push_id = do
     stage_ioref <- newIORef Closed_StS
-    rw                  <- newIORef def 
-    sw                  <- newIORef def 
-    ma                  <- newIORef True
-    current_push_stream <- newIORef 0 
+    rw                     <- newIORef def 
+    sw                     <- newIORef def 
+    ma                     <- newIORef True
+    push_stream_hash_table <- H.new  
     return $ StreamState {
-        stage              = stage_ioref
-        ,receiveWin        = rw 
-        ,sendWin           = sw 
-        ,sendZlib          = sendZlib_
-        ,recvZlib          = recvZlib_
-        ,sstreamId         = stream_id
-        ,mustAck           = ma
-        ,finalizer         = fin
-        ,currentPushStream = current_push_stream
-        ,nextPushStreamId  = next_push_id
+        stage                  = stage_ioref
+        ,receiveWin            = rw 
+        ,sendWin               = sw 
+        ,sendZlib              = sendZlib_
+        ,recvZlib              = recvZlib_
+        ,sstreamId             = stream_id
+        ,mustAck               = ma
+        ,finalizer             = fin
+        ,pushStreamHashTable   = push_stream_hash_table
+        ,nextPushStreamId      = next_push_id
     }
 

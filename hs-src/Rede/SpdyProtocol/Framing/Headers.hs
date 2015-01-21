@@ -12,7 +12,7 @@ import           Data.Binary                    (Binary, Get, get, put)
 import           Rede.SpdyProtocol.Framing.Frame
 import           Data.Binary.Get                (getWord32be, getByteString)
 import           Data.Binary.Put                (putWord32be, putByteString)
-import           Rede.SpdyProtocol.Framing.KeyValueBlock (CompressedKeyValueBlock(..))
+import           Rede.SpdyProtocol.Framing.KeyValueBlock (CompressedKeyValueBlock(..), CompressedHeadersOnFrame(..))
 import qualified Data.ByteString as BS
 import           Data.Default
 
@@ -58,3 +58,9 @@ instance Binary HeadersFrame where
             ,compressedKeyValueBlock = CompressedKeyValueBlock cmkvb
         }
 
+
+instance CompressedHeadersOnFrame HeadersFrame where 
+    getCompressedHeaders = compressedKeyValueBlock
+    setCompressedHeaders synstreamframe compressedkvb = synstreamframe {
+        compressedKeyValueBlock = compressedkvb
+        }

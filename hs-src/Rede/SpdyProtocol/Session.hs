@@ -10,16 +10,21 @@ import           Control.Concurrent                      (forkIO)
 import           Control.Monad.IO.Class                  (liftIO)
 import           Control.Monad.Trans.Class               (lift)
 import           Control.Monad.Trans.Reader
+import           Control.Exception(throwIO)
+
 import           Data.Conduit
 import qualified Data.Streaming.Zlib                     as Z
 
 -- import           Data.Conduit.Lift                       (distribute)
 -- import qualified Data.Conduit.List                       as CL
 import qualified Data.ByteString                         as B
+import qualified Data.ByteString.Lazy                    as LB
 import           Data.ByteString.Char8                   (pack)
 import           Data.Default                            (def)
 import           Control.Concurrent.MVar
 import qualified Data.Map                                as MA
+import           Data.Binary.Put                         (runPut)
+import qualified Data.Binary                             as Bi
 
 import           Rede.SpdyProtocol.Framing.AnyFrame
 import           Rede.SpdyProtocol.Framing.Frame
@@ -29,7 +34,7 @@ import           Rede.MainLoop.StreamPlug
 import           Rede.SpdyProtocol.Framing.KeyValueBlock
 import qualified Rede.SpdyProtocol.Framing.Settings      as SeF
 import qualified Rede.SpdyProtocol.Framing.SynStream     as SyS
-import           Rede.SpdyProtocol.Streams.State
+import           Rede.SpdyProtocol.Streams.State 
 import           Rede.MainLoop.Tokens
 
 
@@ -94,10 +99,10 @@ basicSession worker_service_pocket = do
                                                 recv_zlib_mvar
                                                 next_stream_id 
         }
-
-
-    packet_sink <- return $ transPipe (\ x -> runReaderT x session_record)  (statefulSink make_worker output_mvar)
-    packet_source <- return (createTrivialSource output_mvar)
+ 
+    -- hoister  <- return $ (\ x -> runReaderT x session_record :: SessionM IO a -> IO a)
+    packet_sink <- return $ transPipe ( \ x -> runReaderT x session_record)  (statefulSink make_worker output_mvar)
+    packet_source <- return $ transPipe (\ x -> runReaderT x session_record)  (createTrivialSource output_mvar)
     
     return (packet_sink, packet_source)
 
@@ -121,6 +126,7 @@ plugStream
         return  (( (takesInput input_mvar)  $= inputPlug 
             =$= (transPipe liftIO (worker::StreamWorker)) 
             =$= (outputPlug :: Conduit StreamOutputAction (StreamStateT IO) AnyFrame)
+            -- ATTENTION: potential session race-condition here. 
             $$  (streamOutput drop_output_here_mvar) ))
 
 
@@ -237,17 +243,77 @@ showHeadersIfPresent ( AnyControl_AF ( SynStream_ACF syn_stream)) = let
 showHeadersIfPresent _ = return ()
 
 
-createTrivialSource :: MVar AnyFrame -> Source IO AnyFrame
+-- Here is where frames pop-up coming from the individual stream 
+-- threads. So, the frames are serialized at this point and any 
+-- incoming Key-value block compressed
+createTrivialSource :: MVar AnyFrame -> Source (SessionM IO) AnyFrame
 createTrivialSource output_mvar = do 
     yield $ wrapCF initialSettings
-    createTrivialSourceLoop
+    createTrivialSourceLoop :: Source (SessionM IO) AnyFrame
   where 
     createTrivialSourceLoop = do
-        anyframe <- liftIO $ (takeMVar output_mvar :: IO AnyFrame)
+
+        anyframe_headerscompressed <- lift $ do 
+            anyframe <- liftIO $ takeMVar output_mvar
+            compressFrameHeaders anyframe
 
         -- liftIO $ putStrLn $ "SENDING: " ++ (show anyframe)
-        yield anyframe
+        yield anyframe_headerscompressed
         createTrivialSourceLoop
+
+
+compressFrameHeaders :: AnyFrame -> (SessionM IO) AnyFrame 
+compressFrameHeaders ( AnyControl_AF (SynStream_ACF f))      = do 
+    new_frame <- justCompress f
+    return $ wrapCF new_frame 
+compressFrameHeaders ( AnyControl_AF (SynReplyFrame_ACF f )) = do 
+    new_frame <- justCompress f
+    return $ wrapCF new_frame 
+compressFrameHeaders ( AnyControl_AF (HeadersFrame_ACF f))   = do 
+    new_frame <- justCompress f
+    return $ wrapCF new_frame 
+compressFrameHeaders frame_without_headers                   = 
+    return frame_without_headers
+
+
+justCompress :: CompressedHeadersOnFrame f => f -> SessionM IO f
+justCompress frame = do 
+    send_zlib_mvar <-  asks sendZLib
+    case present_headers of 
+
+        UncompressedKeyValueBlock uncompressed_uvl -> do
+            
+            uncompressed_bytes <- return $ LB.toStrict $ runPut $ Bi.put $ uncompressed_uvl
+            
+            new_value <- liftIO $ do
+                withMVar send_zlib_mvar $ \ send_zlib -> do
+                    popper       <-  Z.feedDeflate send_zlib uncompressed_bytes
+                    list_piece_1 <-  exhaustPopper popper 
+                    latest_piece <-  exhaustPopper $ Z.flushDeflate send_zlib
+                    return $ CompressedKeyValueBlock $ B.concat (list_piece_1 ++ latest_piece)
+
+            return $ setCompressedHeaders frame new_value
+
+        CompressedKeyValueBlock _     -> error "This was not expected"
+  where 
+    present_headers = getCompressedHeaders frame
+
+
+exhaustPopper :: Z.Popper   -> IO [B.ByteString]
+exhaustPopper popper = do 
+    x                  <- popper 
+    case x of 
+        Z.PRDone            -> return []
+
+        Z.PRNext bytestring -> do 
+            more <- exhaustPopper popper 
+            return $ (bytestring:more)
+
+        Z.PRError e         -> do 
+            -- When this happens, the only sensible 
+            -- thing to do is throw an exception, and trash the entire 
+            -- stream.... 
+            throwIO  e
 
 
 zLibInitDict :: B.ByteString
