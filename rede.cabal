@@ -87,6 +87,7 @@ executable kel
       , mmorph == 1.0.4
       , QuickCheck ==  2.7.6
       , network-uri == 2.6.0.1
+      , hashtables == 1.2.0.1
      -- , asn-data
   
   -- Directories containing source files.

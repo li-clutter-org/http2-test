@@ -42,9 +42,12 @@ data StreamInputToken =  Headers_STk  UnpackedNameValueList
 
 
 data StreamOutputAction = SendHeaders_SOA UnpackedNameValueList 
+                        | SendAssociatedHeaders_SOA UnpackedNameValueList
                         | SendData_SOA B.ByteString 
+                        | SendAssociatedData_SOA B.ByteString
+                        | SendAssociatedFinish_SOA
                         | Finish_SOA
-                        | PushStream_SOA StreamWorker
+    deriving Show
 
 
 type StreamWorker = Conduit StreamInputToken IO StreamOutputAction

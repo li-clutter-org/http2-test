@@ -174,6 +174,10 @@ instance StreamPlug (StreamStateT IO) AnyFrame where
                         liftIO $ putStrLn "Protocol error: trying to send on closed stream"
 
                 outputPlug
+
+            Just something_else             -> do 
+                liftIO $ putStrLn $ "Got: " ++ (show something_else)
+
             Nothing                         -> 
                 return ()
 
