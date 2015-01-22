@@ -13,14 +13,8 @@ module Rede.SpdyProtocol.Streams.State(
 
 import           Data.IORef
 import qualified Data.ByteString           as B
--- import qualified Data.ByteString.Lazy      as LB
 import           Data.Default
 import           Control.Monad.Morph       (MFunctor)
-import qualified Data.Streaming.Zlib       as Z
--- import           System.FilePath           ((</>))
--- import           Data.Binary.Get           (runGet)
--- import           Data.Binary.Put           (runPut)
--- import qualified Data.Binary               as Bi
 import           Data.Conduit
 import           Data.BitSet.Generic(singleton)
 
@@ -87,10 +81,6 @@ data StreamState = StreamState {
     -- Not making much use of these right now...
     , receiveWin :: IORef WindowBookkeeping
     , sendWin    :: IORef WindowBookkeeping 
-
-    -- These ones  are shared for the whole session
-    , sendZlib   :: MVar Z.Deflate
-    , recvZlib   :: MVar Z.Inflate 
 
     -- This main stream Id. This should be an odd number, because
     -- the stream is always started by the browser
@@ -367,14 +357,14 @@ streamFinalize = StreamStateT $ do
     liftIO fin
 
 
-initStreamState :: MonadIO m => Int -> (IO () ) -> MVar Z.Deflate -> MVar Z.Inflate -> MVar Int -> StreamStateT m a -> m a 
-initStreamState stream_id fin send_zlib recv_zlib next_pushed_stream (StreamStateT sm)  = do 
-    s <- liftIO $ defaultStreamState stream_id fin send_zlib recv_zlib next_pushed_stream
+initStreamState :: MonadIO m => Int -> (IO () ) -> MVar Int -> StreamStateT m a -> m a 
+initStreamState stream_id fin next_pushed_stream (StreamStateT sm)  = do 
+    s <- liftIO $ defaultStreamState stream_id fin next_pushed_stream
     runReaderT sm s
 
 
-defaultStreamState :: Int -> (IO () ) -> MVar Z.Deflate -> MVar Z.Inflate -> MVar Int -> IO StreamState 
-defaultStreamState stream_id fin sendZlib_ recvZlib_ next_push_id = do
+defaultStreamState :: Int -> (IO () ) ->  MVar Int -> IO StreamState 
+defaultStreamState stream_id fin next_push_id = do
     stage_ioref <- newIORef Closed_StS
     rw                     <- newIORef def 
     sw                     <- newIORef def 
@@ -384,8 +374,6 @@ defaultStreamState stream_id fin sendZlib_ recvZlib_ next_push_id = do
         stage                  = stage_ioref
         ,receiveWin            = rw 
         ,sendWin               = sw 
-        ,sendZlib              = sendZlib_
-        ,recvZlib              = recvZlib_
         ,sstreamId             = stream_id
         ,mustAck               = ma
         ,finalizer             = fin

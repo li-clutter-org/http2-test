@@ -97,8 +97,6 @@ basicSession worker_service_pocket = do
         ,streamInit  = \ stream_id fin -> initStreamState 
                                                 stream_id 
                                                 fin 
-                                                send_zlib_mvar 
-                                                recv_zlib_mvar
                                                 next_stream_id 
         }
  
