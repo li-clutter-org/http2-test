@@ -2,7 +2,7 @@
 module Rede.SpdyProtocol.Session(
     -- trivialSession
     basicSession
-    ,showHeadersIfPresent
+    -- ,showHeadersIfPresent
     ) where
 
 
@@ -25,6 +25,8 @@ import           Control.Concurrent.MVar
 import qualified Data.Map                                as MA
 import           Data.Binary.Put                         (runPut)
 import qualified Data.Binary                             as Bi
+import           Data.Binary.Get                         (runGet)
+
 
 import           Rede.SpdyProtocol.Framing.AnyFrame
 import           Rede.SpdyProtocol.Framing.Frame
@@ -33,7 +35,7 @@ import           Rede.SpdyProtocol.Framing.Ping
 import           Rede.MainLoop.StreamPlug
 import           Rede.SpdyProtocol.Framing.KeyValueBlock
 import qualified Rede.SpdyProtocol.Framing.Settings      as SeF
-import qualified Rede.SpdyProtocol.Framing.SynStream     as SyS
+-- import qualified Rede.SpdyProtocol.Framing.SynStream     as SyS
 import           Rede.SpdyProtocol.Streams.State 
 import           Rede.MainLoop.Tokens
 
@@ -130,7 +132,8 @@ plugStream
             $$  (streamOutput drop_output_here_mvar) ))
 
 
--- | Takes output from the stream conduit and puts it on the output mvar. 
+-- | Takes output from the stream conduit and puts it on the output mvar. This runs in 
+--   the stream thread. 
 --   ATTENTION: When a stream finishes, the conduit closes and yields a  Nothing to 
 --   signal that
 streamOutput :: MVar AnyFrame -> Sink AnyFrame (StreamStateT IO) () 
@@ -175,9 +178,10 @@ statefulSink  init_worker somebody_drops_outputs_here  = do
 
     case anyframe_maybe of 
 
-        Just anyframe -> do 
+        Just anyframe -> do  
 
-            case anyframe of 
+            headers_uncompressed <- lift $ uncompressFrameHeaders anyframe
+            case headers_uncompressed of 
 
                 (AnyControl_AF control_frame)  | iDropThisFrame control_frame -> do 
                     liftIO $ putStrLn $ "Frame dropped: " ++ (show control_frame)
@@ -201,7 +205,7 @@ statefulSink  init_worker somebody_drops_outputs_here  = do
                             stream_inputs <- takeMVar inputs
                             putMVar inputs $ MA.delete stream_id stream_inputs 
                         stream_create = do 
-                            putStrLn $ "Opening stream " ++ (show stream_id)
+                            -- putStrLn $ "Opening stream " ++ (show stream_id)
                             stream_inputs <- takeMVar inputs
                             input_place   <- newEmptyMVar
                             stream_worker <- plugStream init_worker input_place somebody_drops_outputs_here
@@ -234,18 +238,10 @@ handlePingFrame p@(PingFrame _ frame_id) |  odd frame_id = Just p
 handlePingFrame _ = Nothing  
 
 
-showHeadersIfPresent ::  AnyFrame -> StreamStateT IO ()
-showHeadersIfPresent ( AnyControl_AF ( SynStream_ACF syn_stream)) = let 
-    CompressedKeyValueBlock hb = SyS.compressedKeyValueBlock syn_stream
-  in do 
-    uncompressed <- unpackRecvHeaders hb
-    liftIO $ putStrLn $ show uncompressed 
-showHeadersIfPresent _ = return ()
-
-
 -- Here is where frames pop-up coming from the individual stream 
 -- threads. So, the frames are serialized at this point and any 
--- incoming Key-value block compressed
+-- incoming Key-value block compressed. This runs on the output 
+-- thread.
 createTrivialSource :: MVar AnyFrame -> Source (SessionM IO) AnyFrame
 createTrivialSource output_mvar = do 
     yield $ wrapCF initialSettings
@@ -276,6 +272,20 @@ compressFrameHeaders frame_without_headers                   =
     return frame_without_headers
 
 
+uncompressFrameHeaders :: AnyFrame -> (SessionM IO) AnyFrame 
+uncompressFrameHeaders ( AnyControl_AF (SynStream_ACF f))      = do 
+    new_frame <- justDecompress f
+    return $ wrapCF new_frame 
+uncompressFrameHeaders ( AnyControl_AF (SynReplyFrame_ACF f )) = do 
+    new_frame <- justDecompress f
+    return $ wrapCF new_frame 
+uncompressFrameHeaders ( AnyControl_AF (HeadersFrame_ACF f))   = do 
+    new_frame <- justDecompress f
+    return $ wrapCF new_frame 
+uncompressFrameHeaders frame_without_headers                   = 
+    return frame_without_headers
+
+
 justCompress :: CompressedHeadersOnFrame f => f -> SessionM IO f
 justCompress frame = do 
     send_zlib_mvar <-  asks sendZLib
@@ -295,6 +305,30 @@ justCompress frame = do
             return $ setCompressedHeaders frame new_value
 
         CompressedKeyValueBlock _     -> error "This was not expected"
+  where 
+    present_headers = getCompressedHeaders frame
+
+
+justDecompress :: CompressedHeadersOnFrame f => f -> SessionM IO f
+justDecompress frame = do 
+    recv_zlib_mvar <-  asks recvZLib
+    case present_headers of 
+
+        CompressedKeyValueBlock bscmp -> do
+            
+            -- uncompressed_bytes <- return $ LB.toStrict $ runPut $ Bi.put $ uncompressed_uvl
+            
+            new_value <- liftIO $ do
+                withMVar recv_zlib_mvar $ \ recv_zlib -> do
+                    popper             <- Z.feedInflate recv_zlib bscmp
+                    list_piece_1       <- exhaustPopper popper 
+                    latest             <- Z.flushInflate recv_zlib
+                    uncompressed_bytes <- return $ B.concat (list_piece_1 ++ [latest])  
+                    return $ UncompressedKeyValueBlock $ runGet Bi.get $ LB.fromChunks [uncompressed_bytes]
+
+            return $ setCompressedHeaders frame new_value
+
+        UncompressedKeyValueBlock _     -> error "This was not expected"
   where 
     present_headers = getCompressedHeaders frame
 

@@ -211,7 +211,7 @@ cacheInteract the_path full_filename service_pocket session_pocket = do
 
 
 nothingToSend :: ConduitM StreamInputToken StreamOutputAction IO StreamWorker
-nothingToSend = return $ liftIO $ putStrLn "Nothing to send"
+nothingToSend = return $ liftIO $ return ()
 
 -- Continuation style for push-resources
 pushResourcesOfHead :: FsWorkerServicePocket

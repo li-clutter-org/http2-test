@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving, FlexibleInstances, MultiParamTypeClasses #-}
 module Rede.SpdyProtocol.Streams.State(
     defaultStreamState
-    ,unpackRecvHeaders
     ,initStreamState
     ,packSendHeaders
     ,streamFinalize
@@ -14,18 +13,18 @@ module Rede.SpdyProtocol.Streams.State(
 
 import           Data.IORef
 import qualified Data.ByteString           as B
-import qualified Data.ByteString.Lazy      as LB
+-- import qualified Data.ByteString.Lazy      as LB
 import           Data.Default
 import           Control.Monad.Morph       (MFunctor)
 import qualified Data.Streaming.Zlib       as Z
 -- import           System.FilePath           ((</>))
-import           Data.Binary.Get           (runGet)
-import           Data.Binary.Put           (runPut)
-import qualified Data.Binary               as Bi
+-- import           Data.Binary.Get           (runGet)
+-- import           Data.Binary.Put           (runPut)
+-- import qualified Data.Binary               as Bi
 import           Data.Conduit
 import           Data.BitSet.Generic(singleton)
 
-import           Control.Exception(throwIO)
+-- import           Control.Exception(throwIO)
 import           Control.Applicative
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Class
@@ -103,6 +102,7 @@ data StreamState = StreamState {
     -- What should I do when this stream finishes?
     , finalizer  :: IO ()
 
+    -- A dictionary from local to global id of the streams...
     , pushStreamHashTable :: PushStreamsHashTable  
 
     -- What should be the id of the next pushed stream?
@@ -158,15 +158,17 @@ instance StreamPlug (StreamStateT IO) AnyFrame where
 
             -- Stream worker asks to send data 
             Just (SendData_SOA bs_data)     -> do
-                liftIO $ putStrLn "Send main stream data"
                 current_stage <- lift getCurrentStreamStage
                 must_ack      <- lift getMustAck
                 stream_id     <- lift getStreamId
+                liftIO $ putStrLn ("Send main stream data of " ++ (show stream_id) )
+                liftIO $ putStrLn ("Length: " ++ (show $ B.length bs_data))
                 case (current_stage, must_ack) of 
                     (s,True) | canSend s -> do 
+                        liftIO $ putStrLn "Must ack on data!!"
                         anyframe <- lift $ prepareSynReplyFrame (UnpackedNameValueList [])
                         yield anyframe
-                        --yield $ prepareDataFrame bs_data stream_id
+                        yield $ prepareDataFrame bs_data stream_id
                         lift $ setMustAck False
                     (s,False) | canSend s -> do 
                         yield $ prepareDataFrame bs_data stream_id
@@ -254,18 +256,17 @@ anyFrameToInput any_frame =
     case any_frame of 
 
         ( AnyControl_AF (SynStream_ACF synstream) ) -> let 
-               CompressedKeyValueBlock compressed_headers_bytestring = getCompressedHeaders synstream
+               UncompressedKeyValueBlock  unvl                       = getCompressedHeaders synstream
                stream_unidirectional                                 = getFrameFlag synstream SyS.Unidirectional_SSVF
                stream_fin                                            = getFrameFlag synstream SyS.Fin_SSVF
             in 
               do 
-                unvl <- unpackRecvHeaders compressed_headers_bytestring 
                 case (stream_unidirectional, stream_fin) of 
                     (True, True)       ->  setCurrentStreamStage  Closed_StS
                     (True, False)      ->  setCurrentStreamStage  CanOnlyReceive_StS
                     (False, True)      ->  setCurrentStreamStage  CanOnlySend_StS
                     (False, False)     ->  setCurrentStreamStage  Open_StS
-                liftIO $ putStrLn "Frame translated"
+                -- liftIO $ putStrLn "Frame translated"
                 return $ Headers_STk unvl
 
 
@@ -315,6 +316,7 @@ prepareHeadersFrame unmvl = do
     headers_frame      <- return $ HeadersFrame def stream_id compressed_headers
     return $ wrapCF headers_frame 
 
+
 prepareSynReplyFrameAndFinish :: UnpackedNameValueList -> StreamStateT IO AnyFrame 
 prepareSynReplyFrameAndFinish unmvl = do 
     compressed_headers <- packSendHeaders unmvl
@@ -324,33 +326,6 @@ prepareSynReplyFrameAndFinish unmvl = do
   where 
     finish_prologue = ControlFrame SynReply_CFT (fbs1 Fin_SRVF) 0   
 
-
-unpackRecvHeaders :: MonadIO m => B.ByteString -> StreamStateT m UnpackedNameValueList
-unpackRecvHeaders compressed_stuff = do 
-    recv_zlib_mvar         <- StreamStateT $ asks recvZlib
-    liftIO $ withMVar recv_zlib_mvar $ \ recv_zlib ->  do
-        popper             <- Z.feedInflate recv_zlib compressed_stuff
-        list_piece_1       <- exhaustPopper popper 
-        latest             <- Z.flushInflate recv_zlib
-        uncompressed_bytes <- return $ B.concat (list_piece_1 ++ [latest])  
-        return $ runGet Bi.get $ LB.fromChunks [uncompressed_bytes]
-   
-
-exhaustPopper :: Z.Popper   -> IO [B.ByteString]
-exhaustPopper popper = do 
-    x                  <- popper 
-    case x of 
-        Z.PRDone            -> return []
-
-        Z.PRNext bytestring -> do 
-            more <- exhaustPopper popper 
-            return $ (bytestring:more)
-
-        Z.PRError e         -> do 
-            -- When this happens, the only sensible 
-            -- thing to do is throw an exception, and trash the entire 
-            -- stream.... 
-            throwIO  e
 
 
 packSendHeaders :: MonadIO m => UnpackedNameValueList -> StreamStateT m CompressedKeyValueBlock
