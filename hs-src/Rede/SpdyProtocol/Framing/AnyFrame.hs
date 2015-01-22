@@ -185,6 +185,7 @@ streamIdFromAnyFrame anyframe = case anyframe of
         (SynStream_ACF frame)               ->   streamIdFromFrame frame 
         (SynReplyFrame_ACF frame)           ->   streamIdFromFrame frame 
         (HeadersFrame_ACF frame)            ->   streamIdFromFrame frame 
+        _                                   ->   0
     DataFrame_AF dataframe        -> streamIdFromFrame dataframe
 
 streamIdFromAnyFrame _ = 0

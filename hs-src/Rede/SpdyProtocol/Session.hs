@@ -35,6 +35,7 @@ import           Rede.SpdyProtocol.Framing.AnyFrame
 import           Rede.SpdyProtocol.Framing.Frame
 import           Rede.SpdyProtocol.Framing.Ping
 import           Rede.SpdyProtocol.Framing.DataFrame
+import           Rede.SpdyProtocol.Framing.RstStream
 import           Rede.SpdyProtocol.Framing.WindowUpdate
 -- import qualified Rede.SpdyProtocol.Framing.GoAway        as GoA
 import           Rede.MainLoop.StreamPlug
@@ -44,6 +45,8 @@ import qualified Rede.SpdyProtocol.Framing.Settings      as SeF
 import           Rede.SpdyProtocol.Streams.State 
 import           Rede.MainLoop.Tokens
 
+
+-- TODO: Move to constants?
 
 
 initialSettings :: SeF.SettingsFrame
@@ -219,7 +222,7 @@ statefulSink  init_worker flow_control_gate  = do
     anyframe_maybe <- await 
     session_record <- lift $ ask
     stream_init    <- return $ streamInit session_record 
-    session_window <- return $ sessionWindow session_record
+    -- session_window <- return $ sessionWindow session_record
 
 
     case anyframe_maybe of 
@@ -235,11 +238,10 @@ statefulSink  init_worker flow_control_gate  = do
                     continue -- ##
 
                 (AnyControl_AF (WindowUpdateFrame_ACF winupdate) ) -> do 
-                    stream_id  <- return $ streamIdFromFrame winupdate
+                    stream_id   <- return $ streamIdFromFrame winupdate
                     delta_bytes <- return $ deltaWindowSize winupdate
-                    case stream_id of  
-                        0      -> liftIO $ modifyMVar_ session_window (\ current_value -> return (current_value + delta_bytes))
-                        _      -> liftIO $ putMVar flow_control_gate $ Right (stream_id, delta_bytes)
+                    liftIO $ putStrLn $ "Window update stream=" ++ (show stream_id) ++ " delta=" ++ (show delta_bytes)
+                    liftIO $ putMVar flow_control_gate $ Right (stream_id, delta_bytes)
                     continue
 
                 -- We started here: sending ping requests.... often we also 
@@ -260,7 +262,7 @@ statefulSink  init_worker flow_control_gate  = do
                             stream_inputs <- takeMVar inputs
                             putMVar inputs $ MA.delete stream_id stream_inputs 
                         stream_create = do 
-                            -- putStrLn $ "Opening stream " ++ (show stream_id)
+                            putStrLn $ "Opening stream " ++ (show stream_id)
                             stream_inputs <- takeMVar inputs
                             input_place   <- newEmptyMVar
                             stream_worker <- plugStream init_worker input_place flow_control_gate
@@ -271,6 +273,14 @@ statefulSink  init_worker flow_control_gate  = do
                         liftIO stream_create 
                         continue -- ##
 
+
+                ( AnyControl_AF (RstStreamFrame_ACF rst_stream) )  -> do 
+                        stream_id <- return $ streamIdFromFrame rst_stream
+                        liftIO $ putStrLn $ "Reset stream " ++ (show stream_id) ++ " because: "++ (show $ getFrameResetReason rst_stream)
+                        lift $ deleteStream stream_id
+                        continue -- ##
+
+
                 (AnyControl_AF (GoAwayFrame_ACF goaway)) -> do 
                         -- To test: the socket should be closed here
                         liftIO $ putStrLn $ "GOAWAY (closing this sink) " ++ (show goaway)
@@ -278,10 +288,11 @@ statefulSink  init_worker flow_control_gate  = do
 
                 (AnyControl_AF (SettingsFrame_ACF settings)) -> do 
                         liftIO $ putStrLn "Settings"
+
                         case SeF.getDefaultWindowSize settings of  
 
                             Just sz           -> do 
-                                liftIO $ putStrLn "New window size!"
+                                liftIO $ putStrLn $ "New window size: " ++ (show sz)
                                 liftIO $ modifyMVar_ (initialWindowSize session_record)
 
                                                      (\ _ -> return  sz)
@@ -311,73 +322,153 @@ handlePingFrame _ = Nothing
 addBytesToStream :: Int -> Int -> SessionM IO ()
 addBytesToStream stream_id bytecount = do 
     stream_waits <- asks streamWaits
-    stream_window_info_maybe <- liftIO $ H.lookup stream_waits stream_id 
-    case stream_window_info_maybe of  
+    if stream_id > 0
+      then do
+        stream_window_info_maybe <- liftIO $ H.lookup stream_waits stream_id 
+        case stream_window_info_maybe of  
 
-        Nothing -> do 
-            -- Create it 
-            (window_bytes, queue) <- createStreamWindowInfo
-            mvar                  <- liftIO $ newMVar ((window_bytes + bytecount), queue)
-            liftIO $ H.insert stream_waits stream_id mvar 
+            Nothing -> do 
+                -- The stream was possibly deleted before, do nothing...
+                return ()
+     
 
-        Just mvar -> do 
-            -- Modify it 
-            liftIO $ modifyMVar_ mvar $ \ (bytes, deq) -> return (bytes+bytecount, deq)
+            Just mvar -> do 
+                -- Modify it 
+                liftIO $ modifyMVar_ mvar $ \ (bytes, deq) -> return (bytes+bytecount, deq)
+      else do
+
+        -- Surely this refers to the entire thing
+        session_window_mvar <- asks sessionWindow
+        liftIO $ modifyMVar_ session_window_mvar (\ current_value -> return (current_value + bytecount))
+     
+
+initFlowControlOnStream :: Int -> SessionM IO ()
+initFlowControlOnStream stream_id = do
+    stream_waits          <- asks streamWaits
+    (window_bytes, queue) <- createStreamWindowInfo stream_id
+    mvar                  <- liftIO $ newMVar (window_bytes , queue)
+    liftIO $ H.insert stream_waits stream_id mvar 
 
 
-createStreamWindowInfo ::  SessionM IO (Int, WaitList)
-createStreamWindowInfo  = do 
-    initial_size_ioref <- asks initialWindowSize
-    sz                 <- liftIO $ readMVar initial_size_ioref
-    return (sz, D.empty)
+createStreamWindowInfo ::  Int -> SessionM IO (Int, WaitList)
+createStreamWindowInfo stream_id = do 
+    if odd stream_id 
+      then do  
+        initial_size_ioref <- asks initialWindowSize
+        sz                 <- liftIO $ readMVar initial_size_ioref
+        return (sz, D.empty)
+      else do 
+        -- Working around bug on Firefox 
+        return (10000000, D.empty)
+
 
 
 flowControlAllowsFrame :: Int -> AnyFrame -> SessionM IO Bool
 flowControlAllowsFrame stream_id anyframe = do 
     stream_waits <- asks streamWaits
-    size_to_send <- return $ associatedLength anyframe
-    Just stream_info_mvar <- liftIO $ H.lookup stream_waits stream_id
-    (bytes_remaining, dq) <- liftIO $ takeMVar stream_info_mvar
-    -- liftIO $ putStrLn $ "Bytes remaining stream id " ++ (show stream_id ) ++ " " ++ (show bytes_remaining)
+    stream_info_mvar_maybe <- liftIO $ H.lookup stream_waits stream_id
 
-    case ( ((D.length dq) == 0), (bytes_remaining >= size_to_send) ) of 
+    case stream_info_mvar_maybe of 
 
-        (True, True)    -> do
-            -- Empty dequeue, enough bytes 
-            liftIO $ putMVar stream_info_mvar (bytes_remaining-size_to_send, dq)
-            return True 
-          
-        _               -> do 
-            liftIO $ putMVar stream_info_mvar (bytes_remaining, (D.pushBack dq anyframe))
+        Just stream_info_mvar    -> do
+            (bytes_remaining, dq) <- liftIO $ takeMVar stream_info_mvar
+            size_to_send <- return $ associatedLength anyframe   
+            available_in_session_mv    <- asks sessionWindow
+            available_in_session       <- liftIO $ takeMVar available_in_session_mv
+            -- liftIO $ putStrLn $ "Bytes remaining stream id " ++ (show stream_id ) ++ " " ++ (show bytes_remaining)
+
+            case ( ((D.length dq) == 0), ((bytes_remaining >= size_to_send) && (size_to_send <= available_in_session) ) ) of 
+
+                (True, True)    ->  do
+                    -- Empty dequeue, enough bytes 
+                    liftIO $  do 
+                        putMVar stream_info_mvar (bytes_remaining-size_to_send, dq)
+                        putMVar available_in_session_mv (available_in_session - size_to_send)
+                    return True 
+                  
+                _               ->  do 
+                    liftIO $ do 
+                        putStrLn $ "FRAME of stream " ++ (show stream_id) ++ " DELAYED rem bytes: " ++ (show bytes_remaining) ++ " size_to_send: " ++ (show size_to_send)
+                        putMVar stream_info_mvar (bytes_remaining, (D.pushBack dq anyframe))
+                        putMVar available_in_session_mv available_in_session
+                    return False
+
+        Nothing                ->   
+            -- Stream has been deleted 
             return False
 
-                
 
 
 flowControlCanPopFrame :: Int -> SessionM IO (Maybe AnyFrame)
 flowControlCanPopFrame stream_id = do 
-    stream_waits <- asks streamWaits
-    Just stream_info_mvar <- liftIO $ H.lookup stream_waits stream_id
-    (bytes_remaining, dq) <- liftIO $ takeMVar stream_info_mvar
-    (anyframe_maybe, newqueue) <- return $ D.popFront dq 
+    session_record             <- ask
+    stream_waits               <- asks streamWaits
 
-    (result, newbytes, dq') <- case anyframe_maybe of 
+    if stream_id > 0 
+      then do 
+        stream_info_mvar_maybe     <- liftIO $ H.lookup stream_waits stream_id
 
-        Just anyframe   ->
-            if sz <= bytes_remaining 
-              then
-                return ( (Just anyframe), bytes_remaining - sz, newqueue) 
-              else 
-                return ( Nothing, bytes_remaining, dq)
-          where  
-            sz = associatedLength anyframe 
+        case stream_info_mvar_maybe of 
 
-        Nothing  -> 
-            return (Nothing, bytes_remaining, dq)
+            Just stream_info_mvar  -> do
 
-    liftIO $ putMVar stream_info_mvar (newbytes, dq')
+                (bytes_remaining, dq) <- liftIO $ takeMVar stream_info_mvar
+                (anyframe_maybe, newqueue) <- return $ D.popFront dq 
+                available_in_session_mv    <- asks sessionWindow
+                available_in_session       <- liftIO $ takeMVar available_in_session_mv
 
-    return result 
+                (result, newbytes, dq', new_available_in_session)  <- case anyframe_maybe of 
+
+                    Just anyframe   ->
+                        if (sz <= bytes_remaining) && (sz <= available_in_session)
+                          then do
+                            liftIO $ putStrLn $ "Frame of  " ++ (show stream_id) ++  " popped!"
+                            return ( (Just anyframe), bytes_remaining - sz, newqueue, available_in_session - sz) 
+                          else do
+                            liftIO $ putStrLn $ "Impossible: stream_id= " ++ 
+                                                         (show stream_id) ++ 
+                                                         " stream bytes avail: " ++ 
+                                                         (show bytes_remaining) ++ 
+                                                         " session avail: " ++ (show available_in_session)
+
+                            return ( Nothing, bytes_remaining, dq, available_in_session)
+                      where  
+                        sz = associatedLength anyframe 
+
+                    Nothing  -> 
+                        return (Nothing, bytes_remaining, dq, available_in_session)
+
+                liftIO $ do 
+                    putMVar stream_info_mvar (newbytes, dq')
+                    putMVar available_in_session_mv new_available_in_session
+
+                return result 
+
+            Nothing              -> do 
+                return Nothing
+      else 
+        do
+            -- More complicated case of the session window, go through all the active streams
+            liftIO $ H.foldM  
+                (\ p (stream_id', _) ->  runReaderT (innerFold p stream_id') session_record)
+                Nothing
+                stream_waits
+          where 
+            innerFold p stream_id' = do 
+                liftIO $ putStrLn $ "iter: " ++ (show stream_id')
+
+                case p of 
+
+                    Just _  -> return p 
+
+                    Nothing ->  do
+                        anyframe_maybe <- flowControlCanPopFrame stream_id'
+                        case anyframe_maybe of 
+                            Just _       -> do 
+                                return anyframe_maybe  
+                            Nothing      -> do 
+                                return Nothing  
+
 
 
 -- This one sits on the output stream, checking to see if frames are allowed to leave
@@ -395,11 +486,6 @@ flowControl input output  = do
         Left anyframe    ->     if frameIsFlowControlled anyframe
           then do
             stream_id <- return $ streamIdFromAnyFrame anyframe
-
-            -- Let's make sure we have flow-control information for this stream, 
-            -- as it may be the first time we send data on it. On creation, the 
-            -- function gives to the frame the initial window size.
-            addBytesToStream stream_id 0
             can_send  <- flowControlAllowsFrame stream_id anyframe
             if can_send 
               then do
@@ -413,25 +499,41 @@ flowControl input output  = do
             -- generated here in the server, don't obstruct them 
             liftIO $ putMVar output anyframe  
 
+            -- Some of the non-flow controlled frames create send windows when 
+            -- they go out, let's take care of that 
+
+            case anyframe of 
+
+                (AnyControl_AF (SynStream_ACF frame) )      -> initFlowControlOnStream $ streamIdFromFrame frame 
+                (AnyControl_AF (SynReplyFrame_ACF frame))   -> initFlowControlOnStream $ streamIdFromFrame frame
+
+                _                                           -> return ()
+
 
         Right (stream_id, window_delta_size)   -> do 
 
+            liftIO $ putStrLn $ "Add to stream: " ++ (show stream_id)
             -- So, I got some more room to send frames
             -- Notice that this may happen before this fragment ever observes 
             -- a frame on that stream, so we need to be sure it exists...
             addBytesToStream stream_id window_delta_size
 
-            popped_frame_maybe <- flowControlCanPopFrame stream_id 
+            sendFramesForStream stream_id output
 
-            case popped_frame_maybe of 
-
-                Just anyframe   -> do
-                    liftIO $ putMVar output anyframe
-
-                Nothing         -> 
-                    return ()
-
+    -- Tail-recursively invoke
     flowControl input output 
+
+  where 
+    sendFramesForStream stream_id output' = do 
+        popped_frame_maybe <- flowControlCanPopFrame stream_id 
+        case popped_frame_maybe of 
+
+            Just anyframe   -> do
+                liftIO $ putMVar output' anyframe
+                sendFramesForStream stream_id output'
+
+            Nothing         -> 
+                return ()
 
 
 associatedLength :: AnyFrame -> Int
@@ -459,13 +561,14 @@ createTrivialSource output_mvar = do
         -- this frame is the last one in the stream 
         case frameEndsStream anyframe_headerscompressed of 
 
-            Just which_stream ->  
+            Just which_stream -> do
+                liftIO $ putStrLn $ "Stream " ++ (show which_stream) ++  " closed naturally"
                 lift $ deleteStream which_stream
         
             Nothing         -> 
                 return ()
 
-        -- liftIO $ putStrLn $ "SENDING: " ++ (show anyframe)
+        liftIO $ putStrLn $ "SENDING of: " ++ (show $ streamIdFromAnyFrame anyframe_headerscompressed)
         yield anyframe_headerscompressed
         createTrivialSourceLoop
 

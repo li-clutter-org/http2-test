@@ -1,9 +1,13 @@
 {-# LANGUAGE FlexibleInstances #-}
 module Rede.SpdyProtocol.Framing.RstStream (
-	RstStreamFrame(..)
+	getRstStreamFrame
+	,rstStreamFrame
+	,getFrameResetReason
+
+	,RstStreamFrame(..)
 	,RstStreamValidFlags(..)
-	,getRstStreamFrame
-	,rstStreamFrame) where 
+	,FrameResetReason(..) 
+	) where 
 
 
 import Rede.SpdyProtocol.Framing.Frame
@@ -22,9 +26,13 @@ data RstStreamFrame =
 	RstStreamFrame {
 		prologue:: ControlFrame RstStreamValidFlags 
 		, streamId:: Int 
-		, statusCode:: Int
+		, statusCode:: FrameResetReason
 	}
 	deriving Show
+
+
+instance HasStreamId RstStreamFrame where
+  streamIdFromFrame = streamId
 
 
 instance Default (ControlFrame RstStreamValidFlags) where 
@@ -36,21 +44,41 @@ instance Binary RstStreamFrame where
 	  do 
 		put pr
 		putWord32be $ fromIntegral fi
-		putWord32be $ fromIntegral s
+		putWord32be $ fromIntegral $ fromEnum s
 
 	get = 
 	  do
-	  	pr <- get 
+	  	pr  <- get 
 	  	w32 <- getWord32be
-	  	s <- getWord32be
-	  	return $ RstStreamFrame pr (fromIntegral w32) (fromIntegral s)
+	  	s   <- getWord32be
+	  	return $ RstStreamFrame pr (fromIntegral w32) (toEnum $ fromIntegral s)
+
+
+getFrameResetReason :: RstStreamFrame -> FrameResetReason
+getFrameResetReason = statusCode
+
+
+data FrameResetReason = Null_FRR 
+	| ProtocolError_FRR
+	| InvalidStream_FRR
+	| RefusedStream_FRR
+	| UnsuportedVersion_FRR
+	| Cancel_FRR
+	| InternalError_FRR
+	| FlowControlError_FRR
+	| StreamInUse_FRR
+	| StreamAlreadyClosed_FRR
+	| Deprecated1_FRR
+	| FrameTooLarge_FRR
+
+	deriving (Show, Enum, Eq)
 
 
 getRstStreamFrame :: Get RstStreamFrame
 getRstStreamFrame = get
 
 
-rstStreamFrame :: Int -> Int -> RstStreamFrame
+rstStreamFrame :: Int -> FrameResetReason -> RstStreamFrame
 rstStreamFrame  stream_id status_code = 
   RstStreamFrame 
     (ControlFrame RstStream_CFT empty 8)
