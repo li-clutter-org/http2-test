@@ -24,6 +24,11 @@ data WindowUpdateFrame =
 	deriving Show
 
 
+
+instance HasStreamId WindowUpdateFrame where 
+    streamIdFromFrame = streamId 
+
+
 instance Binary WindowUpdateFrame where 
 	put wsf= do 
 		let 

@@ -1,16 +1,26 @@
+{-# LANGUAGE StandaloneDeriving, MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, GADTs #-}
+
+
 module Rede.SpdyProtocol.Framing.DataFrame(
 	DataFrame(..)
 	,DataFrameValidFlags(..)
 	) where 
 
+
 import           Data.Bits
 -- import Data.Enum
-import           Data.Binary            (Binary, get, getWord8, put, putWord8)
-import           Data.Binary.Get        (getWord32be, getByteString)
-import           Data.Binary.Put        (putWord32be, putByteString)
-import           Rede.SpdyProtocol.Framing.Frame (FlagsBitSet, bitsetToWord8, word8ToBitset)
-import           Rede.Utils             (getWord24be, putWord24be)
-import qualified Data.ByteString  as B 
+import           Data.Binary                     (Binary, get, getWord8, put,
+                                                  putWord8)
+import           Data.Binary.Get                 (getByteString, getWord32be)
+import           Data.Binary.Put                 (putByteString, putWord32be)
+import           Data.BitSet.Generic             (delete, insert, member)
+import qualified Data.ByteString                 as B
+import           Rede.SpdyProtocol.Framing.Frame (FlagsBitSet,
+                                                  HasFrameFlags (..),
+                                                  HasStreamId   (..),
+                                                  bitsetToWord8, word8ToBitset)
+import           Rede.Utils                      (getWord24be, putWord24be)
+
 
 
 data DataFrameValidFlags = Fin_F   -- Signals stream termination
@@ -24,6 +34,27 @@ data DataFrame =
 		, payload:: B.ByteString
 	}
 	deriving Show
+
+
+instance HasFrameFlags DataFrame DataFrameValidFlags where 
+    -- applyFrameFlag :: frame -> flag -> Bool -> frame
+    applyFrameFlag dataframe flag setornot = dataframe {
+    		dataFrameFlags = newflags
+		}
+	  where 
+	  	flags = dataFrameFlags dataframe
+	  	newflags = if setornot then insert flag flags else delete flag flags
+
+    -- getFrameFlag :: frame -> flag -> Bool
+    getFrameFlag dataframe flag = 
+    	member flag flags 
+      where 
+      	flags = dataFrameFlags dataframe
+
+
+instance HasStreamId DataFrame where 
+    -- streamIdFromFrame :: a -> Int
+    streamIdFromFrame = streamId
 
 
 instance Binary DataFrame where 

@@ -56,6 +56,9 @@ instance HasFrameFlags SynReplyFrame SynReplyValidFlags where
       in member flag flags
 
 
+instance HasStreamId SynReplyFrame where 
+    streamIdFromFrame = streamId 
+
 instance CompressedHeadersOnFrame SynReplyFrame where 
     getCompressedHeaders = compressedKeyValueBlock
     setCompressedHeaders synstreamframe compressedkvb = synstreamframe {

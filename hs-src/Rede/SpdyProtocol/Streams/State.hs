@@ -39,6 +39,7 @@ import           Rede.SpdyProtocol.Framing.Headers
 import qualified Rede.SpdyProtocol.Framing.SynStream     as SyS
 import           Rede.SpdyProtocol.Framing.DataFrame
 import qualified Rede.SpdyProtocol.Framing.DataFrame     as DF
+import           Rede.Constants(spdyDataFrameMaxLength)
 
 
 data StreamStage =
@@ -158,10 +159,12 @@ instance StreamPlug (StreamStateT IO) AnyFrame where
                         liftIO $ putStrLn "Must ack on data!!"
                         anyframe <- lift $ prepareSynReplyFrame (UnpackedNameValueList [])
                         yield anyframe
-                        yield $ prepareDataFrame bs_data stream_id
+                        -- yield $ prepareDataFrame bs_data stream_id
+                        yieldDataFramesFromData bs_data stream_id
                         lift $ setMustAck False
                     (s,False) | canSend s -> do 
-                        yield $ prepareDataFrame bs_data stream_id
+                        --yield $ prepareDataFrame bs_data stream_id
+                        yieldDataFramesFromData bs_data stream_id 
                 outputPlug
 
             Just Finish_SOA                 -> do
@@ -202,8 +205,9 @@ instance StreamPlug (StreamStateT IO) AnyFrame where
                 -- Global id 
                 global_stream_id <- lift $ getGlobalPushStreamId local_stream_id
 
-                anyframe         <- return $ prepareDataFrame contents global_stream_id
-                yield anyframe
+                -- anyframe         <- return $ prepareDataFrame contents global_stream_id
+                -- yield anyframe
+                yieldDataFramesFromData contents global_stream_id
                 outputPlug
 
 
@@ -223,10 +227,21 @@ instance StreamPlug (StreamStateT IO) AnyFrame where
 
 prepareDataFrame :: B.ByteString -> Int -> AnyFrame
 prepareDataFrame bs_data stream_id = DataFrame_AF $ DataFrame {
-                            DF.streamId        = stream_id
-                            ,DF.dataFrameFlags = fbs0
-                            ,DF.payload        = bs_data
-                            }
+    DF.streamId        = stream_id
+    ,DF.dataFrameFlags = fbs0
+    ,DF.payload        = bs_data
+    }
+
+
+yieldDataFramesFromData :: B.ByteString
+                 -> Int -> ConduitM StreamOutputAction AnyFrame (StreamStateT IO) ()
+yieldDataFramesFromData contents stream_id = do 
+    yield $ prepareDataFrame start stream_id
+    case rest of 
+        ""     -> return ()
+        longer -> yieldDataFramesFromData longer stream_id 
+  where 
+    (start, rest) = B.splitAt spdyDataFrameMaxLength contents
 
 
 prepareFinishDataFrame :: Int -> AnyFrame
@@ -235,9 +250,6 @@ prepareFinishDataFrame stream_id = DataFrame_AF $ DataFrame {
                             ,DF.dataFrameFlags = singleton DF.Fin_F
                             ,DF.payload        = ""
                             }
-
-
-
 
 
 anyFrameToInput :: MonadIO m => AnyFrame ->  StreamStateT m StreamInputToken

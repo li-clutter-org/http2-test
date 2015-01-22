@@ -2,7 +2,8 @@
 
 module Rede.Constants(
 	whichSPDY,
-	whichHTTP
+	whichHTTP,
+	spdyDataFrameMaxLength
 )  where
 
 import           Data.ByteString(ByteString)
@@ -12,3 +13,7 @@ whichSPDY = "spdy/3.1"
 
 whichHTTP :: ByteString 
 whichHTTP = "http/1.1"
+
+
+spdyDataFrameMaxLength :: Int
+spdyDataFrameMaxLength = 8192

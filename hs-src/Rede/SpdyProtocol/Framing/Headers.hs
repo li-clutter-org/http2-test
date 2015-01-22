@@ -36,6 +36,10 @@ instance Default (ControlFrame HeadersValidFlags) where
     def = ControlFrame Headers_CFT (fbs1 None_HVF) 0
 
 
+instance HasStreamId HeadersFrame where 
+    streamIdFromFrame = streamId 
+
+
 instance Binary HeadersFrame where
 
     put (HeadersFrame pr strid (CompressedKeyValueBlock cmpkvb)) = do

@@ -5,6 +5,7 @@ module Rede.SpdyProtocol.Framing.AnyFrame(
   ,readFrame
   ,writeFrame
   ,lengthFromPerfunct
+  ,streamIdFromAnyFrame
   
   ,PerfunctoryClassif
   ,AnyControlFrame       (..)
@@ -174,3 +175,16 @@ writeDataFrame df = put df
 
 extract :: Binary a => LB.ByteString -> a 
 extract bs = runGet get bs 
+
+
+-- Returns 0 if no valid id is present... 
+streamIdFromAnyFrame :: AnyFrame -> Int  
+streamIdFromAnyFrame anyframe = case anyframe of 
+    AnyControl_AF anycontrol    -> case anycontrol of 
+        (WindowUpdateFrame_ACF frame)       ->   streamIdFromFrame frame 
+        (SynStream_ACF frame)               ->   streamIdFromFrame frame 
+        (SynReplyFrame_ACF frame)           ->   streamIdFromFrame frame 
+        (HeadersFrame_ACF frame)            ->   streamIdFromFrame frame 
+    DataFrame_AF dataframe        -> streamIdFromFrame dataframe
+
+streamIdFromAnyFrame _ = 0

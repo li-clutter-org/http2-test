@@ -1,6 +1,7 @@
 {-# LANGUAGE StandaloneDeriving, FlexibleInstances, MultiParamTypeClasses, FunctionalDependencies #-}
 module Rede.SpdyProtocol.Framing.Settings (
      getSettingsFrame
+     ,getDefaultWindowSize
 
     ,SettingsFrame(..)
     ,SettingsValidFlags(..)
@@ -11,6 +12,7 @@ module Rede.SpdyProtocol.Framing.Settings (
 
 
 import           Data.Word                       (Word32)
+import           Data.List                       (find)
 import           Rede.SpdyProtocol.Framing.Frame
 import           Control.Monad
 import           Data.Binary                     (Binary, Get, get, getWord8,
@@ -67,10 +69,18 @@ data SettingsSettingsId =
     |DownloadRetransRate_S
     |InitialWindowSize_S
     |ClientCertificateVectorSize_S
-    deriving (Enum,Show)
+    deriving (Enum,Show, Eq)
 
 
 type SettingItem = (SettingsSettingsId, Word32, PersistSettings) 
+
+
+getDefaultWindowSize :: SettingsFrame -> Maybe Int 
+getDefaultWindowSize (SettingsFrame _ persist) = 
+    case find (\ (setting_id, _ , _) -> setting_id == InitialWindowSize_S ) persist of 
+        Just (_, v, _)    ->   Just $ fromIntegral v 
+        Nothing           ->   Nothing
+
 
 
 data PersistSettings = 
