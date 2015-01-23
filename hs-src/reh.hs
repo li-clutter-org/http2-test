@@ -13,15 +13,17 @@ import           Rede.MainLoop.Conduit
 import           Rede.SpdyProtocol.Session(basicSession)
 import           Rede.SpdyProtocol.TrivialTestWorker(FsWorkerServicePocket)
 import           Rede.MainLoop.Tokens
--- import           Rede.Test(dotests)
+import           Rede.MainLoop.ConfigHelp (getServedPort, getInterfaceName)
 
 
 main :: IO ()
 main = do
+	port <- getServedPort
+	iface <- getInterfaceName
 	tlsServeProtocols [ 
 		("spdy/3.1",spdyAttendant)
 		,("http/1.1",httpAttendant) 
-		] "127.0.0.1" 1060
+		] iface port
 
 
 -- The "PushAction" is a callback that can pull bytes from 

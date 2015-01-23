@@ -86,16 +86,23 @@ type HeadsHashTable = H.BasicHashTable B.ByteString [(String, String)]
 
 
 data FsWorkerServicePocket  = FsWorkerServicePocket {
-    headsHashTable :: MVar HeadsHashTable
+    headsHashTable      :: MVar HeadsHashTable
+    ,hostPort           :: HostPort
+    ,hostPortByteString :: B.ByteString
 }
+
 
 instance StreamWorkerClass FsWorkerServicePocket FsWorkerSessionPocket where
  
     initService = do 
         heads_hash_table <- H.new
         heads_hash_table_mvar <- newMVar heads_hash_table
+        host_port <- getHostPort
+        host_port_bytestring <- return $ pack $ (fst host_port) ++ ":" ++(show $ snd host_port)
         return $ FsWorkerServicePocket {
             headsHashTable = heads_hash_table_mvar
+            ,hostPort = host_port 
+            ,hostPortByteString = host_port_bytestring
             }
  
     initSession _ = do
@@ -262,11 +269,12 @@ pushHeadersOfHead service_pocket the_path = do
             -- TODO: I'm reading off the resource just to have its length ...
             -- I seriously need to consider using an in-memory cache.
             Just contents <- liftIO $ fetchFile a_filepath 
-            sendAssociatedHeaders i a_url contents
+            sendAssociatedHeaders i a_url host_port_bytestring contents
         ) (enum urls_and_filepaths)
   where 
     ht_mvar = headsHashTable service_pocket
     enum x = zip [0 .. ] x
+    host_port_bytestring = hostPortByteString service_pocket
 
 
 pushContentsOfHead ::  FsWorkerServicePocket
@@ -345,18 +353,20 @@ sendResponse the_path contents = do
 -- subid: a local stream id. The output plug is in charge of translating
 -- this to an actual stream id. This local stream id is needed to match 
 -- headers and body data
-sendAssociatedHeaders :: Int -> String -> B.ByteString  -> StreamWorker
-sendAssociatedHeaders subid the_path  contents = do 
+sendAssociatedHeaders :: Int -> String ->  B.ByteString -> B.ByteString  -> StreamWorker
+sendAssociatedHeaders subid the_path host_port contents = do 
     mimetype <- return $ getRelPathMime the_path
     liftIO $ putStrLn $ "Warning: host header is wired!!!"
     yield $ SendAssociatedHeaders_SOA subid $ UnpackedNameValueList  [
          (":status", "200")
         ,(":version", "HTTP/1.1")
         ,(":scheme", "https")
-        ,(":host", "www.httpdos.com:1060")
+        ,(":host",  host_port )
         ,(":path", pack the_path)
+        ,("acquisition-intent", "push")
         ,("content-length", (pack.show $ B.length contents))
         ,("content-type",  mimetype)
+
 
         -- TODO here: set the no-cache headers .... 
 

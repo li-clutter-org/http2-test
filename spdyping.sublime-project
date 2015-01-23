@@ -11,7 +11,8 @@
 			[
 				"dist",
 				".cabal-sandbox",
-				"demo-site/http2"
+				"demo-site/http2",
+				"demo-site/mathjax23"
 			],
 			"follow_symlinks": true,
 			"path": "."
