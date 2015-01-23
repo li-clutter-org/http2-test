@@ -159,8 +159,8 @@ fsWorker service_pocket session_pocket = return $ do
 
                                     Nothing -> send404
                   where 
-                    the_path = U.uriPath uu
-                    relativized_path = tail the_path
+                    the_path = (U.uriPath uu) ++ (U.uriQuery uu)
+                    relativized_path = tail $ U.uriPath uu
 
 
                 _ -> send404
@@ -182,8 +182,11 @@ cacheInteract :: String
                  -> ContinuationWorker StreamWorker
 cacheInteract the_path full_filename service_pocket session_pocket = do
 
-    session_is_new <- liftIO $ modifyMVar (sessionIsNew session_pocket) $ \ session_is_new -> do 
-        return (False, session_is_new)
+    liftIO $ putStrLn $ "CACHE interact with " ++ the_path
+
+    session_is_new <- liftIO $ modifyMVar (sessionIsNew session_pocket) $ 
+        \ session_is_new -> do 
+            return (False, session_is_new)
 
     head_is_known <- liftIO $ headIsKnown service_pocket the_path
     
@@ -309,7 +312,7 @@ disableRecordingOnSession :: FsWorkerSessionPocket -> IO ()
 disableRecordingOnSession session_pocket = do 
     maybe_could_take <- tryTakeMVar (sessionIsRecording session_pocket)
     case maybe_could_take of 
-        Just _ -> return ()
+        Just _ -> putStrLn "Disabled recording!"
         _      -> putStrLn "COULD NOT!! disable session recording"
 
 
@@ -356,7 +359,6 @@ sendResponse the_path contents = do
 sendAssociatedHeaders :: Int -> String ->  B.ByteString -> B.ByteString  -> StreamWorker
 sendAssociatedHeaders subid the_path host_port contents = do 
     mimetype <- return $ getRelPathMime the_path
-    liftIO $ putStrLn $ "Warning: host header is wired!!!"
     yield $ SendAssociatedHeaders_SOA subid $ UnpackedNameValueList  [
          (":status", "200")
         ,(":version", "HTTP/1.1")
@@ -438,9 +440,13 @@ suffixToMimeTypes = [
 getRelPathMime :: String -> B.ByteString
 getRelPathMime  rel_path = case maybe_mime of 
     Just (_, mime_type) -> mime_type
-    Nothing             -> "application/octet-stream" 
+    Nothing             -> 
+        case maybe_mime2 of 
+            Just (_, mime_type)    -> mime_type 
+            Nothing                -> "application/octet-stream" 
   where 
     maybe_mime  = find (\ (ext, _) -> ext `B.isSuffixOf` rel_path_bs ) suffixToMimeTypes
+    maybe_mime2 = find (\ (ext, _) -> (B.append ext  "?") `B.isInfixOf` rel_path_bs ) suffixToMimeTypes
     rel_path_bs = pack rel_path
 
 

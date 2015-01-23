@@ -118,7 +118,7 @@ basicSession worker_service_pocket = do
     stream_waits          <- H.new
 
     -- TODO: Fix this
-    initial_window_size   <- newMVar 10000000
+    initial_window_size   <- newMVar 65536
 
     session_window        <- newMVar 65536
 
@@ -240,7 +240,7 @@ statefulSink  init_worker flow_control_gate  = do
                 (AnyControl_AF (WindowUpdateFrame_ACF winupdate) ) -> do 
                     stream_id   <- return $ streamIdFromFrame winupdate
                     delta_bytes <- return $ deltaWindowSize winupdate
-                    liftIO $ putStrLn $ "Window update stream=" ++ (show stream_id) ++ " delta=" ++ (show delta_bytes)
+                    -- liftIO $ putStrLn $ "Window update stream=" ++ (show stream_id) ++ " delta=" ++ (show delta_bytes)
                     liftIO $ putMVar flow_control_gate $ Right (stream_id, delta_bytes)
                     continue
 
@@ -287,12 +287,11 @@ statefulSink  init_worker flow_control_gate  = do
                         -- Don't continue here
 
                 (AnyControl_AF (SettingsFrame_ACF settings)) -> do 
-                        liftIO $ putStrLn "Settings"
 
                         case SeF.getDefaultWindowSize settings of  
 
                             Just sz           -> do 
-                                liftIO $ putStrLn $ "New window size: " ++ (show sz)
+                                liftIO $ putStrLn $ "Settings window size: " ++ (show sz)
                                 liftIO $ modifyMVar_ (initialWindowSize session_record)
 
                                                      (\ _ -> return  sz)
@@ -455,7 +454,7 @@ flowControlCanPopFrame stream_id = do
                 stream_waits
           where 
             innerFold p stream_id' = do 
-                liftIO $ putStrLn $ "iter: " ++ (show stream_id')
+                -- liftIO $ putStrLn $ "iter: " ++ (show stream_id')
 
                 case p of 
 
@@ -512,7 +511,7 @@ flowControl input output  = do
 
         Right (stream_id, window_delta_size)   -> do 
 
-            liftIO $ putStrLn $ "Add to stream: " ++ (show stream_id)
+            -- liftIO $ putStrLn $ "Add to stream: " ++ (show stream_id)
             -- So, I got some more room to send frames
             -- Notice that this may happen before this fragment ever observes 
             -- a frame on that stream, so we need to be sure it exists...
