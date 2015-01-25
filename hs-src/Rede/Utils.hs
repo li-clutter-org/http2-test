@@ -78,5 +78,5 @@ reportTimedEvent base_time message = do
     let 
         base_as_double = timeAsDouble base_time 
     now <- SC.getTime SC.Monotonic
-    putStrLn $ "ev: " ++ message ++ " |time/ " ++ (printf "%0.4f" 
+    putStrLn $ "ev: " ++ message ++ " |time/ " ++ (printf "%0.4f seconds" 
         ((timeAsDouble now) - base_as_double) )

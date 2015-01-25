@@ -50,6 +50,8 @@ data StreamOutputAction = SendHeaders_SOA UnpackedNameValueList
     deriving Show
 
 
+-- | A StreamWorker: a conduit that takes input tokens and answers with output 
+--   tokens. It can perform I/O.
 type StreamWorker = Conduit StreamInputToken IO StreamOutputAction
 
 

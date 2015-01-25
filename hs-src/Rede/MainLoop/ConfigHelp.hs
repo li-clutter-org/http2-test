@@ -58,8 +58,6 @@ getInterfaceName = do
 	return $ contents
 
 
-
-
 getServedPort :: IO Int 
 getServedPort = do 
 	config_dir <- configDir 
