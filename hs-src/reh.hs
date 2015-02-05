@@ -14,6 +14,7 @@ import           Rede.SpdyProtocol.Session(basicSession)
 import           Rede.SpdyProtocol.TrivialTestWorker(FsWorkerServicePocket)
 import           Rede.MainLoop.Tokens
 import           Rede.MainLoop.ConfigHelp (getServedPort, getInterfaceName)
+import           Rede.SpdyProtocol.Framing.ChunkProducer(chunkProducerHelper)
 
 
 main :: IO ()
@@ -39,5 +40,9 @@ httpAttendant push _ =
 spdyAttendant :: PushAction -> PullAction -> IO () 
 spdyAttendant push pull = do 
 	fs_worker_service_pocket <- initService :: IO FsWorkerServicePocket
-	activateSessionManager 	id (basicSession fs_worker_service_pocket) push pull
- 
+	activateSessionManager 	
+	    id 
+	    (basicSession fs_worker_service_pocket) 
+	    push 
+	    pull
+ 		chunkProducerHelper

@@ -1,4 +1,5 @@
 {-# LANGUAGE DefaultSignatures, DeriveGeneric, TypeOperators, FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances, MultiParamTypeClasses #-}
 module Rede.SpdyProtocol.Framing.AnyFrame(
    readControlFrame
   ,perfunctoryClassify
@@ -29,6 +30,11 @@ import           Data.Binary             (Binary,  get, put, Put)
 import           Data.Binary.Get         (runGet)
 import qualified Data.Binary.Get as G
 import qualified Data.ByteString.Lazy as LB
+import qualified Data.Conduit                 as C
+import           Data.Conduit
+import qualified Data.Conduit.List            as CL
+import Rede.MainLoop.Conduit(FramesInterface(..))
+import           Data.Binary.Put              (runPut)
 
 import           Rede.SpdyProtocol.Framing.Frame
 import           Rede.SpdyProtocol.Framing.Ping         (PingFrame(..))
@@ -40,6 +46,7 @@ import           Rede.SpdyProtocol.Framing.SynReply     (SynReplyFrame(..))
 import           Rede.SpdyProtocol.Framing.SynStream    (SynStreamFrame(..))
 import           Rede.SpdyProtocol.Framing.Headers      (HeadersFrame(..))
 import           Rede.SpdyProtocol.Framing.GoAway       (GoAwayFrame(..))
+import           Rede.MainLoop.Conduit()
 
 import           Rede.Utils              ( getWord24be )
 
@@ -189,3 +196,24 @@ streamIdFromAnyFrame anyframe = case anyframe of
     DataFrame_AF dataframe        -> streamIdFromFrame dataframe
 
 streamIdFromAnyFrame _ = 0
+
+
+instance FramesInterface IO AnyFrame where 
+  -- Now let's define a pipe that converts ByteString representations of frames 
+  -- to AnyFrame
+  -- inputToFrames :: C.Conduit LB.ByteString IO AnyFrame
+  inputToFrames = CL.map $ \ the_bytes -> let
+    perfunct_classif = perfunctoryClassify the_bytes
+    in
+      readFrame the_bytes perfunct_classif 
+
+
+  -- framesToOutput :: MonadIO m => C.Conduit AnyFrame IO LB.ByteString
+  framesToOutput =  do  
+      the_frame_maybe <- await
+      case the_frame_maybe of 
+        (Just the_frame)    -> do
+          serialized <- return $ runPut $ writeFrame the_frame
+          C.yield serialized
+          framesToOutput
+        Nothing             -> return ()

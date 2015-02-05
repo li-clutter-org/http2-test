@@ -7,18 +7,18 @@ module Rede.MainLoop.Pipes (
     ,chunkProducer) where 
 
 
-import           Data.Binary.Put        (runPut)
-import qualified Data.ByteString        as B
-import qualified Data.ByteString.Lazy   as LB
+import           Data.Binary.Put                         (runPut)
+import qualified Data.ByteString                         as B
+import qualified Data.ByteString.Lazy                    as LB
 import           Pipes
-import qualified Pipes.Core             as PC
-import           Rede.MainLoop.Common(chunkProducerHelper)
+import qualified Pipes.Core                              as PC
+import           Rede.SpdyProtocol.Framing.ChunkProducer (chunkProducerHelper)
 
 
-import           Rede.SpdyProtocol.Framing.AnyFrame (AnyFrame(..)
-                                           , perfunctoryClassify
-                                           , readFrame
-                                           , writeFrame)
+import           Rede.SpdyProtocol.Framing.AnyFrame      (AnyFrame (..),
+                                                          perfunctoryClassify,
+                                                          readFrame, writeFrame)
+
 
 
 chunkProducer :: IO B.ByteString    -- Generator
