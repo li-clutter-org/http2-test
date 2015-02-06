@@ -22,10 +22,15 @@ module Rede.HarFiles.DataStructure(
     ) where 
 
 
-import           Control.Lens.TH(makeLenses)
-import qualified Control.Lens as L
+import           Control.Applicative
+import           Control.Monad
+import qualified Control.Lens        as L
+import           Control.Lens.TH     (makeLenses)
 
-import Data.ByteString(ByteString)
+import           Data.Aeson
+import           Data.ByteString     (ByteString)
+import           Data.ByteString.Char8 (pack)
+
 
 
 -- Which kind of string?
@@ -41,7 +46,7 @@ data Har_Log = Har_Log {
    }
 
 
-data Har_Headers = Har_Headers {
+data Har_Header = Har_Header {
     _headerName :: HereString
     ,_headerValue :: HereString 
     }
@@ -50,13 +55,13 @@ data Har_Headers = Har_Headers {
 data Har_Response = Har_Response {
     _status       :: Int 
     ,_content     :: HereString
-    ,_respHeaders :: Har_Headers
+    ,_respHeaders :: Har_Header
     }
 
 
 data Har_Request = Har_Request {
     _method       :: HereString
-    ,_reqHeaders  :: Har_Headers
+    ,_reqHeaders  :: Har_Header
     ,_queryString :: HereString
     ,_reqUrl      :: HereString
     ,_reqBody     :: HereString
@@ -102,8 +107,82 @@ makeLenses ''Har_Page
 makeLenses ''Har_Outer
 makeLenses ''Har_Response
 makeLenses ''Har_Entry 
-makeLenses ''Har_Headers
+makeLenses ''Har_Header
 makeLenses ''Har_VersionPair
 makeLenses ''Har_Log
 makeLenses ''Har_Request
 makeLenses ''Har_PageTimings
+
+
+instance FromJSON Har_VersionPair where 
+
+    parseJSON (Object v)  = Har_VersionPair <$>
+        v   .: "version"               <*>
+        ( pack <$>  v .: "name" )
+
+    parseJSON _   =  mzero 
+
+
+instance FromJSON Har_PageTimings where 
+
+    parseJSON (Object v)  = Har_PageTimings <$> 
+         v .: "onContentLoad"          <*>
+         (pack <$> v .: "comment")     <*>
+         v .: "onLoad"
+
+
+instance FromJSON Har_Header where 
+
+    parseJSON (Object v) = Har_Header <$> 
+        (pack <$> v .: "name"  )       <*>
+        (pack <$> v .: "value" ) 
+
+
+instance FromJSON Har_Response where 
+
+    parseJSON (Object v) = Har_Response <$>
+        v .: "status"                  <*>
+        (pack <$> v .: "content")      <*>
+        v .: "headers"
+
+
+instance FromJSON Har_Request where 
+
+    parseJSON (Object v) = Har_Request <$> 
+        (pack <$> v .: "method" )      <*>
+        v .: "headers"                 <*>
+        (pack <$> v .: "queryString" ) <*>
+        (pack <$> v .: "url" )         <*>
+        (pure "")
+
+
+instance FromJSON Har_Log where 
+
+    parseJSON (Object v) = Har_Log  <$> 
+        v .: "entries"              <*>
+        v .: "pages"                <*>
+        v .: "browser"              <*>
+        (pack <$> v .: "version")   <*>
+        v .: "creator"
+
+
+instance FromJSON Har_Page where 
+
+    parseJSON (Object v) = Har_Page  <$>
+        (pack <$> v .: "_startedDateTime") <*>
+        v .: "pageTimings" <*>
+        (pack <$> v .: "pageId") <*>
+        (pack <$> v .: "title")
+
+
+instance FromJSON  Har_Entry where 
+
+    parseJSON (Object v) = Har_Entry  <$>
+        v .: "request"   <*>
+        v .: "response"
+
+
+instance FromJSON Har_Outer where 
+
+    parseJSON (Object v) = Har_Outer <$> 
+        v .: "log"
