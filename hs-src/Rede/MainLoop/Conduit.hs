@@ -27,10 +27,13 @@ import           Rede.MainLoop.PushPullType
 type SessionM m frame = m ( (C.Sink frame m () ), (C.Source m frame ) )
 
 
+-- | This is a correct ByteString slicer: it takes ByteStrings from some 
+--   generating action, and produces a source of ByteStrings... the ByteStrings
+--   emerging from the source have each the correct size for a frame.
 chunkProducer :: Monad m => m B.ByteString    -- Generator
       -> LB.ByteString                        -- Left-overs
       -> Framer m                             -- Frame-specific helpers
-      -> C.Source m LB.ByteString
+      -> C.Source m LB.ByteString             -- Source m LB.ByteString
 chunkProducer gen leftovers chunk_producer_helper = do 
     (bytes_of_frame, new_leftovers) <- lift $ chunk_producer_helper leftovers gen Nothing
     C.yield bytes_of_frame
@@ -69,6 +72,7 @@ activateSessionManager ::
     Framer m        ->                   
     IO () 
 activateSessionManager session_start session push pull chunk_producer_helper = let
+
     input_to_session  = (chunkProducer (liftIO pull) "" chunk_producer_helper) $= inputToFrames
     output_to_session = framesToOutput =$ (outputConsumer (liftIO . push))
 
