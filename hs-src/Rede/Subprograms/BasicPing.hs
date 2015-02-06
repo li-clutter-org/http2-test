@@ -46,7 +46,7 @@ packetsEventProducer gen =
 basicPingProgram :: IO B.ByteString  -> (B.ByteString -> IO () ) -> IO ()
 basicPingProgram pullPacket pushPacket = 
   do
-    (output, input, seal) <- PC.spawn' PC.Unbounded 
+    (output, input, seal) <- PC.spawn' PC.unbounded 
     th1 <- PC.forkIO $ 
       do 
         runEffect $ (packetsEventProducer pullPacket) >-> PC.toOutput output

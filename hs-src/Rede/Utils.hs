@@ -23,7 +23,7 @@ import           Text.Printf(printf)
 
 
 strToInt::String -> Int 
-strToInt = fromIntegral . toInteger . read
+strToInt = fromIntegral . toInteger . (read::String->Integer)
 
 
 newtype Word24 = Word24 Int
