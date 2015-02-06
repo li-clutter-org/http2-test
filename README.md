@@ -1,4 +1,14 @@
 
+ReH: A SPDY prototype webserver 
+==============================
+
+How SPDY and the upcomming HTTP/2 standard work? This prototype 
+implementation of a webserver serving static resources is to learn
+a bit about that. It is also a good opportunity to learn how the 
+browsers do flow control and how eager are them to interrupt 
+resource push from the server.
+
+
 A simple SPDY ping tool
 =======================
 

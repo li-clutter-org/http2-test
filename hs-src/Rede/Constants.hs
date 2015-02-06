@@ -16,4 +16,4 @@ whichHTTP = "http/1.1"
 
 
 spdyDataFrameMaxLength :: Int
-spdyDataFrameMaxLength = 8192
+spdyDataFrameMaxLength = 16384

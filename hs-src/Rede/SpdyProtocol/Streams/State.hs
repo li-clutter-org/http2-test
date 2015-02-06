@@ -1,4 +1,14 @@
 {-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving, FlexibleInstances, MultiParamTypeClasses #-}
+
+{- 
+
+This module plugs a worker (check module ...MainLoop.Tokens, and there type StreamWorker) 
+and adapts it so that it speaks in frames. So, it implements translation between the 
+generic tokens present at Tokens.hs and the frames. 
+
+-}
+
+
 module Rede.SpdyProtocol.Streams.State(
     defaultStreamState
     ,initStreamState
