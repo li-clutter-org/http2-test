@@ -1,6 +1,6 @@
 
-ReH: A SPDY prototype webserver 
-==============================
+ReH: A server for HTTP/2 and SPDY
+=================================
 
 How SPDY and the upcomming HTTP/2 standard work? This prototype 
 implementation of a webserver serving static resources is to learn
