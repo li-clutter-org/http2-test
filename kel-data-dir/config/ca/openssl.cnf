@@ -61,6 +61,8 @@ commonName_max				= 64
 localityName_default			= Umea
 stateOrProvinceName_default		= Vasterbotten
 countryName_default			= SE
+emailAddress_default                    = donotringme@zunzun.se
+
  
 [ v3_ca ]
 basicConstraints			= CA:TRUE

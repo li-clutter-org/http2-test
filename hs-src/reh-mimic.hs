@@ -8,6 +8,10 @@ import Rede.MainLoop.Tls(
 
 import qualified Data.ByteString.Lazy         as BL
 
+
+import           Options.Applicative       
+
+
 import           Rede.SimpleHTTP1Response (exampleHTTP11Response)
 
 import           Rede.MainLoop.PushPullType
@@ -18,6 +22,40 @@ import           Rede.MainLoop.ConfigHelp (getMimicPort, getInterfaceName)
 import           Rede.SpdyProtocol.Session(basicSession)
 import           Rede.Workers.HarWorker(HarWorkerServicePocket)
 import           Rede.SpdyProtocol.Framing.ChunkProducer(chunkProducerHelper)
+
+
+-- What is the program going to do?
+data ProgramAction = 
+    OutputHosts_PA
+    |ServeHar_PA
+
+
+actionStrToAction :: String -> ProgramAction
+actionStrToAction "output-hosts" = OutputHosts_PA 
+actionStrToAction "serve"        = ServeHar_PA
+actionStrToAction _              = error "Action doesn't exist"
+
+
+data Program  = Program {
+    action   :: ProgramAction
+    ,harFile :: String
+    }
+
+
+programParser :: Parser Program
+programParser = Program <$> (
+    actionStrToAction <$>
+        strOption
+             ( long "action"
+                <> metavar "ACTION"
+                <> help    "What's the program going to do" )
+    ) <*> (
+        strOption
+            ( long "har-file"
+               <>  metavar "HARFILE"
+               <>  help    "Har file to process"
+            )
+    )
 
 
 main :: IO ()
