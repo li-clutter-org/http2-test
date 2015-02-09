@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings, TemplateHaskell, DeriveDataTypeable #-}
 
 module Rede.HarFiles.ServedEntry(
     sreStatus 
@@ -6,23 +6,27 @@ module Rede.HarFiles.ServedEntry(
     ,sreContents
     ,sreHost
     ,resolveFromHar
+    ,createResolveCenter
+    ,servedResources
+    ,allSeenHosts
+    ,createResolveCenterFromFilePath
 
-    ,ServedEntry
-    ,ResolveCenter
+    ,ServedEntry  (..)
+    ,ResolveCenter(..)
     ) where 
 
 
--- import           Control.Applicative
--- import           Control.Monad
+import           Control.Exception
 import qualified Control.Lens           as L
 import           Control.Lens           ( (^.) )
 import           Control.Lens.TH        (makeLenses)
--- import           Text.Printf            (printf)
 
+import           Data.Typeable
 import           Data.Maybe             (fromMaybe)
+import           Data.Aeson             (decode)
 import qualified Data.ByteString        as B
 import           Network.URI            (parseURI, uriAuthority, uriRegName)
--- import qualified Data.ByteString.Lazy   as LB
+import qualified Data.ByteString.Lazy   as LB
 import           Data.ByteString.Char8  (unpack, pack)
 -- import           Data.Text(Text)
 import qualified Data.Map.Strict        as M
@@ -64,11 +68,20 @@ data ResolveCenter = ResolveCenter {
     -- Things I'm actually going to serve
     _servedResources ::  M.Map ResourceHandle ServedEntry
 
+    -- A list with all the hosts we have to emulate
+    ,_allSeenHosts :: [B.ByteString]
+
     -- Some other results, like the number of resources that 
     -- can't be served because they are in the wrong HTTP method 
     -- or protocol.
     
     }
+
+
+data BadHarFile = BadHarFile B.ByteString
+    deriving (Show, Typeable)
+
+instance Exception BadHarFile
 
 
 makeLenses ''ServedEntry
@@ -91,7 +104,23 @@ resolveFromHar resolve_center resource_handle =
 
 createResolveCenter :: Har_Outer -> ResolveCenter
 createResolveCenter har_document = 
-    ResolveCenter $ M.fromList $ extractPairs har_document
+    ResolveCenter  
+        (M.fromList resource_pairs) -- <- Creates a dictionary
+        all_seen_hosts
+  where 
+    resource_pairs = extractPairs har_document
+    all_seen_hosts = map (L.view ( L._2 . sreHost) ) resource_pairs 
+
+
+createResolveCenterFromFilePath :: B.ByteString -> IO ResolveCenter
+createResolveCenterFromFilePath filename = do 
+    file_contents <- LB.readFile $ unpack filename
+    case (decode file_contents :: Maybe Har_Outer ) of 
+
+        Just doc_model -> return $ createResolveCenter doc_model
+
+        Nothing -> throw $ BadHarFile filename
+
 
 
 extractPairs :: Har_Outer -> [(ResourceHandle, ServedEntry)]

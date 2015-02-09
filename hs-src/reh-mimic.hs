@@ -16,18 +16,18 @@ import           Rede.MainLoop.Tokens
 import           Rede.MainLoop.ConfigHelp (getServedPort, getInterfaceName)
 
 import           Rede.SpdyProtocol.Session(basicSession)
-import           Rede.SpdyProtocol.TrivialTestWorker(FsWorkerServicePocket)
+import           Rede.Workers.HarWorker(HarWorkerServicePocket)
 import           Rede.SpdyProtocol.Framing.ChunkProducer(chunkProducerHelper)
 
 
 main :: IO ()
 main = do
-	port <- getServedPort
-	iface <- getInterfaceName
-	tlsServeProtocols [ 
-		("spdy/3.1",spdyAttendant)
-		,("http/1.1",httpAttendant) 
-		] iface port
+    port <- getServedPort
+    iface <- getInterfaceName
+    tlsServeProtocols [ 
+        ("spdy/3.1",spdyAttendant)
+        ,("http/1.1",httpAttendant) 
+        ] iface port
 
 
 -- The "PushAction" is a callback that can pull bytes from 
@@ -42,10 +42,10 @@ httpAttendant push _ =
 
 spdyAttendant :: PushAction -> PullAction -> IO () 
 spdyAttendant push pull = do 
-	fs_worker_service_pocket <- initService :: IO FsWorkerServicePocket
-	activateSessionManager 	
-	    id 
-	    (basicSession fs_worker_service_pocket) 
-	    push 
-	    pull
- 		chunkProducerHelper
+    fs_worker_service_pocket <- initService :: IO HarWorkerServicePocket
+    activateSessionManager  
+        id 
+        (basicSession fs_worker_service_pocket) 
+        push 
+        pull
+        chunkProducerHelper

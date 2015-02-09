@@ -48,8 +48,10 @@ extra-source-files:  README.md
 -- Constraint on the version of Cabal needed to build this package.
 cabal-version:       >=1.10
 
-executable reh
-  main-is: reh.hs 
+executable reh-mimic
+
+  -- Write here "reh.hs" to get back to compiling the FS webserver
+  main-is: reh-mimic.hs 
   
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:    
