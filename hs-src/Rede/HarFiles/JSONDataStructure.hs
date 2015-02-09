@@ -1,12 +1,10 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
-module Rede.HarFiles.DataStructure(
-
-    ) where 
+module Rede.HarFiles.JSONDataStructure where 
 
 
 import           Control.Applicative
-import           Control.Monad
-import qualified Control.Lens        as L
+-- import           Control.Monad
+-- import qualified Control.Lens        as L
 import           Control.Lens        ( (^.), to )
 import           Control.Lens.TH     (makeLenses)
 import           Text.Printf         (printf)
@@ -14,98 +12,18 @@ import           Text.Printf         (printf)
 import           Data.Aeson
 import           Data.Aeson.Types       (Parser)
 import           Data.ByteString        (ByteString)
+-- import qualified Data.ByteString        as B
 import qualified Data.ByteString.Lazy   as LB
 import           Data.ByteString.Char8  (pack)
-import           Data.Text(Text)
-import qualified Data.Map.Strict        as M
+-- import           Data.Text(Text)
+-- import qualified Data.Map.Strict        as M
 
 
-import           Rede.MainLoop.Tokens   (UnpackedNameValueList)
+-- import           Rede.MainLoop.Tokens   (UnpackedNameValueList)
 
 
 
--- How do we identify resources that are being 
--- asked for? Plain ByteString? Wecan start this way...
--- if query-string reordering is an issue, we can supersede
--- this type somehow... 
-newtype ResourceHandle = ResourceHandle B.ByteString 
-    deriving (Eq, Show, Ord)
 
-
--- Make a new resource handle from a long url. 
--- TODO here: some parts of the url, like query strings, 
--- should be actually compared under normalization. 
-makeResourceHandle :: B.ByteString -> ResourceHandle
-makeResourceHandle url = ResourceHandle url
-
-
--- | This is what the webserver will use to serve 
---   resources... or some sort of dictionary of this
---   in all probability.
-data ServedEntry = ServedEntry {
-
-    -- Status to return to the server
-    _sreStatus :: !Int
-
-    -- Headers to return to the server
-    ,_sreHeaders :: !UnpackedNameValueList
-
-    -- And other contents which are part of the response,
-    -- also to return to the server.
-    ,_sreContents :: B.ByteString
-    } 
-
-
--- Here: translate a .HAR file to a lookup function. It may happen 
--- that this function doesn't find the resource, in that case return 
--- Nothing. Another level should decide what response to cook on 
--- that particular scenario. 
-resolveFromHar :: Har_Outer -> ResourceHandle -> Maybe ServedEntry
-resolveFromHar har_document resource_handle = 
-    M.lookup resource_handle doc_dic
-  where
-    doc_dic = M.fromList $ extractPairs har_document
-
-
-extractPairs :: Har_Outer -> [(ResourceHandle, ServedEntry)]
-extractPairs har_document = 
-    map pairFromEntry doc_entries
-  where 
-    -- Using a lens to fetch the entries from the document. 
-    -- The parenthesis are not needed, except as documentation
-    doc_entries = har_document ^. (harLog . entries)
-
-
-docFromEntry :: Har_Entry -> (ResourceHandle, ServedEntry)
-docFromEntry e = (
-    handleFromMethodAndUrl
-        (req ^. method)
-        (req ^. reqUrl )
-    , servedEntryFromStatusHeadersAndContents
-        (resp ^. status)
-        (resp ^. respHeaders . L.to harHeadersToUVL)
-        (resp ^. content)
-    )
-  where 
-    req  = e ^. request
-    resp = e ^. response
-
-
-harHeadersToUVL :: [Har_Header] -> UnpackedNameValueList
-harHeadersToUVL = error "Not implemented"
-
-
-handleFromMethodAndUrl :: HereString -> HereString -> ResourceHandle
-handleFromMethodAndUrl method url = 
-    makeResourceHandle $ method B.(++) url
-
-
-servedEntryFromStatusHeadersAndContents :: Int
-    -> UnpackedNameValueList 
-    -> B.ByteString 
-    -> ServedEntry
-servedEntryFromStatusHeadersAndContents status unvl contents = 
-     ServedEntry status unvl contents
 
 
 -- Implementation details ####################################
@@ -204,7 +122,13 @@ makeLenses ''Har_Request
 makeLenses ''Har_PageTimings
 makeLenses ''Har_QueryString
 makeLenses ''Har_Content
-makeLenses ''ServedEntry
+
+
+
+
+
+-- JSON parsing --------------------------------------------------------------------
+
 
 errorParse  :: Value -> Parser a
 errorParse  x = error $ printf "NotGoodHere: %s" $ show x

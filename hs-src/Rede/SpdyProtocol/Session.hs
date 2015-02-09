@@ -37,14 +37,14 @@ import           Rede.SpdyProtocol.Framing.Ping
 import           Rede.SpdyProtocol.Framing.DataFrame
 import           Rede.SpdyProtocol.Framing.RstStream
 import           Rede.SpdyProtocol.Framing.WindowUpdate
--- import qualified Rede.SpdyProtocol.Framing.GoAway        as GoA
 import           Rede.MainLoop.StreamPlug
 import           Rede.SpdyProtocol.Framing.KeyValueBlock
 import qualified Rede.SpdyProtocol.Framing.Settings      as SeF
--- import qualified Rede.SpdyProtocol.Framing.SynStream     as SyS
 import           Rede.SpdyProtocol.Streams.State 
 import           Rede.MainLoop.Tokens
 
+-- Just for testing's sake 
+import           Rede.Workers.HarWorker
 
 -- TODO: Move to constants?
 
