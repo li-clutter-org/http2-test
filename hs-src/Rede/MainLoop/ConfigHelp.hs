@@ -1,10 +1,13 @@
 module Rede.MainLoop.ConfigHelp(
 	configDir
+	,mimicDataDir
 	,wwwDir
 	,getServedHost
 	,getServedPort
 	,getHostPort
 	,getInterfaceName
+	,getMimicPort
+
 
 	,HostPort
 	) where 
@@ -23,6 +26,13 @@ kelDataDir :: IO FilePath
 kelDataDir = 
 	catch 
 		(getEnv "KEL_DATA_DIR")
+		noEnvErrorHandler
+
+
+mimicDataDir :: IO FilePath
+mimicDataDir = 
+	catch 
+		(getEnv "MIMIC_DATA_DIR")
 		noEnvErrorHandler
 
 
@@ -71,3 +81,11 @@ getHostPort = do
 	served_port <- getServedPort
 
 	return (served_host, served_port)
+
+
+getMimicPort :: IO Int
+getMimicPort = do 
+	mimic_dir <- mimicDataDir
+	config_dir <- return $ mimic_dir </> "config/"
+	contents <- readFile $ config_dir </> "port.conf"
+	return $ read contents

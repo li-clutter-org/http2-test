@@ -13,7 +13,7 @@ import           Rede.SimpleHTTP1Response (exampleHTTP11Response)
 import           Rede.MainLoop.PushPullType
 import           Rede.MainLoop.Conduit
 import           Rede.MainLoop.Tokens
-import           Rede.MainLoop.ConfigHelp (getServedPort, getInterfaceName)
+import           Rede.MainLoop.ConfigHelp (getMimicPort, getInterfaceName)
 
 import           Rede.SpdyProtocol.Session(basicSession)
 import           Rede.Workers.HarWorker(HarWorkerServicePocket)
@@ -22,8 +22,8 @@ import           Rede.SpdyProtocol.Framing.ChunkProducer(chunkProducerHelper)
 
 main :: IO ()
 main = do
-    port <- getServedPort
-    iface <- getInterfaceName
+    port  <-  getMimicPort
+    iface <-  getInterfaceName
     tlsServeProtocols [ 
         ("spdy/3.1",spdyAttendant)
         ,("http/1.1",httpAttendant) 

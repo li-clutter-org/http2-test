@@ -11,9 +11,10 @@ import Rede.HarFiles.ServedEntry
 
 import           Control.Monad.IO.Class
 import           Control.Exception
+-- import           Control.Monad
 
 import qualified Data.ByteString            as B
--- import qualified Data.ByteString.Lazy       as LB
+import qualified Data.Map.Strict            as M
 import           Data.ByteString.Char8      (pack, unpack)
 import           Data.Typeable
 import           Data.Conduit
@@ -23,7 +24,7 @@ import           Text.Printf
 import qualified Network.URI                as U
 import           System.Posix.Env.ByteString (getEnv) 
 -- import           System.Directory           (doesFileExist)
--- import           System.FilePath
+import           System.FilePath
 -- import qualified Data.HashTable.IO          as H
 -- import           Control.Concurrent.MVar
 import qualified Control.Lens        as L
@@ -54,8 +55,7 @@ data HarWorkerServicePocket   = HarWorkerServicePocket    {
      _resolveCenter      :: ResolveCenter
 
     -- Where to listen
-    ,_hostPort           :: HostPort
-    ,_hostPortByteString :: B.ByteString
+    ,_tlsPort              :: Int
   }
 
 
@@ -74,17 +74,17 @@ instance StreamWorkerClass HarWorkerServicePocket HarWorkerSessionPocket where
     -- initService :: IO servicePocket
     initService = do 
         har_file_path_maybe <- getEnv "HAR_FILE_PATH"
-        host_port <- getHostPort
-        host_port_bytestring <- return $ pack $ (fst host_port) ++ ":" ++(show $ snd host_port)
+        tls_port <- getMimicPort
         case har_file_path_maybe  of 
 
             Just har_file_path -> do
                 resolve_center <- createResolveCenterFromFilePath har_file_path
+                dumpAllSeenHosts resolve_center
+                dumpPresentHandles resolve_center
 
                 return $ HarWorkerServicePocket {
                     _resolveCenter       = resolve_center
-                    ,_hostPort           = host_port 
-                    ,_hostPortByteString = host_port_bytestring
+                    ,_tlsPort            = tls_port 
                   }
 
             Nothing -> throw $ ImproperlyConfigured "Missing environment variable HAR_FILE_PATH"
@@ -144,3 +144,20 @@ harWorker resolve_center = do
             (Just method)   = getHeader headers ":method"
 
 
+dumpAllSeenHosts :: ResolveCenter -> IO ()
+dumpAllSeenHosts resolve_center = do 
+    mimic_data_dir <- mimicDataDir
+    hosts_filename <- return $ mimic_data_dir </> "har_hosts.txt"
+    B.writeFile hosts_filename $ B.intercalate "\n" $ map 
+        (\ hostname -> B.append "127.0.0.1      " hostname) 
+        (resolve_center ^. allSeenHosts)
+
+
+dumpPresentHandles :: ResolveCenter -> IO ()
+dumpPresentHandles resolve_center = do 
+    mimic_data_dir <- mimicDataDir
+    handles_filename <- return $ mimic_data_dir </> "har_handles.txt"
+    B.writeFile handles_filename $ B.intercalate "\n" $ 
+        map 
+            resourceHandleToByteString 
+            (resolve_center ^. servedResources . L.to M.keys)    

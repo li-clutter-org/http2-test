@@ -10,6 +10,7 @@ module Rede.HarFiles.ServedEntry(
     ,servedResources
     ,allSeenHosts
     ,createResolveCenterFromFilePath
+    ,resourceHandleToByteString
 
     ,ServedEntry  (..)
     ,ResolveCenter(..)
@@ -30,6 +31,7 @@ import qualified Data.ByteString.Lazy   as LB
 import           Data.ByteString.Char8  (unpack, pack)
 -- import           Data.Text(Text)
 import qualified Data.Map.Strict        as M
+import qualified Data.Set               as S
 
 
 import           Rede.MainLoop.Tokens   (UnpackedNameValueList(..))
@@ -43,6 +45,10 @@ import Rede.HarFiles.JSONDataStructure
 -- this type somehow... 
 newtype ResourceHandle = ResourceHandle B.ByteString 
     deriving (Eq, Show, Ord)
+
+
+resourceHandleToByteString :: ResourceHandle -> B.ByteString
+resourceHandleToByteString (ResourceHandle bs) = bs
 
 
 -- | Individual entries used on resolution
@@ -106,10 +112,11 @@ createResolveCenter :: Har_Outer -> ResolveCenter
 createResolveCenter har_document = 
     ResolveCenter  
         (M.fromList resource_pairs) -- <- Creates a dictionary
-        all_seen_hosts
+        unduplicated_hosts
   where 
     resource_pairs = extractPairs har_document
     all_seen_hosts = map (L.view ( L._2 . sreHost) ) resource_pairs 
+    unduplicated_hosts = (S.toList . S.fromList) all_seen_hosts
 
 
 createResolveCenterFromFilePath :: B.ByteString -> IO ResolveCenter
