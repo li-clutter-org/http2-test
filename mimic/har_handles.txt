@@ -1,0 +1,6 @@
+GEThttps://hackage.haskell.org/package/network-uri-2.6.0.1/docs/Network-URI.html#v:parseAbsoluteURI
+GEThttps://hackage.haskell.org/package/network-uri-2.6.0.1/docs/haddock-util.js
+GEThttps://hackage.haskell.org/package/network-uri-2.6.0.1/docs/hslogo-16.png
+GEThttps://hackage.haskell.org/package/network-uri-2.6.0.1/docs/minus.gif
+GEThttps://hackage.haskell.org/package/network-uri-2.6.0.1/docs/ocean.css
+GEThttps://hackage.haskell.org/package/network-uri-2.6.0.1/docs/synopsis.png

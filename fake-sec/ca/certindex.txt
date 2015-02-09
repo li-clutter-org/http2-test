@@ -1,0 +1,4 @@
+V	251226204314Z		01	unknown	/C=SE/ST=Some-State/O=Internet Widgits Pty Ltd/CN=*.httpdos.com
+V	260122160642Z		02	unknown	/C=SE/ST=Vasterbotten/O=Zunzun AB/CN=www.example.com
+V	260122160832Z		03	unknown	/CN=www.example.com
+V	260122160910Z		04	unknown	/CN=www.myexample.com
