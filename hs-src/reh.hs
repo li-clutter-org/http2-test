@@ -42,6 +42,8 @@ httpAttendant push _ =
 
 spdyAttendant :: PushAction -> PullAction -> IO () 
 spdyAttendant push pull = do 
+	-- TODO: This won't compile, after we added "params" to the 
+	-- init service... the ones here are trivial
 	fs_worker_service_pocket <- initService :: IO FsWorkerServicePocket
 	activateSessionManager 	
 	    id 

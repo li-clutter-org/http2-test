@@ -4,6 +4,7 @@ module Rede.Workers.HarWorker(
 
     HarWorkerServicePocket
     ,HarWorkerSessionPocket
+    ,HarWorkerParams (..)
     ) where 
 
 
@@ -52,44 +53,33 @@ data HarWorkerSessionPocket  = HarWorkerSessionPocket {
 -- a .har file is known.
 data HarWorkerServicePocket   = HarWorkerServicePocket    {
     -- All resources to be served from here
-     _resolveCenter      :: ResolveCenter
+    _resolveCenter      :: ResolveCenter
+  }
 
-    -- Where to listen
-    ,_tlsPort              :: Int
+
+data HarWorkerParams = HarWorkerParams {
+    -- Where is the .har file I'm going to use?
+    _harFilePath :: FilePath  
   }
 
 
 L.makeLenses ''HarWorkerServicePocket
 L.makeLenses ''HarWorkerSessionPocket
+L.makeLenses ''HarWorkerParams
 
 
-data ImproperlyConfigured = ImproperlyConfigured B.ByteString
-    deriving (Show, Typeable)
-
-instance Exception ImproperlyConfigured
-
-
-instance StreamWorkerClass HarWorkerServicePocket HarWorkerSessionPocket where
+instance StreamWorkerClass HarWorkerParams HarWorkerServicePocket HarWorkerSessionPocket where
  
-    -- initService :: IO servicePocket
-    initService = do 
-        har_file_path_maybe <- getEnv "HAR_FILE_PATH"
-        tls_port <- getMimicPort
-        case har_file_path_maybe  of 
+    -- initService :: HarWorkerParams -> IO servicePocket
+    initService har_worker_params = do 
+        let har_file_path = har_worker_params ^. harFilePath
 
-            Just har_file_path -> do
-                resolve_center <- createResolveCenterFromFilePath har_file_path
-                dumpAllSeenHosts resolve_center
-                dumpPresentHandles resolve_center
+        resolve_center <- createResolveCenterFromFilePath $ pack har_file_path
+        dumpPresentHandles resolve_center
 
-                return $ HarWorkerServicePocket {
-                    _resolveCenter       = resolve_center
-                    ,_tlsPort            = tls_port 
-                  }
-
-            Nothing -> throw $ ImproperlyConfigured "Missing environment variable HAR_FILE_PATH"
-
-
+        return $ HarWorkerServicePocket {
+            _resolveCenter       = resolve_center
+          }
 
     -- initSession :: servicePocket -> IO sessionPocket
     initSession _ = return $ HarWorkerSessionPocket {}
@@ -144,13 +134,6 @@ harWorker resolve_center = do
             (Just method)   = getHeader headers ":method"
 
 
-dumpAllSeenHosts :: ResolveCenter -> IO ()
-dumpAllSeenHosts resolve_center = do 
-    mimic_data_dir <- mimicDataDir
-    hosts_filename <- return $ mimic_data_dir </> "har_hosts.txt"
-    B.writeFile hosts_filename $ B.intercalate "\n" $ map 
-        (\ hostname -> B.append "127.0.0.1      " hostname) 
-        (resolve_center ^. allSeenHosts)
 
 
 dumpPresentHandles :: ResolveCenter -> IO ()

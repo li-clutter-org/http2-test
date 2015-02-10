@@ -55,11 +55,12 @@ data StreamOutputAction = SendHeaders_SOA UnpackedNameValueList
 type StreamWorker = Conduit StreamInputToken IO StreamOutputAction
 
 
-class StreamWorkerClass  servicePocket sessionPocket | 
-        servicePocket -> sessionPocket,
+class StreamWorkerClass serviceParams servicePocket sessionPocket | 
+        serviceParams -> sessionPocket servicePocket,
+        servicePocket -> sessionPocket serviceParams,
         sessionPocket -> servicePocket where
 
-    initService :: IO servicePocket
+    initService :: serviceParams -> IO servicePocket
 
     initSession :: servicePocket -> IO sessionPocket
 

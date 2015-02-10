@@ -11,6 +11,7 @@ module Rede.HarFiles.ServedEntry(
     ,allSeenHosts
     ,createResolveCenterFromFilePath
     ,resourceHandleToByteString
+    ,hostsFromHarFile
 
     ,ServedEntry  (..)
     ,ResolveCenter(..)
@@ -74,7 +75,7 @@ data ResolveCenter = ResolveCenter {
     -- Things I'm actually going to serve
     _servedResources ::  M.Map ResourceHandle ServedEntry
 
-    -- A list with all the hosts we have to emulate
+    -- A list with all the hosts we have to emulate, without duplicates
     ,_allSeenHosts :: [B.ByteString]
 
     -- Some other results, like the number of resources that 
@@ -128,6 +129,13 @@ createResolveCenterFromFilePath filename = do
 
         Nothing -> throw $ BadHarFile filename
 
+
+-- Convenience function to extract all the hosts from a .har file. 
+-- Not very efficient.
+hostsFromHarFile :: FilePath -> IO [B.ByteString]
+hostsFromHarFile har_filename = do
+    resolve_center <- createResolveCenterFromFilePath $ pack har_filename
+    return $ resolve_center ^. allSeenHosts
 
 
 extractPairs :: Har_Outer -> [(ResourceHandle, ServedEntry)]

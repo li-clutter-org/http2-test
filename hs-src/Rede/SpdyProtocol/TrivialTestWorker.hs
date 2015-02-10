@@ -76,7 +76,7 @@ data FsWorkerSessionPocket  = FsWorkerSessionPocket {
     -- so we have some security about not having many fetches after this 
     -- point
     ,sessionIsRecording :: MVar String 
-}
+  }
 
 
 -- A hash-table from head to list of requested resources...
@@ -89,12 +89,16 @@ data FsWorkerServicePocket  = FsWorkerServicePocket {
     headsHashTable      :: MVar HeadsHashTable
     ,hostPort           :: HostPort
     ,hostPortByteString :: B.ByteString
-}
+  }
 
 
-instance StreamWorkerClass FsWorkerServicePocket FsWorkerSessionPocket where
+-- TODO: Enrich this....
+data FsWorkerParams = FsWorkerParams
+
+
+instance StreamWorkerClass FsWorkerParams FsWorkerServicePocket FsWorkerSessionPocket where
  
-    initService = do 
+    initService _ = do 
         heads_hash_table <- H.new
         heads_hash_table_mvar <- newMVar heads_hash_table
         host_port <- getHostPort

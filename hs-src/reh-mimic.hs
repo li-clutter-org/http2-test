@@ -6,8 +6,10 @@ import Rede.MainLoop.Tls(
     )
 
 
+import           Data.Typeable
+import qualified Data.ByteString              as B
 import qualified Data.ByteString.Lazy         as BL
-
+import           System.FilePath
 
 import           Options.Applicative       
 
@@ -17,17 +19,25 @@ import           Rede.SimpleHTTP1Response (exampleHTTP11Response)
 import           Rede.MainLoop.PushPullType
 import           Rede.MainLoop.Conduit
 import           Rede.MainLoop.Tokens
-import           Rede.MainLoop.ConfigHelp (getMimicPort, getInterfaceName)
+import           Rede.MainLoop.ConfigHelp (getMimicPort, getInterfaceName, mimicDataDir)
 
 import           Rede.SpdyProtocol.Session(basicSession)
-import           Rede.Workers.HarWorker(HarWorkerServicePocket)
+import           Rede.Workers.HarWorker(HarWorkerServicePocket, HarWorkerParams(..))
 import           Rede.SpdyProtocol.Framing.ChunkProducer(chunkProducerHelper)
+import           Rede.HarFiles.ServedEntry(hostsFromHarFile)
 
 
 -- What is the program going to do?
 data ProgramAction = 
     OutputHosts_PA
     |ServeHar_PA
+
+
+
+-- data ImproperlyConfigured = ImproperlyConfigured B.ByteString
+--     deriving (Show, Typeable)
+
+-- instance Exception ImproperlyConfigured
 
 
 actionStrToAction :: String -> ProgramAction
@@ -38,7 +48,7 @@ actionStrToAction _              = error "Action doesn't exist"
 
 data Program  = Program {
     action   :: ProgramAction
-    ,harFile :: String
+    ,harFileName :: String
     }
 
 
@@ -60,12 +70,27 @@ programParser = Program <$> (
 
 main :: IO ()
 main = do
-    port  <-  getMimicPort
-    iface <-  getInterfaceName
-    tlsServeProtocols [ 
-        ("spdy/3.1",spdyAttendant)
-        ,("http/1.1",httpAttendant) 
-        ] iface port
+    prg   <-  execParser opts_metadata
+    let har_filename = harFileName prg
+    case Main.action prg of 
+        OutputHosts_PA        -> 
+            outputHosts har_filename
+
+
+        ServeHar_PA           -> do
+            port  <-  getMimicPort
+            iface <-  getInterfaceName
+            tlsServeProtocols [ 
+                 ("spdy/3.1" ,spdyAttendant har_filename)
+                ,("http/1.1",httpAttendant) 
+                ] iface port
+  where 
+    opts_metadata = info 
+        ( helper <*> programParser )
+        ( fullDesc 
+            <>  progDesc "Mimics web servers from .har file"
+            <>  header   "reh-mimic"
+            )
 
 
 -- The "PushAction" is a callback that can pull bytes from 
@@ -78,12 +103,22 @@ httpAttendant push _ =
     push $ BL.fromChunks [exampleHTTP11Response]
 
 
-spdyAttendant :: PushAction -> PullAction -> IO () 
-spdyAttendant push pull = do 
-    fs_worker_service_pocket <- initService :: IO HarWorkerServicePocket
+spdyAttendant :: String -> PushAction -> PullAction -> IO () 
+spdyAttendant har_filename push pull = do 
+    fs_worker_service_pocket <- initService $ HarWorkerParams har_filename
     activateSessionManager  
         id 
         (basicSession fs_worker_service_pocket) 
         push 
         pull
         chunkProducerHelper
+
+
+outputHosts :: FilePath -> IO ()
+outputHosts har_filename = do 
+    all_seen_hosts <- hostsFromHarFile har_filename
+    mimic_data_dir <- mimicDataDir
+    hosts_filename <- return $ mimic_data_dir </> "har_hosts.txt"
+    B.writeFile hosts_filename $ B.intercalate "\n" $ map 
+        (\ hostname -> B.append "127.0.0.1      " hostname) 
+        all_seen_hosts
