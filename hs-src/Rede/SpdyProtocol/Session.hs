@@ -43,8 +43,6 @@ import qualified Rede.SpdyProtocol.Framing.Settings      as SeF
 import           Rede.SpdyProtocol.Streams.State 
 import           Rede.MainLoop.Tokens
 
--- Just for testing's sake 
-import           Rede.Workers.HarWorker
 
 -- TODO: Move to constants?
 

@@ -12,6 +12,7 @@ module Rede.HarFiles.ServedEntry(
     ,createResolveCenterFromFilePath
     ,resourceHandleToByteString
     ,hostsFromHarFile
+    ,handleFromMethodAndUrl
 
     ,ServedEntry  (..)
     ,ResolveCenter(..)
@@ -20,13 +21,14 @@ module Rede.HarFiles.ServedEntry(
 
 import           Control.Exception
 import qualified Control.Lens           as L
-import           Control.Lens           ( (^.) )
+import           Control.Lens           ( (^.), (&), (.~) )
 import           Control.Lens.TH        (makeLenses)
 
 import           Data.Typeable
 import           Data.Maybe             (fromMaybe)
 import           Data.Aeson             (decode)
 import qualified Data.ByteString        as B
+import qualified Data.ByteString.Base64 as B64
 import           Network.URI            (parseURI, uriAuthority, uriRegName)
 import qualified Data.ByteString.Lazy   as LB
 import           Data.ByteString.Char8  (unpack, pack)
@@ -35,7 +37,11 @@ import qualified Data.Map.Strict        as M
 import qualified Data.Set               as S
 
 
-import           Rede.MainLoop.Tokens   (UnpackedNameValueList(..))
+import           Rede.Utils             (lowercaseText)
+import           Rede.MainLoop.Tokens   (
+                                            UnpackedNameValueList(..)
+                                            , getHeader
+                                        )
 
 import Rede.HarFiles.JSONDataStructure 
 
@@ -173,9 +179,11 @@ docFromEntry e = (
     content_text =  fromMaybe "" (resp ^. content . contentText )
 
 
+-- This not only changes format, it also lower-cases header names. 
+-- I do this as a way of normalizing them... 
 harHeadersToUVL :: [Har_Header] -> UnpackedNameValueList
 harHeadersToUVL h = UnpackedNameValueList $ map 
-    (\ har_header ->   ( (har_header ^. headerName ), (har_header ^. headerValue) )
+    (\ har_header ->   ( lowercaseText (har_header ^. headerName ), (har_header ^. headerValue) )
     ) h
     
 
@@ -190,8 +198,45 @@ servedEntryFromStatusHeadersAndContents :: Int
     -> B.ByteString
     -> ServedEntry
 servedEntryFromStatusHeadersAndContents statusx unvl contents the_url = 
-    ServedEntry statusx unvl contents host_of_url
+    heedContentTypeAndDecode preliminar
   where 
     Just uri    = parseURI $ unpack the_url
     Just auth   = uriAuthority uri
     host_of_url = pack $ uriRegName auth
+    preliminar  = ServedEntry statusx unvl contents host_of_url
+
+
+contentsAreBinary :: B.ByteString  -> Bool 
+contentsAreBinary content_type = 
+    content_type 
+    `S.member`
+    binary_content_types 
+  where 
+    binary_content_types = S.fromList [
+        "image/png"
+        ]
+
+
+heedContentTypeAndDecode :: ServedEntry -> ServedEntry
+heedContentTypeAndDecode served_entry = 
+
+    served_entry & sreContents .~ decoded_contents
+
+  where     
+
+    decoded_contents  =  case maybe_content_type of 
+
+        Just content_type -> 
+            if contentsAreBinary content_type 
+              then 
+                rightly_decoded
+              else 
+                not_decoded
+
+        Nothing -> not_decoded
+
+
+    maybe_content_type = getHeader (served_entry ^. sreHeaders) "content-type"
+    Right rightly_decoded      = B64.decode not_decoded
+    not_decoded = served_entry ^. sreContents
+

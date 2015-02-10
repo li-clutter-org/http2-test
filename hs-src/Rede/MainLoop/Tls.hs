@@ -65,9 +65,9 @@ tcpServe  to_bind_socket action =
         accept_loop bind_socket 
 
 
-buildContextParams :: IO T.ServerParams 
-buildContextParams = do 
-    config_dir <- configDir
+buildContextParams :: FilePath -> IO T.ServerParams 
+buildContextParams base_dir = do 
+    let config_dir = configDir base_dir
 
     -- CA certificates
     cacert_fs_path <- return $ config_dir </> "ca/cacert.der" 
@@ -91,9 +91,9 @@ buildContextParams = do
         }
 
 
-buildNPNContextParams            :: [String] -> IO T.ServerParams 
-buildNPNContextParams protocols  = do 
-    config_dir <- configDir
+buildNPNContextParams            :: FilePath -> [String] -> IO T.ServerParams 
+buildNPNContextParams base_dir protocols  = do 
+    let config_dir = configDir base_dir
 
     -- CA certificates
     cacert_fs_path <- return $ config_dir </> "ca/cacert.der" 
@@ -153,14 +153,14 @@ rngProduce = do
 
 
 -- Serves always the same protocol in the session
-tlsServe :: (PushAction -> PullAction -> IO () ) -> String -> Int -> IO ()
-tlsServe session_attendant interface_name interface_port = do 
+tlsServe :: FilePath -> (PushAction -> PullAction -> IO () ) -> String -> Int -> IO ()
+tlsServe base_path session_attendant interface_name interface_port = do 
     tid <- myThreadId
     installHandler keyboardSignal (Catch (do 
       E.throwTo tid ExitSuccess
       )) Nothing
     listening_socket <- readyTCPSocket interface_name interface_port
-    server_params <- buildContextParams
+    server_params <- buildContextParams base_path
     tcpServe listening_socket $ \ s -> do
       -- Seems like a good place to move stuff to a thread... 
       ctx <- enchantSocket s server_params
@@ -178,14 +178,14 @@ tlsServe session_attendant interface_name interface_port = do
 --   The second argument is the IP address of the network interface where
 --   the TLS socket will listen. The third argument is the port number of 
 --   said socket.
-tlsServeProtocols :: [ (String, Attendant) ] -> String -> Int -> IO ()
-tlsServeProtocols attendants interface_name interface_port = do  
+tlsServeProtocols :: FilePath -> [ (String, Attendant) ] -> String -> Int -> IO ()
+tlsServeProtocols base_path attendants interface_name interface_port = do  
     tid <- myThreadId
     installHandler keyboardSignal (Catch (do 
       E.throwTo tid ExitSuccess
       )) Nothing
     listening_socket <- readyTCPSocket interface_name interface_port
-    server_params <- buildNPNContextParams $ map fst attendants
+    server_params <- buildNPNContextParams base_path $ map fst attendants
     tcpServe listening_socket $ \ s -> do 
         
         ctx <- enchantSocket s server_params

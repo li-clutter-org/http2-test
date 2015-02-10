@@ -36,10 +36,9 @@ mimicDataDir =
 		noEnvErrorHandler
 
 
-configDir :: IO FilePath 
-configDir = do 
-	data_dir <- kelDataDir 
-	return $ data_dir </> "config"
+configDir :: FilePath -> FilePath 
+configDir base_dir = do 
+	base_dir </> "config"
 
 
 wwwDir :: IO FilePath
@@ -54,31 +53,28 @@ noEnvErrorHandler _ = do
 	getCurrentDirectory
 
 
-getServedHost :: IO String 
-getServedHost = do 
-	config_dir <- configDir 
+getServedHost :: FilePath -> IO String 
+getServedHost config_dir = do 
 	contents <- readFile $ config_dir </> "servedhost.conf"
 	return $ contents
 
 
-getInterfaceName :: IO String 
-getInterfaceName = do 
-	config_dir <- configDir 
+getInterfaceName :: FilePath -> IO String 
+getInterfaceName config_dir = do 
 	contents <- readFile $ config_dir </> "useinterface.conf"
 	return $ contents
 
 
-getServedPort :: IO Int 
-getServedPort = do 
-	config_dir <- configDir 
+getServedPort :: FilePath -> IO Int 
+getServedPort config_dir = do 
 	contents <- readFile $ config_dir </> "port.conf"
 	return $ read contents
 
 
-getHostPort :: IO HostPort
-getHostPort = do 
-	served_host <- getServedHost
-	served_port <- getServedPort
+getHostPort :: FilePath -> IO HostPort
+getHostPort config_dir = do 
+	served_host <- getServedHost config_dir
+	served_port <- getServedPort config_dir
 
 	return (served_host, served_port)
 
@@ -86,6 +82,6 @@ getHostPort = do
 getMimicPort :: IO Int
 getMimicPort = do 
 	mimic_dir <- mimicDataDir
-	config_dir <- return $ mimic_dir </> "config/"
+	let config_dir = configDir mimic_dir
 	contents <- readFile $ config_dir </> "port.conf"
 	return $ read contents

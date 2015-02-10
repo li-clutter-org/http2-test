@@ -3,8 +3,6 @@ module Rede.HarFiles.JSONDataStructure where
 
 
 import           Control.Applicative
--- import           Control.Monad
--- import qualified Control.Lens        as L
 import           Control.Lens        ( (^.), to )
 import           Control.Lens.TH     (makeLenses)
 import           Text.Printf         (printf)
@@ -12,14 +10,10 @@ import           Text.Printf         (printf)
 import           Data.Aeson
 import           Data.Aeson.Types       (Parser)
 import           Data.ByteString        (ByteString)
--- import qualified Data.ByteString        as B
+
 import qualified Data.ByteString.Lazy   as LB
 import           Data.ByteString.Char8  (pack)
--- import           Data.Text(Text)
--- import qualified Data.Map.Strict        as M
 
-
--- import           Rede.MainLoop.Tokens   (UnpackedNameValueList)
 
 
 
@@ -36,7 +30,7 @@ type HereString = ByteString
 data Har_Log = Har_Log {
     _entries           :: ![Har_Entry]
     ,_pages            :: ![Har_Page]
-    ,_browser          :: !Har_VersionPair
+    -- ,_browser          :: !Har_VersionPair
     ,_version          :: !HereString 
     ,_creator          :: !Har_VersionPair
    }
@@ -183,7 +177,7 @@ instance FromJSON Har_Log where
     parseJSON (Object v) = Har_Log  <$> 
         v .: "entries"              <*>
         v .: "pages"                <*>
-        v .: "browser"              <*>
+        -- v .: "browser"              <*>
         (pack <$> v .: "version")   <*>
         v .: "creator"
 
@@ -225,7 +219,7 @@ instance FromJSON Har_Outer where
 ------ Some small functions to try this out 
 test_01 :: IO ()
 test_01 = do 
-    file_contents <- LB.readFile "tests/bitbucket.org.har"
+    file_contents <- LB.readFile "tests/hackage.haskell.org3.har"
     case (eitherDecode file_contents :: Either String Har_Outer ) of 
     
         Right doc_model -> do 

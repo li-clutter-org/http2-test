@@ -7,6 +7,7 @@ module Rede.Utils (
     ,getTimeDiff
     ,timeAsDouble 
     ,reportTimedEvent
+    ,lowercaseText
     ) where 
 
 
@@ -14,11 +15,13 @@ import           Data.Binary            (Binary,  put, get, putWord8)
 -- import           Data.Binary.Get        (runGet)
 import           Data.Binary.Put     (putWord16be, Put)
 import           Data.Binary.Get     (getWord16be, getWord8, Get)
+import           Data.Text.Encoding 
+import qualified Data.Text                  as T
 import           Data.Bits
 import  qualified System.Clock as SC
 import           Text.Printf(printf)
 -- import           Data.Binary.Put        (runPut)
--- import qualified Data.ByteString        as B
+import qualified Data.ByteString        as B
 -- import qualified Data.ByteString.Lazy   as LB
 
 
@@ -80,3 +83,11 @@ reportTimedEvent base_time message = do
     now <- SC.getTime SC.Monotonic
     putStrLn $ "ev: " ++ message ++ " |time/ " ++ (printf "%0.4f seconds" 
         ((timeAsDouble now) - base_as_double) )
+
+
+lowercaseText :: B.ByteString -> B.ByteString
+lowercaseText bs0 = 
+    encodeUtf8 ts1 
+  where 
+    ts1 = T.toLower ts0 
+    ts0 = decodeUtf8 bs0

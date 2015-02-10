@@ -6,7 +6,6 @@ import Rede.MainLoop.Tls(
     )
 
 
-import           Data.Typeable
 import qualified Data.ByteString              as B
 import qualified Data.ByteString.Lazy         as BL
 import           System.FilePath
@@ -19,10 +18,10 @@ import           Rede.SimpleHTTP1Response (exampleHTTP11Response)
 import           Rede.MainLoop.PushPullType
 import           Rede.MainLoop.Conduit
 import           Rede.MainLoop.Tokens
-import           Rede.MainLoop.ConfigHelp (getMimicPort, getInterfaceName, mimicDataDir)
+import           Rede.MainLoop.ConfigHelp (getMimicPort, getInterfaceName, mimicDataDir, configDir)
 
 import           Rede.SpdyProtocol.Session(basicSession)
-import           Rede.Workers.HarWorker(HarWorkerServicePocket, HarWorkerParams(..))
+import           Rede.Workers.HarWorker(HarWorkerParams(..))
 import           Rede.SpdyProtocol.Framing.ChunkProducer(chunkProducerHelper)
 import           Rede.HarFiles.ServedEntry(hostsFromHarFile)
 
@@ -58,7 +57,7 @@ programParser = Program <$> (
         strOption
              ( long "action"
                 <> metavar "ACTION"
-                <> help    "What's the program going to do" )
+                <> help    "What's the program going to do: output-hosts or serve" )
     ) <*> (
         strOption
             ( long "har-file"
@@ -70,6 +69,8 @@ programParser = Program <$> (
 
 main :: IO ()
 main = do
+    mimic_dir <- mimicDataDir
+    let mimic_config_dir = configDir mimic_dir
     prg   <-  execParser opts_metadata
     let har_filename = harFileName prg
     case Main.action prg of 
@@ -79,8 +80,8 @@ main = do
 
         ServeHar_PA           -> do
             port  <-  getMimicPort
-            iface <-  getInterfaceName
-            tlsServeProtocols [ 
+            iface <-  getInterfaceName mimic_config_dir
+            tlsServeProtocols mimic_dir [ 
                  ("spdy/3.1" ,spdyAttendant har_filename)
                 ,("http/1.1",httpAttendant) 
                 ] iface port

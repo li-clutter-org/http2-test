@@ -8,31 +8,24 @@ module Rede.Workers.HarWorker(
     ) where 
 
 
-import Rede.HarFiles.ServedEntry
 
 import           Control.Monad.IO.Class
-import           Control.Exception
--- import           Control.Monad
 
 import qualified Data.ByteString            as B
 import qualified Data.Map.Strict            as M
+import qualified Data.Set                   as S
 import           Data.ByteString.Char8      (pack, unpack)
-import           Data.Typeable
 import           Data.Conduit
 
 import           Text.Printf
--- import           Data.List                  (find, isInfixOf, isSuffixOf)
 import qualified Network.URI                as U
-import           System.Posix.Env.ByteString (getEnv) 
--- import           System.Directory           (doesFileExist)
 import           System.FilePath
--- import qualified Data.HashTable.IO          as H
--- import           Control.Concurrent.MVar
 import qualified Control.Lens        as L
 import           Control.Lens        ( (^.) )
    
 
-
+import           Rede.Utils                 (lowercaseText)
+import           Rede.HarFiles.ServedEntry
 import           Rede.MainLoop.ConfigHelp
 import           Rede.MainLoop.Tokens       (StreamInputToken       (..)
                                              ,StreamOutputAction    (..)
@@ -41,6 +34,8 @@ import           Rede.MainLoop.Tokens       (StreamInputToken       (..)
                                              ,StreamWorkerClass     (..)
                                              
                                              ,getHeader)
+import           Rede.MainLoop.StreamWorker  (send404
+                                             )
 
 
 
@@ -75,7 +70,7 @@ instance StreamWorkerClass HarWorkerParams HarWorkerServicePocket HarWorkerSessi
         let har_file_path = har_worker_params ^. harFilePath
 
         resolve_center <- createResolveCenterFromFilePath $ pack har_file_path
-        dumpPresentHandles resolve_center
+        -- dumpPresentHandles resolve_center
 
         return $ HarWorkerServicePocket {
             _resolveCenter       = resolve_center
@@ -95,23 +90,29 @@ harWorker :: ResolveCenter -> StreamWorker
 harWorker resolve_center = do 
     -- Got a token?
     input_token_maybe <- await 
- 
+
     case input_token_maybe of
         Nothing     ->  do 
             return ()
 
         Just (Headers_STk headers) -> do
             -- Debug: say 
-            liftIO $ putStrLn $ printf "Got request to %s" $ unpack complete_url_bs
-            yield $ SendHeaders_SOA $ UnpackedNameValueList  [
-                 (":status", "200")
-                ,(":version", "HTTP/1.1")
-                ,("content-length", "10")
-                ,("content-type", "text/html")
-                ,("server", "ReHv0.2")
-                ]
-            yield $ SendData_SOA "0123456789"
-            yield $ Finish_SOA
+            liftIO $ putStrLn $ printf "Got request to %s" $ show resource_handle
+            let maybe_served_entry  = resolver resource_handle :: Maybe ServedEntry
+
+            case maybe_served_entry of 
+
+                Just served_entry -> do
+                    liftIO $ putStrLn $ show adapted_headers
+                    yield $ SendHeaders_SOA adapted_headers
+                    yield $ SendData_SOA    (served_entry ^. sreContents)
+                    yield $ Finish_SOA
+                    return ()
+                  where 
+                    adapted_headers = adaptHeaders (served_entry ^. sreStatus ) (served_entry ^. sreHeaders)
+
+                Nothing -> 
+                    send404
  
           where 
             -- Let's build a complete url
@@ -129,10 +130,13 @@ harWorker resolve_center = do
                 ,U.uriQuery     = u_query 
                 ,U.uriFragment  = u_frag 
               }
-            complete_url_bs     = B.append method $ pack $ show complete_url
+
+            -- This string includes the method in front of the schema and everything else...
+            resource_handle     = handleFromMethodAndUrl method $ (pack.show) complete_url
             
             (Just method)   = getHeader headers ":method"
-
+  where 
+    resolver x = resolveFromHar resolve_center x
 
 
 
@@ -143,4 +147,36 @@ dumpPresentHandles resolve_center = do
     B.writeFile handles_filename $ B.intercalate "\n" $ 
         map 
             resourceHandleToByteString 
-            (resolve_center ^. servedResources . L.to M.keys)    
+            (resolve_center ^. servedResources . L.to M.keys)
+
+
+adaptHeaders :: Int -> UnpackedNameValueList -> UnpackedNameValueList 
+adaptHeaders status_code (UnpackedNameValueList raw_headers) = let
+    -- Let's remove some headers....
+    -- Connection, Host, Keep-Alive, Proxy-Connection, Transfer-Encoding, Accept-Ranges
+    no_oniuxus_headers = [ (x,y) | (x,y) <- raw_headers, x `S.notMember` headers_to_remove]
+
+    -- Add 'status' header
+    with_status  = (":status", pack $ show status_code):no_oniuxus_headers
+    with_version = (":version", "HTTP/1.1"):with_status
+
+    headers_to_send = [ (lowercaseText x, y) | (x,y) <- with_version ]
+
+    headers_to_remove = S.fromList [
+        ":status",
+        ":version",
+        "connection",
+        "host",
+        "keep-alive",
+        "content-encoding",  -- <-- gzip compression goes here
+        "date",
+        "proxy-connection",
+        "transfer-encoding",
+        "accept-ranges"] :: S.Set B.ByteString
+
+    -- And be sure to put everything lowercase 
+  in 
+    UnpackedNameValueList headers_to_send
+    
+
+

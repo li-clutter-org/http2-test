@@ -1,4 +1,4 @@
-127.0.0.1      hackage.haskell.org127.0.0.1      561540500.log.optimizely.com
+127.0.0.1      561540500.log.optimizely.com
 127.0.0.1      bitbucket.org
 127.0.0.1      cdn.optimizely.com
 127.0.0.1      d3oaxc4q5k2d6q.cloudfront.net
