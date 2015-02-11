@@ -89,10 +89,6 @@ type PushStreamsHashTable = H.BasicHashTable Int Int
 data StreamState = StreamState {
       stage      :: IORef StreamStage
 
-    -- Not making much use of these right now...
-    , receiveWin :: IORef WindowBookkeeping
-    , sendWin    :: IORef WindowBookkeeping 
-
     -- This main stream Id. This should be an odd number, because
     -- the stream is always started by the browser
     , sstreamId  :: Int
@@ -388,14 +384,10 @@ initStreamState stream_id fin next_pushed_stream (StreamStateT sm)  = do
 defaultStreamState :: Int -> (IO () ) ->  MVar Int -> IO StreamState 
 defaultStreamState stream_id fin next_push_id = do
     stage_ioref <- newIORef Closed_StS
-    rw                     <- newIORef def 
-    sw                     <- newIORef def 
     ma                     <- newIORef True
     push_stream_hash_table <- H.new  
     return $ StreamState {
         stage                  = stage_ioref
-        ,receiveWin            = rw 
-        ,sendWin               = sw 
         ,sstreamId             = stream_id
         ,mustAck               = ma
         ,finalizer             = fin

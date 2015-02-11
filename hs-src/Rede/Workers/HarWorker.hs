@@ -12,21 +12,18 @@ module Rede.Workers.HarWorker(
 import           Control.Monad.IO.Class
 
 import qualified Data.ByteString            as B
-import qualified Data.Map.Strict            as M
 import qualified Data.Set                   as S
 import           Data.ByteString.Char8      (pack, unpack)
 import           Data.Conduit
 
 import           Text.Printf
 import qualified Network.URI                as U
-import           System.FilePath
 import qualified Control.Lens        as L
 import           Control.Lens        ( (^.) )
    
 
 import           Rede.Utils                 (lowercaseText)
 import           Rede.HarFiles.ServedEntry
-import           Rede.MainLoop.ConfigHelp
 import           Rede.MainLoop.Tokens       (StreamInputToken       (..)
                                              ,StreamOutputAction    (..)
                                              ,StreamWorker
@@ -140,14 +137,14 @@ harWorker resolve_center = do
 
 
 
-dumpPresentHandles :: ResolveCenter -> IO ()
-dumpPresentHandles resolve_center = do 
-    mimic_data_dir <- mimicDataDir
-    handles_filename <- return $ mimic_data_dir </> "har_handles.txt"
-    B.writeFile handles_filename $ B.intercalate "\n" $ 
-        map 
-            resourceHandleToByteString 
-            (resolve_center ^. servedResources . L.to M.keys)
+-- dumpPresentHandles :: ResolveCenter -> IO ()
+-- dumpPresentHandles resolve_center = do 
+--     mimic_data_dir <- mimicDataDir
+--     handles_filename <- return $ mimic_data_dir </> "har_handles.txt"
+--     B.writeFile handles_filename $ B.intercalate "\n" $ 
+--         map 
+--             resourceHandleToByteString 
+--             (resolve_center ^. servedResources . L.to M.keys)
 
 
 adaptHeaders :: Int -> UnpackedNameValueList -> UnpackedNameValueList 
