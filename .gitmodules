@@ -1,0 +1,3 @@
+[submodule "kazu-yamamoto-http2"]
+	path = kazu-yamamoto-http2
+	url = ssh://git@gitlab.zunzun.se:10022/alcides/kazu-yamamoto-http2.git
