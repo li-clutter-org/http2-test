@@ -14,6 +14,8 @@ module Rede.SpdyProtocol.Streams.State(
     ,initStreamState
     ,packSendHeaders
     ,streamFinalize
+    ,inputPlug
+    ,outputPlug
 
     ,StreamStage(..)
     ,StreamState(..)
@@ -113,120 +115,121 @@ instance MonadIO m => MonadIO (StreamStateT m) where
     liftIO iocomp = StreamStateT (liftIO iocomp) 
 
 
-instance StreamPlug (StreamStateT IO) AnyFrame where
-
-    inputPlug = do 
-        maybe_anyframe <- await 
-        case maybe_anyframe of
-            Just anyframe -> do 
-                stream_input_token <- lift $ anyFrameToInput anyframe
-                yield stream_input_token
-                inputPlug
-            -- TODO: Close StreamWorker? 
-            _             -> return ()
-
-    outputPlug = do 
-        maybe_action <- await 
-        case maybe_action of 
-
-            -- Stream worker asks to send headers
-            Just (SendHeaders_SOA unmvl) -> do 
-                -- TODO: MUST check that the stream be openened to 
-                --       send, take measure if not!!
-                current_stage <- lift getCurrentStreamStage  
-                must_ack      <- lift getMustAck 
-                case (current_stage, must_ack) of 
-
-                    (s, True ) | canSend s -> do
-                        any_frame <- lift $ prepareSynReplyFrame unmvl
-                        yield any_frame
-
-                    (s, False) | canSend s -> do
-                        anyframe <- lift $ prepareHeadersFrame unmvl
-                        yield anyframe
-                    -- TODO: 10 000 000 cases more here that need to be populated...
-                if must_ack 
-                    then lift $ setMustAck False 
-                    else return ()
-
-                outputPlug
-
-            -- Stream worker asks to send data 
-            Just (SendData_SOA bs_data)     -> do
-                current_stage <- lift getCurrentStreamStage
-                must_ack      <- lift getMustAck
-                stream_id     <- lift getStreamId
-                liftIO $ putStrLn ("Send main stream data of " ++ (show stream_id) )
-                liftIO $ putStrLn ("Length: " ++ (show $ B.length bs_data))
-                case (current_stage, must_ack) of 
-                    (s,True) | canSend s -> do 
-                        liftIO $ putStrLn "Must ack on data!!"
-                        anyframe <- lift $ prepareSynReplyFrame (UnpackedNameValueList [])
-                        yield anyframe
-                        -- yield $ prepareDataFrame bs_data stream_id
-                        yieldDataFramesFromData bs_data stream_id
-                        lift $ setMustAck False
-                    (s,False) | canSend s -> do 
-                        --yield $ prepareDataFrame bs_data stream_id
-                        yieldDataFramesFromData bs_data stream_id 
-                outputPlug
-
-            Just Finish_SOA                 -> do
-                current_stage <- lift getCurrentStreamStage
-                must_ack      <- lift getMustAck
-                stream_id     <- lift getStreamId
-                case (current_stage, must_ack) of 
-
-                    -- I'm finishing without sending any headers
-                    (s,True) | canSend s -> do 
-                        anyframe <- lift $ prepareSynReplyFrameAndFinish (UnpackedNameValueList [])
-                        yield anyframe
-                        lift $ setMustAck False
-
-                    (s,False) | canSend s -> do 
-                        yield $ prepareFinishDataFrame stream_id
-
-                    _                     -> do
-
-                        liftIO $ putStrLn "Protocol error: trying to send on closed stream"
-
-                outputPlug
-
-            -- Let's work with associated streams... 
-            Just (SendAssociatedHeaders_SOA local_stream_id unmvl) -> do
-                -- Get a global id for this dear ... 
-                stream_id        <- lift getStreamId
-                global_stream_id <- lift $ getGlobalPushStreamId local_stream_id 
-
-                -- Now, I need to open a new stream for this.... 
-                anyframe         <- lift $ prepareSynStreamFrame global_stream_id stream_id unmvl
-                yield anyframe
-
-                outputPlug
+inputPlug :: Conduit AnyFrame (StreamStateT IO) StreamInputToken
+inputPlug = do 
+    maybe_anyframe <- await 
+    case maybe_anyframe of
+        Just anyframe -> do 
+            stream_input_token <- lift $ anyFrameToInput anyframe
+            yield stream_input_token
+            inputPlug
+        -- TODO: Close StreamWorker? 
+        _             -> return ()
 
 
-            Just (SendAssociatedData_SOA local_stream_id contents)  -> do 
-                -- Global id 
-                global_stream_id <- lift $ getGlobalPushStreamId local_stream_id
+outputPlug :: Conduit StreamOutputAction (StreamStateT IO) AnyFrame 
+outputPlug = do 
+    maybe_action <- await 
+    case maybe_action of 
 
-                -- anyframe         <- return $ prepareDataFrame contents global_stream_id
-                -- yield anyframe
-                yieldDataFramesFromData contents global_stream_id
-                outputPlug
+        -- Stream worker asks to send headers
+        Just (SendHeaders_SOA unmvl) -> do 
+            -- TODO: MUST check that the stream be openened to 
+            --       send, take measure if not!!
+            current_stage <- lift getCurrentStreamStage  
+            must_ack      <- lift getMustAck 
+            case (current_stage, must_ack) of 
+
+                (s, True ) | canSend s -> do
+                    any_frame <- lift $ prepareSynReplyFrame unmvl
+                    yield any_frame
+
+                (s, False) | canSend s -> do
+                    anyframe <- lift $ prepareHeadersFrame unmvl
+                    yield anyframe
+                -- TODO: 10 000 000 cases more here that need to be populated...
+            if must_ack 
+                then lift $ setMustAck False 
+                else return ()
+
+            outputPlug
+
+        -- Stream worker asks to send data 
+        Just (SendData_SOA bs_data)     -> do
+            current_stage <- lift getCurrentStreamStage
+            must_ack      <- lift getMustAck
+            stream_id     <- lift getStreamId
+            liftIO $ putStrLn ("Send main stream data of " ++ (show stream_id) )
+            liftIO $ putStrLn ("Length: " ++ (show $ B.length bs_data))
+            case (current_stage, must_ack) of 
+                (s,True) | canSend s -> do 
+                    liftIO $ putStrLn "Must ack on data!!"
+                    anyframe <- lift $ prepareSynReplyFrame (UnpackedNameValueList [])
+                    yield anyframe
+                    -- yield $ prepareDataFrame bs_data stream_id
+                    yieldDataFramesFromData bs_data stream_id
+                    lift $ setMustAck False
+                (s,False) | canSend s -> do 
+                    --yield $ prepareDataFrame bs_data stream_id
+                    yieldDataFramesFromData bs_data stream_id 
+            outputPlug
+
+        Just Finish_SOA                 -> do
+            current_stage <- lift getCurrentStreamStage
+            must_ack      <- lift getMustAck
+            stream_id     <- lift getStreamId
+            case (current_stage, must_ack) of 
+
+                -- I'm finishing without sending any headers
+                (s,True) | canSend s -> do 
+                    anyframe <- lift $ prepareSynReplyFrameAndFinish (UnpackedNameValueList [])
+                    yield anyframe
+                    lift $ setMustAck False
+
+                (s,False) | canSend s -> do 
+                    yield $ prepareFinishDataFrame stream_id
+
+                _                     -> do
+
+                    liftIO $ putStrLn "Protocol error: trying to send on closed stream"
+
+            outputPlug
+
+        -- Let's work with associated streams... 
+        Just (SendAssociatedHeaders_SOA local_stream_id unmvl) -> do
+            -- Get a global id for this dear ... 
+            stream_id        <- lift getStreamId
+            global_stream_id <- lift $ getGlobalPushStreamId local_stream_id 
+
+            -- Now, I need to open a new stream for this.... 
+            anyframe         <- lift $ prepareSynStreamFrame global_stream_id stream_id unmvl
+            yield anyframe
+
+            outputPlug
 
 
-            Just (SendAssociatedFinish_SOA local_stream_id)  -> do 
-                global_stream_id  <- lift $ getGlobalPushStreamId local_stream_id
-                yield $ prepareFinishDataFrame global_stream_id
-                outputPlug
+        Just (SendAssociatedData_SOA local_stream_id contents)  -> do 
+            -- Global id 
+            global_stream_id <- lift $ getGlobalPushStreamId local_stream_id
+
+            -- anyframe         <- return $ prepareDataFrame contents global_stream_id
+            -- yield anyframe
+            yieldDataFramesFromData contents global_stream_id
+            outputPlug
 
 
-            Just something_else             -> do 
-                liftIO $ putStrLn $ "Got: " ++ (show something_else)
-                outputPlug
+        Just (SendAssociatedFinish_SOA local_stream_id)  -> do 
+            global_stream_id  <- lift $ getGlobalPushStreamId local_stream_id
+            yield $ prepareFinishDataFrame global_stream_id
+            outputPlug
 
-            Nothing                         -> 
-                return ()
+
+        -- Just something_else             -> do 
+        --     liftIO $ putStrLn $ "Got: " ++ (show something_else)
+        --     outputPlug
+
+        Nothing                         -> 
+            return ()
 
 
 prepareDataFrame :: B.ByteString -> Int -> AnyFrame
@@ -274,6 +277,11 @@ anyFrameToInput any_frame =
                     (False, False)     ->  setCurrentStreamStage  Open_StS
                 -- liftIO $ putStrLn "Frame translated"
                 return $ Headers_STk unvl
+
+        -- TODO: Why are we not reacting to the data here? because 
+        -- so far we don't support uploads
+        _  -> 
+            error "Not implemented!!"
 
 
 getGlobalPushStreamId :: MonadIO m => Int -> StreamStateT m Int 

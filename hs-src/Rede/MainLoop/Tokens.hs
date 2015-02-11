@@ -35,7 +35,7 @@ newtype UnpackedNameValueList = UnpackedNameValueList [(B.ByteString, B.ByteStri
 
 
 
-data StreamInputToken =  Headers_STk  UnpackedNameValueList
+data StreamInputToken =   Headers_STk  UnpackedNameValueList
                         | Data_Stk     B.ByteString
                         | Finish_Stk
                         deriving Show
@@ -55,6 +55,8 @@ data StreamOutputAction = SendHeaders_SOA UnpackedNameValueList
 type StreamWorker = Conduit StreamInputToken IO StreamOutputAction
 
 
+-- | Sequence of steps to get a StreamWorker. This class is independent of things
+--   like the finer details concerning the frames and the streams.
 class StreamWorkerClass serviceParams servicePocket sessionPocket | 
         serviceParams -> sessionPocket servicePocket,
         servicePocket -> sessionPocket serviceParams,
@@ -65,6 +67,7 @@ class StreamWorkerClass serviceParams servicePocket sessionPocket |
     initSession :: servicePocket -> IO sessionPocket
 
     initStream :: servicePocket -> sessionPocket ->  IO StreamWorker
+
 
 
  

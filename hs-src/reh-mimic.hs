@@ -6,24 +6,30 @@ import Rede.MainLoop.Tls(
     )
 
 
-import qualified Data.ByteString              as B
-import qualified Data.ByteString.Lazy         as BL
+import qualified Data.ByteString                         as B
+import qualified Data.ByteString.Lazy                    as BL
 import           System.FilePath
 
-import           Options.Applicative       
+import           Options.Applicative
 
+import           Rede.SimpleHTTP1Response                (exampleHTTP11Response)
 
-import           Rede.SimpleHTTP1Response (exampleHTTP11Response)
-
-import           Rede.MainLoop.PushPullType
 import           Rede.MainLoop.Conduit
+import           Rede.MainLoop.ConfigHelp                (configDir,
+                                                          getInterfaceName,
+                                                          getMimicPort,
+                                                          mimicDataDir)
+import           Rede.MainLoop.PushPullType
 import           Rede.MainLoop.Tokens
-import           Rede.MainLoop.ConfigHelp (getMimicPort, getInterfaceName, mimicDataDir, configDir)
 
-import           Rede.SpdyProtocol.Session(basicSession)
-import           Rede.Workers.HarWorker(HarWorkerParams(..))
-import           Rede.SpdyProtocol.Framing.ChunkProducer(chunkProducerHelper)
-import           Rede.HarFiles.ServedEntry(hostsFromHarFile)
+import           Rede.HarFiles.ServedEntry               (hostsFromHarFile)
+import           Rede.SpdyProtocol.Framing.ChunkProducer (chunkProducerHelper)
+import           Rede.SpdyProtocol.Session               (basicSession)
+import           Rede.Workers.HarWorker                  (HarWorkerParams (..))
+
+-- We import this one for testing sake
+import           Rede.Http2.Streams.State
+
 
 
 -- What is the program going to do?
