@@ -28,7 +28,6 @@ import           Control.Monad.Morph       (MFunctor)
 import           Data.Conduit
 import           Data.BitSet.Generic(singleton)
 
--- import           Control.Exception(throwIO)
 import           Control.Applicative
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Class
@@ -37,12 +36,10 @@ import           Control.Concurrent.MVar
 import qualified Data.HashTable.IO          as H
 
 
--- import Rede.MainLoop.ConfigHelp(configDir)
 import           Rede.MainLoop.StreamPlug
 import           Rede.MainLoop.Tokens
 import           Rede.SpdyProtocol.Framing.AnyFrame
 import           Rede.SpdyProtocol.Framing.Frame
--- import           Rede.SpdyProtocol.Framing.GoAway
 import           Rede.SpdyProtocol.Framing.KeyValueBlock
 import           Rede.SpdyProtocol.Framing.SynReply
 import           Rede.SpdyProtocol.Framing.Headers
@@ -117,6 +114,7 @@ instance MonadIO m => MonadIO (StreamStateT m) where
 
 
 instance StreamPlug (StreamStateT IO) AnyFrame where
+
     inputPlug = do 
         maybe_anyframe <- await 
         case maybe_anyframe of
