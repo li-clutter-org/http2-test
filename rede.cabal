@@ -95,6 +95,7 @@ executable reh-mimic
       , dequeue == 0.1.5
       , lens >= 4.6 && < 4.7
       , base64-bytestring >= 1.0
+      , http2 >= 0.7
      -- , asn-data
   
   -- Directories containing source files.
