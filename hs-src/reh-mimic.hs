@@ -28,7 +28,7 @@ import           Rede.SpdyProtocol.Session               (basicSession)
 import           Rede.Workers.HarWorker                  (HarWorkerParams (..))
 
 -- We import this one for testing sake
-import           Rede.Http2.Streams.State
+import           Rede.Http2.Session
 
 
 
