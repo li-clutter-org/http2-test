@@ -10,5 +10,4 @@ spdy-ping
 /kel-data-dir/www
 /makeenvsensible
 /httptwodd
-/cabal.config
 /cabal.sandbox.config
