@@ -96,6 +96,7 @@ executable reh-mimic
       , lens >= 4.6 && < 4.7
       , base64-bytestring >= 1.0
       , http2 >= 0.7
+      , blaze-builder >= 0.3.3 &&  < 0.4
      -- , asn-data
   
   -- Directories containing source files.

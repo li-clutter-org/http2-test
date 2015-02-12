@@ -1,4 +1,7 @@
-{-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving, FlexibleInstances, MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving,
+             FlexibleInstances, MultiParamTypeClasses,
+             TemplateHaskell
+ #-}
 
 {- 
 
@@ -9,21 +12,27 @@ generic tokens present at Tokens.hs and the frames.
 -}
 
 module Rede.Http2.Streams.State(
+    StreamStage
     ) where 
 
 
-import           Control.Monad.Morph               (MFunctor)
-import           Data.BitSet.Generic               (singleton)
-import qualified Data.ByteString                   as B
-import qualified Data.ByteString.Lazy              as LB
-import qualified Data.ByteString.Builder           as Bu
+import qualified Blaze.ByteString.Builder            as Bu
+import           Blaze.ByteString.Builder.ByteString (fromByteString)
+import           Control.Lens
+import qualified Control.Lens                        as L
+-- import           Control.Monad.Morph                 (MFunctor)
+-- import           Data.BitSet.Generic                 (singleton)
+import qualified Data.ByteString                     as B
+-- import qualified Data.ByteString.Lazy                as LB
 import           Data.Conduit
-import           Data.Default
-import qualified Data.HashTable.IO                 as H
+-- import           Data.Conduit.Lift                   (readerC)
+-- import           Data.Default
+import qualified Data.HashTable.IO                   as H
 import           Data.IORef
-import           Data.Monoid                       (mappend)
 
-import           Control.Applicative
+import           Data.Monoid                         (mappend, mempty)
+
+-- import           Control.Applicative
 import           Control.Concurrent.MVar
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Class
@@ -35,11 +44,14 @@ import           Control.Monad.Trans.Reader
 import qualified Network.HTTP2            as NH2
 import qualified Network.HPACK            as HP
 
-import           Rede.MainLoop.StreamPlug (
-                                          StreamId (..), 
-                                          -- StreamPlug (..)
-                                          )
-import           Rede.MainLoop.Tokens     (StreamInputToken(..), StreamOutputAction(..), UnpackedNameValueList)
+-- import           Rede.MainLoop.StreamPlug (
+--                                           StreamId (..), 
+--                                           -- StreamPlug (..)
+--                                           )
+import           Rede.MainLoop.Tokens     (StreamInputToken(..)
+                                           , StreamOutputAction(..)
+                                           , UnpackedNameValueList(..)
+                                           )
 
 
 
@@ -60,44 +72,45 @@ data StreamStage =
     |Closed_StS                -- ^ Neither side can send data, the stream id can't be used again
 
 
+-- Shared information between the input plug (the translator from frames 
+-- to StreamInput tokens) and the output plug (the translator from OutputAction to
+--  output frames).
+-- 
+--  This resource should be created by the session manager when a new 
+--  stream is established.
 data StreamState = StreamState {
-    stage      :: IORef StreamStage
+    _stage      :: IORef StreamStage
 
     -- This main stream Id. This should be an odd number, because
     -- the stream is always started by the browser
-    , sstreamId  :: Int
+    , _sstreamId  :: Int
 
     -- Did I Acknowledged the string already with SynReply?
-    , mustAck    :: IORef Bool
+    , _mustAck    :: IORef Bool
 
     -- What should I do when this stream finishes?
-    , finalizer  :: IO ()
+    , _finalizer  :: IO ()
 
     -- A dictionary from local to global id of the streams...
     -- I need this because this stream may need to refer to 
     -- other streams, as dependent ones for example. 
-    , pushStreamHashTable :: PushStreamsHashTable  
+    , _pushStreamHashTable :: PushStreamsHashTable  
 
     -- What should be the id of the next pushed stream?
     -- I may need this when pushing stuff....
-    , nextPushStreamId :: MVar Int 
+    , _nextPushStreamId :: MVar Int 
 
     -- The decoding context for the entire session. If the implementation is OK, this 
-    -- should never block 
-    , headersDecoding :: MVar HP.DynamicTable
+    -- should never block. Notice that this MVar is shared among all the streams (it is 
+    -- for the entire session), so be careful when using...
+    , _headersDecoding :: MVar HP.DynamicTable
 }
 
+L.makeLenses ''StreamState
 
-newtype MonadIO m => StreamStateT m a = StreamStateT (ReaderT StreamState m a)
-    deriving (Functor, Applicative, Monad, MonadTrans, MFunctor)
-
-
-instance MonadIO m => MonadIO (StreamStateT m) where 
-    -- liftIO :: IO a -> m a 
-    liftIO iocomp = StreamStateT (liftIO iocomp)     
+type StreamStateT = ReaderT StreamState
 
 
--- instance StreamPlug (StreamStateT IO) NH2.Frame where 
 
 -- Not sure about this typedef yet....at any rate, when this is in 
 -- use, other streams should be blocked waiting for its release
@@ -106,8 +119,8 @@ type DecoderSharedState = MVar HP.DynamicTable
 
 -- Simple alias for another function. The plug takes a few frames and then exits. That what it 
 -- is supposed to do.
-makeInputPlug        :: DecoderSharedState -> Conduit NH2.Frame (StreamStateT IO) StreamInputToken
-makeInputPlug = startStream
+-- makeInputPlug        :: DecoderSharedState -> Conduit NH2.Frame (StreamStateT IO) StreamInputToken
+-- makeInputPlug = startStream
 
 
 -- outputPlug = error "Not implemented"
@@ -123,11 +136,19 @@ frameOpensStream frame = (classifyFrame frame) == NH2.FrameHeaders
 
 -- We can deal with the typical GET first.... so the first kind of frame we need 
 -- to take care of is the HEADERS frame and 
-startStream  :: DecoderSharedState -> Conduit NH2.Frame (StreamStateT IO) StreamInputToken
-startStream  decoder_shared_state =  
-    startStreamOrFailWithBuilder $ Bu.byteString ""
+startStream  :: Conduit NH2.Frame (StreamStateT IO) StreamInputToken
+startStream  = do 
+    headers_decoding_mvar <- lift $ view headersDecoding
+    headers_decoding <- liftIO $ takeMVar headers_decoding_mvar
+    new_headers_decoding <- startStreamOrFailWithBuilder headers_decoding mempty
+    liftIO $ putMVar headers_decoding_mvar new_headers_decoding
+
   where 
-    startStreamOrFailWithBuilder builder = 
+    startStreamOrFailWithBuilder :: HP.DynamicTable 
+                                    -> Bu.Builder 
+                                    --          v- input  v- output        v - *->* monad    v- result type
+                                    -> ConduitM NH2.Frame StreamInputToken (StreamStateT IO) HP.DynamicTable
+    startStreamOrFailWithBuilder headers_decoding builder = 
         do 
             maybe_frame <- await 
 
@@ -137,23 +158,28 @@ startStream  decoder_shared_state =
                     case headerBlockFromFrame frame  of 
 
                         Just block_fragment  | not (frameEndsHeaders frame) -> 
-                            startStreamOrFailWithBuilder  (builder `mappend` (Bu.byteString block_fragment))
+                            startStreamOrFailWithBuilder  
+                                headers_decoding
+                                (builder `mappend` (fromByteString block_fragment))
 
                         -- TODO: Analyze stream end flags and change states and all of that.
                         -- If we are arriving here, this frame ends the headers and we can get into the 
                         -- business of passing those headers downstream. 
                         Just block_fragment                              -> do 
-                            let headers_block = LB.toStrict $ Bu.toLazyByteString ( builder `mappend` (Bu.byteString block_fragment))
-                            headers <- lift $ headersFrom headers_block 
-                            yield $ Headers_STk headers 
-                            return ()
+                            let headers_block = Bu.toByteString $ builder `mappend` (fromByteString block_fragment)
+
+                            (new_dynamic_table, headers) <- liftIO $ HP.decodeHeader headers_decoding headers_block 
+                            yield $ Headers_STk $ UnpackedNameValueList headers 
+                            return new_dynamic_table
 
                         Nothing                                          ->
-                            -- How typical of a fragment this would be?
-                            return ()
+                            -- How typical of a fragment this would be? -- This is 
+                            -- actually a RuntimeError, but for now I'm treating it as an internal one...
+                            error "Headers don't finish correctly, a following frame has been found"
 
                 Nothing      -> 
-                    return () 
+                            error "Headers didn't finish, no following frame has been found"
+                    
 
 
     -- case frame of 
@@ -182,66 +208,4 @@ headerBlockFromFrame _                                        = Nothing
 
 frameEndsHeaders  :: NH2.Frame -> Bool 
 frameEndsHeaders (NH2.Frame (NH2.FrameHeader _ flags _) _) = NH2.testEndHeader flags
-
-
-headersFrom :: MonadIO m => B.ByteString -> StreamStateT m UnpackedNameValueList
-headersFrom header_block = error "" 
-    -- First get the decoding context...
-
-
-
--- * Functions carried over from the SPDY implementation
-ioSet :: MonadIO m => (StreamState -> IORef a) -> a -> StreamStateT m ()
-ioSet member new_val  = StreamStateT $ do 
-    io_ref <- asks member
-    liftIO $ writeIORef io_ref new_val
-
-
-ioGet :: MonadIO m => (StreamState -> IORef a) -> StreamStateT m a
-ioGet member = StreamStateT $ do 
-    io_ref <- asks member
-    liftIO $ readIORef io_ref
- 
-
--- Member get/set from the stream state computation monad 
-getCurrentStreamStage :: MonadIO m => StreamStateT m  StreamStage
-getCurrentStreamStage = ioGet stage
-
-setCurrentStreamStage :: MonadIO m => StreamStage -> StreamStateT m () 
-setCurrentStreamStage = ioSet stage
-
-getStreamId :: MonadIO m => StreamStateT m Int 
-getStreamId = StreamStateT $ asks sstreamId
-
-setMustAck  :: MonadIO m => Bool -> StreamStateT m ()
-setMustAck = ioSet mustAck
-
-getMustAck :: MonadIO m => StreamStateT m Bool 
-getMustAck = ioGet mustAck
-
-streamFinalize :: MonadIO m => StreamStateT m ()
-streamFinalize = StreamStateT $ do 
-    fin <- asks finalizer
-    liftIO fin
-
-
-initStreamState :: MonadIO m => Int -> (IO () ) -> MVar Int -> StreamStateT m a -> m a 
-initStreamState stream_id fin next_pushed_stream (StreamStateT sm)  = do 
-    s <- liftIO $ defaultStreamState stream_id fin next_pushed_stream
-    runReaderT sm s
-
-
-defaultStreamState :: Int -> (IO () ) ->  MVar Int -> IO StreamState 
-defaultStreamState stream_id fin next_push_id = do
-    stage_ioref <- newIORef Closed_StS
-    ma                     <- newIORef True
-    push_stream_hash_table <- H.new  
-    return $ StreamState {
-        stage                  = stage_ioref
-        ,sstreamId             = stream_id
-        ,mustAck               = ma
-        ,finalizer             = fin
-        ,pushStreamHashTable   = push_stream_hash_table
-        ,nextPushStreamId      = next_push_id
-    }
 

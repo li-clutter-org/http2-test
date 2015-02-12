@@ -1,7 +1,7 @@
 /dist
 /.cabal-sandbox*
 .*.swp
-spdyping.sublime-workspace
+*.sublime-workspace
 spdy-ping
 /reh
 /reh-mimic
