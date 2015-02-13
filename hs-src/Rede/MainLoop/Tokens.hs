@@ -6,12 +6,15 @@ module Rede.MainLoop.Tokens(
 	packHeaderTuples
 	,unpackHeaderTuples
     ,getHeader
+    ,actionIsForAssociatedStream
 
 	,UnpackedNameValueList (..)
 	,StreamInputToken      (..)
 	,StreamOutputAction    (..)
 	,StreamWorker
     ,StreamWorkerClass     (..)
+    ,LocalStreamId
+    ,GlobalStreamId
 	) where 
 
 
@@ -41,13 +44,26 @@ data StreamInputToken =   Headers_STk  UnpackedNameValueList
                         deriving Show
 
 
+type LocalStreamId = Int
+
+
+type GlobalStreamId = Int
+
+
 data StreamOutputAction = SendHeaders_SOA UnpackedNameValueList 
-                        | SendAssociatedHeaders_SOA Int UnpackedNameValueList
+                        | SendAssociatedHeaders_SOA LocalStreamId UnpackedNameValueList
                         | SendData_SOA B.ByteString 
-                        | SendAssociatedData_SOA Int B.ByteString
-                        | SendAssociatedFinish_SOA Int
+                        | SendAssociatedData_SOA LocalStreamId B.ByteString
+                        | SendAssociatedFinish_SOA LocalStreamId
                         | Finish_SOA
     deriving Show
+
+
+actionIsForAssociatedStream :: StreamOutputAction -> Maybe (LocalStreamId, StreamOutputAction)
+actionIsForAssociatedStream (SendAssociatedData_SOA stream_id x    ) = Just (stream_id, SendData_SOA     x)
+actionIsForAssociatedStream (SendAssociatedHeaders_SOA stream_id x ) = Just (stream_id, SendHeaders_SOA  x)
+actionIsForAssociatedStream (SendAssociatedFinish_SOA stream_id    ) = Just (stream_id, Finish_SOA    )
+actionIsForAssociatedStream _                                        = Nothing 
 
 
 -- | A StreamWorker: a conduit that takes input tokens and answers with output 

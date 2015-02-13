@@ -38,6 +38,7 @@ import           Data.Monoid                         (mappend, mempty)
 
 -- import           Control.Applicative
 import           Control.Concurrent.MVar
+import           Control.Concurrent.Chan 
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Reader
@@ -52,9 +53,12 @@ import qualified Network.HPACK            as HP
 --                                           StreamId (..), 
 --                                           -- StreamPlug (..)
 --                                           )
-import           Rede.MainLoop.Tokens     (StreamInputToken(..)
+import           Rede.MainLoop.Tokens     (
+                                            actionIsForAssociatedStream
+                                           ,StreamInputToken(..)
                                            , StreamOutputAction(..)
                                            , UnpackedNameValueList(..)
+                                           , LocalStreamId
                                            )
 
 
@@ -63,7 +67,17 @@ import           Rede.MainLoop.Tokens     (StreamInputToken(..)
 type PushStreamsHashTable = H.BasicHashTable Int Int
 
 
--- * Stream state
+-- * Stream state from the point of view of the things that I'm going to allow.
+--    
+--  The protocol allows more freedom, but right now I can not afford to give this 
+--  framework all the complexity required for that.
+data StreamSendPermission = 
+     Headers_SSP
+    |Data_SSP
+    |Closed_SSP
+
+
+-- * Stream state from the protocol point of view
 
 -- | Section 5.1 of HTTP/2 spec... there are seven stream stages...
 --   High level view
@@ -124,17 +138,18 @@ nextStageAtReception      DataCome_SaR              HeadersEnd_SE               
 --    IORef variables denote "streamlocal" state
 --    MVar variables denote state that is shared with other streams.
 data StreamState = StreamState {
-    _stage      :: IORef StreamStage
+
+    -- Insurance policy for HTTP/2 compliance .... 
+    _stage                 :: IORef StreamStage
+
+    , _streamPermission     :: IORef StreamSendPermission 
 
     -- This main stream Id. This should be an odd number, because
     -- the stream is always started by the browser
-    , _sstreamId  :: Int
-
-    -- Did I Acknowledged the string already with SynReply?
-    , _mustAck    :: IORef Bool
+    , _sstreamId           :: Int
 
     -- What should I do when this stream finishes?
-    , _finalizer  :: IO ()
+    , _finalizer           :: IO ()
 
     -- A dictionary from local to global id of the streams...
     -- I need this because this stream may need to refer to 
@@ -143,26 +158,37 @@ data StreamState = StreamState {
 
     -- What should be the id of the next pushed stream?
     -- I may need this when pushing stuff....
-    , _nextPushStreamId  :: MVar Int 
+    , _nextPushStreamId    :: MVar Int 
 
-    , _streamLifeCycle :: IORef StreamLifeCycle
+    , _streamLifeCycle     :: IORef StreamLifeCycle
 
     -- The decoding context for the entire session. If the implementation is OK, this 
     -- should never block. Notice that this MVar is shared among all the streams (it is 
     -- for the entire session), so be careful when using...
-    , _headersDecoding :: MVar HP.DynamicTable
+    , _headersDecoding     :: MVar HP.DynamicTable
+
+    -- Easiest thing: have a way to other, new streams and send 
+    -- data their way...
+    
 }
 
+
 L.makeLenses ''StreamState
+
+
 
 type StreamStateT = ReaderT StreamState
 
 
 -- Feeds some data to the monad and runs it.... 
 initStreamState :: MonadIO m => Int -> (IO () ) -> MVar Int -> MVar HP.DynamicTable ->StreamStateT m a -> m a 
-initStreamState stream_id finalizer next_pushed_stream headers_decoding sm  = do 
+initStreamState 
+    stream_id 
+    finalizer 
+    next_pushed_stream 
+    headers_decoding 
+    sm                   = do 
     stage_ref        <- liftIO $ newIORef Open_StS
-    must_ack_ref     <- liftIO $ newIORef True
     push_stream_hash <- liftIO $ H.new 
 
     let stream_state = StreamState {
@@ -171,7 +197,6 @@ initStreamState stream_id finalizer next_pushed_stream headers_decoding sm  = do
         _stage      = stage_ref
 
         ,_sstreamId = stream_id 
-        ,_mustAck   = must_ack_ref
 
         ,_finalizer = finalizer
         ,_pushStreamHashTable = push_stream_hash
@@ -271,62 +296,45 @@ inputPlug  = do
 
 outputPlug :: Conduit StreamOutputAction (StreamStateT IO) NH2.Frame 
 outputPlug = do 
-    maybe_action <- await 
-    current_stream_id <- lift $ view sstreamId
-    case maybe_action of 
+    maybe_action      <- await 
+    current_stream_id <- view sstreamId
+    stream_perm_ref   <- view streamPermission
+    stream_perm       <- liftIO $ readIORef stream_perm_ref
+    case (maybe_action, stream_perm) of 
 
         -- Stream worker asks to send headers
-        Just (SendHeaders_SOA unmvl) -> do 
-            -- TODO: MUST check that the stream be openened to 
-            --       send, take measure if not!!
+        (Just (SendHeaders_SOA unmvl), Headers_SSP)   -> do 
+            -- v -- This function is unnecesarily sophisticated
+            sendHeadersByLifecycleStage unmvl
+            advancePerms
 
-            case current_stage of 
-
-                StreamIdle_SaR  -> do
-                    _sendHeadersFrame current_stream_id unmvl
-                    advanceState HarmlessHeader_SE
-
-                    -- good!
-                    continue 
-
-                HeadersCome_SaR -> do
-                    _sendContinuationFrame current_stream_id unmvl
-                    advanceState HarmlessHeader_SE
-
-                    -- good!
-                    continue 
-
-                DataCome_SaR -> do 
-                    _sendEndStreamHeadersFrame  current_stream_id unmvl
-                    advanceState StreamEnds_SE
-
-                    -- good!
-                    continue 
-
-                StreamClosing_SaR -> do 
-                    _sendContinuationFrame current_stream_id unmvl
-                    advanceState HarmlessHeader_SE
-
-                    -- good!
-                    continue 
-
-                _                -> 
-                    error "Throw a proper exception here, but can't send headers on the stream"
-
+            continue 
 
         -- Stream worker asks to send data 
-        Just (SendData_SOA bs_data)     -> do
+        (Just (SendData_SOA bs_data), Data_SSP)       -> do
+            -- TODO: more must be done
+            advancePerms
             error "-- TODO: Continue here"
 
-        Just Finish_SOA                 -> do
+        (Just Finish_SOA, Closed_SSP)                 -> do
+            -- TODO: more must be done
+            advancePerms
             error "-- TODO: Continue here"
+
+        (Just action, _) | Just (local_stream_id, auto_action) <- actionIsForAssociatedStream action -> do
+            -- For now, an associated action can be sent from any state
+            _sendToAssociatedStream local_stream_id auto_action
+
+            continue 
 
         -- Let's work with associated streams... 
-        Just (SendAssociatedHeaders_SOA local_stream_id unmvl) -> do
+        -- Just (SendAssociatedHeaders_SOA local_stream_id unmvl) -> do
             -- Sparks this to be sent on another stream... using this construct 
             -- will automatically close this stream for new headers!!
 
-            _sendToAssociatedStream local_stream_id $ SendHeaders_SOA unmvl
+            -- _sendToAssociatedStream local_stream_id $ SendHeaders_SOA unmvl
+
+            -- continue 
 
             -- Get a global id for this dear ... 
             -- stream_id        <- lift getStreamId
@@ -339,46 +347,107 @@ outputPlug = do
             -- outputPlug
 
 
-        Just (SendAssociatedData_SOA local_stream_id contents)  -> do 
-            -- -- Global id 
-            -- global_stream_id <- lift $ getGlobalPushStreamId local_stream_id
 
-            -- -- anyframe         <- return $ prepareDataFrame contents global_stream_id
-            -- -- yield anyframe
-            -- yieldDataFramesFromData contents global_stream_id
-            -- outputPlug
-
-
-        Just (SendAssociatedFinish_SOA local_stream_id)  -> do 
-            -- global_stream_id  <- lift $ getGlobalPushStreamId local_stream_id
-            -- yield $ prepareFinishDataFrame global_stream_id
-            -- outputPlug
-
-
-        -- Just something_else             -> do 
-        --     liftIO $ putStrLn $ "Got: " ++ (show something_else)
-        --     outputPlug
-
-        Nothing                         -> 
+        (Nothing, _)                         -> 
             return ()
   where 
     -- Simple way of going tail-recursive
     continue = outputPlug
 
-    advanceState :: StreamEvent -> Conduit StreamOutputAction (StreamStateT IO) NH2.Frame 
-    advanceState stream_event = do 
-        current_stage_ioref <- view streamLifeCycle
-        liftIO $ do 
-            current_stage <- readIORef current_stage_ioref
-            let next_stage_at_reception = nextStageAtReception current_stage stream_event
-            writeIORef current_stage_ioref next_stage_at_reception
 
+advanceState :: StreamEvent -> Conduit StreamOutputAction (StreamStateT IO) NH2.Frame 
+advanceState stream_event = do 
+    current_stage_ioref <- view streamLifeCycle
+    liftIO $ do 
+        current_stage <- readIORef current_stage_ioref
+        let next_stage_at_reception = nextStageAtReception current_stage stream_event
+        writeIORef current_stage_ioref next_stage_at_reception
+
+
+advancePerms :: Conduit StreamOutputAction (StreamStateT IO) NH2.Frame
+advancePerms = do 
+    stream_perm_ref <- view streamPermission
+    stream_perm <- liftIO $ readIORef stream_perm_ref
+    let new_perms = case stream_perm of 
+            Headers_SSP -> Data_SSP
+            Data_SSP    -> Closed_SSP
+            Closed_SSP  -> Closed_SSP
+    liftIO $ writeIORef stream_perm_ref new_perms
+
+
+-- Just takes some parameters and send some headers 
+sendHeadersByLifecycleStage :: UnpackedNameValueList -> Conduit StreamOutputAction (StreamStateT IO) NH2.Frame
+sendHeadersByLifecycleStage unmvl = do 
+    current_stream_id <- view sstreamId
+    stage_ref         <- view streamLifeCycle
+    lifecycle_stage   <- liftIO $ readIORef stage_ref
+    case lifecycle_stage  of 
+
+        StreamIdle_SaR  -> do
+            _sendHeadersFrame current_stream_id unmvl
+            advanceState HarmlessHeader_SE
+
+        HeadersCome_SaR -> do
+            _sendContinuationFrame current_stream_id unmvl
+            advanceState HarmlessHeader_SE
+
+        DataCome_SaR -> do 
+            _sendEndStreamHeadersFrame  current_stream_id unmvl
+            advanceState StreamEnds_SE
+
+        StreamClosing_SaR -> do 
+            _sendContinuationFrame current_stream_id unmvl
+            advanceState HarmlessHeader_SE
+
+        _                -> 
+            error "Throw a proper Exception here"
+
+
+
+sendToAssociatedStream :: LocalStreamId -> StreamOutputAction -> Conduit StreamOutputAction (StreamStateT IO) NH2.Frame
+sendToAssociatedStream local_stream_id auto_action = do 
+    error "Implement me "
+
+-- _sendToAssociatedStream :: 
 
 
 headerBlockFromFrame                                          :: NH2.Frame -> Maybe B.ByteString
 headerBlockFromFrame (NH2.Frame _ ( NH2.HeadersFrame _ block_fragment   ) )= Just block_fragment
 headerBlockFromFrame (NH2.Frame _ ( NH2.ContinuationFrame block_fragment) )= Just block_fragment
 headerBlockFromFrame _                                        = Nothing 
+
+
+-- sendHeadersOnState :: 
+--      StreamIdle_SaR  -> do
+--                     _sendHeadersFrame current_stream_id unmvl
+--                     advanceState HarmlessHeader_SE
+
+--                     -- good!
+--                     continue 
+
+--                 HeadersCome_SaR -> do
+--                     _sendContinuationFrame current_stream_id unmvl
+--                     advanceState HarmlessHeader_SE
+
+--                     -- good!
+--                     continue 
+
+--                 DataCome_SaR -> do 
+--                     _sendEndStreamHeadersFrame  current_stream_id unmvl
+--                     advanceState StreamEnds_SE
+
+--                     -- good!
+--                     continue 
+
+--                 StreamClosing_SaR -> do 
+--                     _sendContinuationFrame current_stream_id unmvl
+--                     advanceState HarmlessHeader_SE
+
+--                     -- good!
+--                     continue 
+
+--                 _                -> 
+--                     error "Throw a proper exception here, but can't send headers on the stream"
 
 
 frameEndsHeaders  :: NH2.Frame -> Bool 
