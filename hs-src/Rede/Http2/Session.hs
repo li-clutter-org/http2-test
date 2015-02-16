@@ -28,7 +28,7 @@ import           Control.Monad.Trans.Reader
 import           Control.Exception(throwIO)
 
 import           Data.Conduit
--- import           Data.IORef
+import           Data.Conduit.List                       (foldMapM)
 import qualified Data.Streaming.Zlib                     as Z
 
 -- import           Data.Conduit.Lift                       (distribute)
@@ -70,37 +70,36 @@ data WorkerThreadEnvironment = WorkerThreadEnvironment {
     -- with everything else.... for now... 
     ,_dataOutput :: Chan (GlobalStreamId, B.ByteString)
 
-    -- Some streams may be cancelled 
-    ,_streamsCancelled :: MVar NS.IntSet
+    ,_streamsCancelled_WTE :: MVar NS.IntSet
+
     }
 
 makeLenses ''WorkerThreadEnvironment
 
 
--- Very basic thing that a session is, with ic and oc 
--- the side information with channel events... (like connection 
--- closed, or destroy the thing)
-type Session ic oc = (SessionInput ic, SessionOutput oc)
+-- Basically a couple of channels ... 
+type Session = (SessionInput, SessionOutput)
 
 
--- From outside, one can only write to this one 
-newtype SessionInput ic = SessionInput (Chan (Either ic Frame))
-sendFrametoSession :: SessionInput ic -> Frame -> IO ()
+-- From outside, one can only write to this one ... the newtype is to enforce 
+--    this.
+newtype SessionInput = SessionInput ( Chan (Either SessionInputCommand Frame) )
+sendFrametoSession :: SessionInput  -> Frame -> IO ()
 sendFrametoSession (SessionInput chan) frame = writeChan chan $ Right frame
 
 
 -- From outside, one can only read from this one 
-newtype SessionOutput oc = SessionOutput (Chan (Either oc Frame))
-getFrameFromSession :: SessionOutput oc -> IO (Either oc Frame) 
+newtype SessionOutput = SessionOutput ( Chan (Either SessionOutputCommand Frame) )
+getFrameFromSession :: SessionOutput -> IO (Either SessionOutputCommand Frame) 
 getFrameFromSession (SessionOutput chan) = readChan chan
 
 
 -- Here is how we make a session 
-type SessionMaker a ic oc = a -> IO (Session ic oc)
+type SessionMaker = SessionStartData -> IO Session
 
 
 -- Here is how we make a session wrapping a CoherentWorker
-type CoherentSession a ic oc = CoherentWorker -> SessionMaker a ic oc 
+type CoherentSession = CoherentWorker -> SessionMaker 
 
 
 type HashTable k v = H.CuckooHashTable k v
@@ -112,18 +111,48 @@ type Stream2HeaderBlockFragment = HashTable GlobalStreamId B.ByteString
 
 type WorkerMonad = ReaderT WorkerThreadEnvironment IO 
 
--- data SessionData = SessionData {
---     -- To be kept around while the stream is being initialized....
---     _streamRequestHeaders :: Stream2HeaderBlockFragment
 
---     -- Use to encode 
---     ,_toEncodeHeaders :: MVar HP.DynamicTable
---     -- And used to decode
---     ,_toDecodeHeaders :: MVar HP.DynamicTable
---     }
+-- Have to figure out which are these...but I would expect to have things
+-- like unexpected aborts here in this type.
+data SessionInputCommand = 
+    NullCmd_SIC
 
 
--- makeLenses ''SessionData
+-- temporary
+data  SessionOutputCommand = 
+    NullCmd_SOC
+
+-- TODO: Put here information needed for the session to work
+data SessionStartData = SessionStartData {
+    
+    }
+
+makeLenses ''SessionStartData
+
+
+data SessionData = SessionData {
+    _sessionInput                :: Chan (Either SessionInputCommand Frame)
+    ,_sessionOutput              :: Chan (Either SessionOutputCommand Frame)
+
+    -- Use to encode 
+    ,_toEncodeHeaders            :: MVar HP.DynamicTable
+    -- And used to decode
+    ,_toDecodeHeaders            :: MVar HP.DynamicTable
+
+    -- Used for decoding the headers
+    ,_stream2HeaderBlockFragment :: Stream2HeaderBlockFragment
+
+    -- Used for worker threads
+    ,_forWorkerThread            :: WorkerThreadEnvironment
+
+    ,_coherentWorker             :: CoherentWorker
+
+    -- Some streams may be cancelled 
+    ,_streamsCancelled :: MVar NS.IntSet
+    }
+
+
+makeLenses ''SessionData
 
 
 flippedRunReader :: r -> ReaderT r m a -> m a
@@ -131,10 +160,11 @@ flippedRunReader  = (flip runReaderT)
 
 
 --                                v- {headers table size comes here!!}
-http2Session :: CoherentWorker -> () -> IO (Session ic oc)
+http2Session :: CoherentWorker -> SessionStartData -> IO Session
 http2Session coherent_worker _ =   do 
     session_input   <- newChan
     session_output  <- newChan
+
 
     -- For incremental construction of headers...
     stream_request_headers <- H.new :: IO Stream2HeaderBlockFragment
@@ -143,59 +173,113 @@ http2Session coherent_worker _ =   do
     decode_headers_table <- HP.newDynamicTableForDecoding 4096
     decode_headers_table_mvar <- newMVar decode_headers_table
 
+    encode_headers_table <- HP.newDynamicTableForEncoding 4096
+    encode_headers_table_mvar <- newMVar decode_headers_table
+
+    -- These ones need independent threads taking care of sending stuff
+    -- their way... 
+    headers_output <- newChan :: IO (Chan (GlobalStreamId,Headers))
+    data_output <- newChan :: IO (Chan (GlobalStreamId,B.ByteString))
+
     -- What about stream cancellation?
     cancelled_streams_mvar <- newMVar $ NS.empty :: IO (MVar NS.IntSet)
+
+    let for_worker_thread = WorkerThreadEnvironment {
+        _streamId = error "NotInitialized"  
+        ,_headersOutput = headers_output
+        ,_dataOutput = data_output
+        ,_streamsCancelled_WTE = cancelled_streams_mvar
+        }
+
+    let session_data  = SessionData {
+        _sessionInput                = session_input 
+        ,_sessionOutput              = session_output
+        ,_toDecodeHeaders            = decode_headers_table_mvar
+        ,_toEncodeHeaders            = encode_headers_table_mvar
+        ,_stream2HeaderBlockFragment = stream_request_headers
+        ,_forWorkerThread            = for_worker_thread
+        ,_coherentWorker             = coherent_worker
+        ,_streamsCancelled           = cancelled_streams_mvar
+        }
+
 
     let for_worker_thread = error "Fill me in "::  WorkerThreadEnvironment 
 
     -- Create an input thread that decodes frames...
-    input_thread <- liftIO $ forkIO $ flippedRunReader  (decode_headers_table_mvar, stream_request_headers ) $ do 
-        input <- liftIO $ readChan session_input 
-        case input of 
-
-            Left _ -> do 
-                error "Received control token but don't know what to do with it..."
-
-            Right frame | Just (stream_id, bytes) <- frameIsHeaderOfStream frame -> do 
-                -- Just append the frames to streamRequestHeaders
-                appendHeaderFragmentBlock stream_id bytes
-
-                if frameEndsHeaders frame then 
-                  do
-                    -- Let's decode the headers
-                    headers_bytes <- getHeaderBytes stream_id
-                    dyn_table <- liftIO $ takeMVar decode_headers_table_mvar
-                    (new_table, header_list ) <- liftIO $ HP.decodeHeader dyn_table headers_bytes
-                    -- Good moment to remove the headers from the table.... we don't want a space
-                    -- leak here 
-                    liftIO $ H.delete stream_request_headers stream_id
-                    liftIO $ putMVar decode_headers_table_mvar new_table
-
-                    -- I'm clear to start the worker, in its own thread
-                    -- !!
-                    liftIO $ forkIO (
-                            flippedRunReader for_worker_thread (workerThread header_list coherent_worker) )
-
-                    return ()
-                else 
-                    -- Frame doesn't end the headers... add it ... 
-                    error "Implement me"
-
-            Right frame@(NH2.Frame _ (NH2.RSTStreamFrame error_code_id)) -> do
-                liftIO $ putStrLn "Stream reset"
-                cancelled_streams <- liftIO $ readMVar cancelled_streams_mvar
-                let stream_id = streamIdFromFrame frame
-                liftIO $ putMVar cancelled_streams_mvar $ NS.insert  stream_id cancelled_streams
-
+    input_thread <- liftIO . forkIO $ runReaderT sessionInputThread session_data
+ 
 
     return ( (SessionInput session_input),
              (SessionOutput session_output) )
 
 
 
+sessionInputThread :: ReaderT SessionData IO ()
+sessionInputThread  = do 
+    session_input             <- view sessionInput 
+    
+    decode_headers_table_mvar <- view toDecodeHeaders 
+    stream_request_headers    <- view stream2HeaderBlockFragment
+    cancelled_streams_mvar    <- view streamsCancelled
+    coherent_worker           <- view coherentWorker
+
+    for_worker_thread_uns     <- view forWorkerThread
+    
+
+    input                     <- liftIO $ readChan session_input
+    case input of 
+
+        Left _ -> do 
+            -- Actually, I haven't even defined a type for these tokens....
+            error "Received control token but don't know what to do with it..."
+
+        Right frame | Just (stream_id, bytes) <- frameIsHeaderOfStream frame -> do 
+            -- Just append the frames to streamRequestHeaders
+            appendHeaderFragmentBlock stream_id bytes
+
+            if frameEndsHeaders frame then 
+              do
+                -- Let's decode the headers
+                let for_worker_thread = set streamId stream_id for_worker_thread_uns 
+                headers_bytes <- getHeaderBytes stream_id
+                dyn_table <- liftIO $ takeMVar decode_headers_table_mvar
+                (new_table, header_list ) <- liftIO $ HP.decodeHeader dyn_table headers_bytes
+                -- Good moment to remove the headers from the table.... we don't want a space
+                -- leak here 
+                liftIO $ H.delete stream_request_headers stream_id
+                liftIO $ putMVar decode_headers_table_mvar new_table
+
+                -- I'm clear to start the worker, in its own thread
+                -- !!
+                liftIO $ forkIO $ runReaderT 
+                    (workerThread header_list coherent_worker)
+                    for_worker_thread 
+
+                return ()
+            else 
+                -- Frame doesn't end the headers... it was added before... so
+                -- probably do nothing 
+                return ()
+                
+            continue 
+
+        Right frame@(NH2.Frame _ (NH2.RSTStreamFrame error_code_id)) -> do
+            liftIO $ putStrLn "Stream reset"
+            cancelled_streams <- liftIO $ readMVar cancelled_streams_mvar
+            let stream_id = streamIdFromFrame frame
+            liftIO $ putMVar cancelled_streams_mvar $ NS.insert  stream_id cancelled_streams
+
+            continue 
+
+  where 
+
+    continue = sessionInputThread
+
+
+
 isStreamCancelled :: GlobalStreamId  -> WorkerMonad Bool 
 isStreamCancelled stream_id = do 
-    cancelled_streams_mvar <- view streamsCancelled
+    cancelled_streams_mvar <- view streamsCancelled_WTE
     cancelled_streams <- liftIO $ readMVar cancelled_streams_mvar
     return $ NS.member stream_id cancelled_streams
 
@@ -218,10 +302,19 @@ workerThread header_list coherent_worker =
       then 
         -- I have a beautiful source that I can de-construct...
         -- TODO: Optionally pulling data out from a Conduit ....
-        liftIO ( data_and_conclussion $$ (_sendDataOfStream stream_id) )
+        -- liftIO ( data_and_conclussion $$ (_sendDataOfStream stream_id) )
+        (transPipe liftIO data_and_conclussion) $$ (sendDataOfStream stream_id)
       else 
 
         return ()
+
+
+--                                                       v-- comp. monad.
+sendDataOfStream :: GlobalStreamId -> Sink B.ByteString (ReaderT WorkerThreadEnvironment IO) ()
+sendDataOfStream stream_id = do
+    data_output <- view dataOutput
+    transPipe liftIO $ foldMapM $ \ bytes ->
+        writeChan data_output (stream_id, bytes)
 
 
 -- sendDataOfStream :: Sink     
@@ -235,9 +328,9 @@ difficultFunction l r = liftM (fmap getLast) $ runWriterT (l' $$ r')
 
 
 
-appendHeaderFragmentBlock :: GlobalStreamId -> B.ByteString -> ReaderT (a,  Stream2HeaderBlockFragment) IO ()
+appendHeaderFragmentBlock :: GlobalStreamId -> B.ByteString -> ReaderT SessionData IO ()
 appendHeaderFragmentBlock global_stream_id bytes = do 
-    ht <- view _2 
+    ht <- view stream2HeaderBlockFragment 
     maybe_old_block <- liftIO $ H.lookup ht global_stream_id
     new_block <- return $ case maybe_old_block of 
 
@@ -248,9 +341,9 @@ appendHeaderFragmentBlock global_stream_id bytes = do
     liftIO $ H.insert ht global_stream_id new_block
 
 
-getHeaderBytes :: GlobalStreamId -> ReaderT (a, Stream2HeaderBlockFragment) IO B.ByteString
+getHeaderBytes :: GlobalStreamId -> ReaderT SessionData IO B.ByteString
 getHeaderBytes global_stream_id = do 
-    ht <- view _2 
+    ht <- view stream2HeaderBlockFragment 
     Just bytes <- liftIO $ H.lookup ht global_stream_id
     return bytes
 

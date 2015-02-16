@@ -8,6 +8,7 @@
 
 module Rede.MainLoop.CoherentWorker(
     Headers
+    , Footers
     , CoherentWorker
     , PrincipalStream
     , PushedStreams
