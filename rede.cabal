@@ -97,6 +97,7 @@ executable reh-mimic
       , base64-bytestring >= 1.0
       , http2 >= 0.7
       , blaze-builder >= 0.3.3 &&  < 0.4
+      , void 
      -- , asn-data
   
   -- Directories containing source files.

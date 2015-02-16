@@ -31,7 +31,11 @@ type CoherentWorker = Headers -> IO PrincipalStream
 
 type PrincipalStream = (Headers, PushedStreams, DataAndConclussion)
 
-type DataAndConclussion = ConduitM () B.ByteString IO Footers
+-- We can use this type in the future...
+-- type DataAndConclussion = ConduitM () B.ByteString IO Footers
+
+-- This type could possibly return footers but ... 
+type DataAndConclussion = Source IO B.ByteString
 
 type PushedStreams = [ IO PushedStream ]
 
