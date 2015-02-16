@@ -195,8 +195,6 @@ streamIdFromAnyFrame anyframe = case anyframe of
         _                                   ->   0
     DataFrame_AF dataframe        -> streamIdFromFrame dataframe
 
-streamIdFromAnyFrame _ = 0
-
 
 instance FramesInterface IO AnyFrame where 
   -- Now let's define a pipe that converts ByteString representations of frames 

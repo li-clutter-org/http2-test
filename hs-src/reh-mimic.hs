@@ -23,12 +23,15 @@ import           Rede.MainLoop.PushPullType
 import           Rede.MainLoop.Tokens
 
 import           Rede.HarFiles.ServedEntry               (hostsFromHarFile)
+
 import           Rede.SpdyProtocol.Framing.ChunkProducer (chunkProducerHelper)
 import           Rede.SpdyProtocol.Session               (basicSession)
+
 import           Rede.Workers.HarWorker                  (HarWorkerParams (..))
+import           Rede.Workers.VeryBasic                  (veryBasic)
 
 -- We import this one for testing sake
-import           Rede.Http2.Session
+import           Rede.Http2.Framer                        (wrapSession)
 
 
 
@@ -88,7 +91,8 @@ main = do
             port  <-  getMimicPort
             iface <-  getInterfaceName mimic_config_dir
             tlsServeProtocols mimic_dir [ 
-                 ("spdy/3.1" ,spdyAttendant har_filename)
+                 ("h2", wrapSession veryBasic)
+                ,("spdy/3.1" ,spdyAttendant har_filename)
                 ,("http/1.1",httpAttendant) 
                 ] iface port
   where 
@@ -112,10 +116,10 @@ httpAttendant push _ =
 
 spdyAttendant :: String -> PushAction -> PullAction -> IO () 
 spdyAttendant har_filename push pull = do 
-    fs_worker_service_pocket <- initService $ HarWorkerParams har_filename
+    har_worker_service_pocket <- initService $ HarWorkerParams har_filename
     activateSessionManager  
         id 
-        (basicSession fs_worker_service_pocket) 
+        (basicSession har_worker_service_pocket) 
         push 
         pull
         chunkProducerHelper

@@ -1,5 +1,5 @@
 -- TLS is small hell to setup, let's do it here ...
-
+{-# LANGUAGE StandaloneDeriving, FlexibleInstances, DeriveDataTypeable #-}
 module Rede.MainLoop.Tls(readyTCPSocket
     , tcpServe
     , enchantSocket
@@ -14,6 +14,7 @@ import           Control.Concurrent
 import qualified Crypto.PubKey.DH     as DH
 import qualified Data.ByteString      as B
 import           Data.Default         (def)
+import           Data.Typeable        (Typeable)
 import           Data.X509            (decodeSignedCertificate)
 import qualified Network.TLS          as T
 import           System.FilePath      ((</>))
@@ -28,6 +29,12 @@ import           Data.List   (find)
 
 import Rede.MainLoop.ConfigHelp(configDir)
 import Rede.MainLoop.PushPullType
+
+
+data CouldNotDecideProtocol = CouldNotDecideProtocol
+    deriving (Show, Typeable)
+
+instance E.Exception CouldNotDecideProtocol
 
 
 readyTCPSocket :: String -> Int ->  IO Socket 
@@ -115,10 +122,21 @@ buildNPNContextParams base_dir protocols  = do
         ,T.serverHooks = def {
             T.onSuggestNextProtocols = do
                 -- putStrLn "Protocols asked"
-                return $ Just $ map pack protocols
+                return $ Just protocols_as_bs
+            ,T.onALPNClientSuggest = Just $ \ suggested_protocolls -> 
+                chooseFirstMatching protocols_as_bs suggested_protocolls
         }
         ,T.serverSupported = serverSupported
         }
+
+  where 
+    protocols_as_bs =  map pack protocols
+
+
+chooseFirstMatching :: [B.ByteString] -> [B.ByteString] -> IO B.ByteString
+chooseFirstMatching [] _                                                        = E.throwIO CouldNotDecideProtocol
+chooseFirstMatching (p:_) suggested_protocolls | p `elem` suggested_protocolls = return p 
+chooseFirstMatching (_:xs) suggested_protocolls                                 = chooseFirstMatching xs suggested_protocolls
 
 
 serverSupported :: T.Supported

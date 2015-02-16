@@ -3,13 +3,18 @@ module Rede.Http2.Session(
     http2Session
     ,getFrameFromSession
     ,sendFrametoSession
+
+    ,CoherentSession
+    ,SessionInput 
+    ,SessionOutput 
+    ,SessionStartData(..)
     ) where
 
 
-import qualified Blaze.ByteString.Builder            as Bu
-import           Blaze.ByteString.Builder.ByteString (fromByteString)
+-- import qualified Blaze.ByteString.Builder            as Bu
+-- import           Blaze.ByteString.Builder.ByteString (fromByteString)
 import           Control.Lens
-import qualified Control.Lens                        as L
+-- import qualified Control.Lens                        as L
 
 
 -- No framing layer here... let's use Kazu's Yamamoto library
@@ -17,38 +22,36 @@ import qualified Network.HTTP2            as NH2
 import qualified Network.HPACK            as HP
 
 
-import           Control.Monad                           (forever, liftM)
-import           Control.Lens
+import           Control.Monad                           (forever)
 import           Control.Concurrent                      (forkIO)
 import           Control.Concurrent.Chan
 import           Control.Monad.IO.Class                  (liftIO)
-import           Control.Monad.Trans.Class               (lift)
-import           Control.Monad.Trans.Writer
+-- import           Control.Monad.Trans.Class               (lift)
+-- import           Control.Monad.Trans.Writer
 import           Control.Monad.Trans.Reader
-import           Control.Exception(throwIO)
 
 import           Data.Conduit
 import           Data.Conduit.List                       (foldMapM)
-import qualified Data.Conduit.Combinators                as Com
-import qualified Data.Streaming.Zlib                     as Z
+-- import qualified Data.Conduit.Combinators                as Com
+-- import qualified Data.Streaming.Zlib                     as Z
 
 -- import           Data.Conduit.Lift                       (distribute)
 -- import qualified Data.Conduit.List                       as CL
 import qualified Data.ByteString                         as B
-import qualified Data.ByteString.Lazy                    as LB
-import           Data.ByteString.Char8                   (pack)
+-- import qualified Data.ByteString.Lazy                    as LB
+-- import           Data.ByteString.Char8                   (pack)
 import           Control.Concurrent.MVar
-import           Data.Void                               (Void)
-import           Data.Default                            (def)
+-- import           Data.Void                               (Void)
+-- import           Data.Default                            (def)
 
-import           Data.Monoid
-import qualified Data.Map                                as MA
+-- import           Data.Monoid
+-- import qualified Data.Map                                as MA
 import qualified Data.IntSet                             as NS
-import           Data.Binary.Put                         (runPut)
-import qualified Data.Binary                             as Bi
-import           Data.Binary.Get                         (runGet)
+-- import           Data.Binary.Put                         (runPut)
+-- import qualified Data.Binary                             as Bi
+-- import           Data.Binary.Get                         (runGet)
 import qualified Data.HashTable.IO          as H
-import qualified Data.Dequeue               as D
+-- import qualified Data.Dequeue               as D
 
 
 import           Rede.MainLoop.CoherentWorker 
@@ -65,8 +68,6 @@ type InputFrame  = NH2.Frame
 
 useChunkLength :: Int 
 useChunkLength = 16384
-
-
 
 
 -- Whatever a worker thread is going to need comes here.... 
@@ -127,12 +128,14 @@ type WorkerMonad = ReaderT WorkerThreadEnvironment IO
 -- Have to figure out which are these...but I would expect to have things
 -- like unexpected aborts here in this type.
 data SessionInputCommand = 
-    NullCmd_SIC
-
+    CancelSession_SIC
+  deriving Show 
 
 -- temporary
 data  SessionOutputCommand = 
-    NullCmd_SOC
+    CancelSession_SOC
+  deriving Show
+
 
 -- TODO: Put here information needed for the session to work
 data SessionStartData = SessionStartData {
@@ -148,7 +151,7 @@ data SessionData = SessionData {
 
     -- We need to lock this channel occassionally so that we can order multiple 
     -- header frames properly.... 
-    ,_sessionOutput              :: MVar (Chan (Either SessionOutputCommand OutputFrame))
+    -- ,_sessionOutput              :: MVar (Chan (Either SessionOutputCommand OutputFrame))
 
     -- Use to encode 
     ,_toEncodeHeaders            :: MVar HP.DynamicTable
@@ -187,7 +190,7 @@ http2Session coherent_worker _ =   do
     decode_headers_table_mvar <- newMVar decode_headers_table
 
     encode_headers_table <- HP.newDynamicTableForEncoding 4096
-    encode_headers_table_mvar <- newMVar decode_headers_table
+    encode_headers_table_mvar <- newMVar encode_headers_table
 
     -- These ones need independent threads taking care of sending stuff
     -- their way... 
@@ -206,7 +209,7 @@ http2Session coherent_worker _ =   do
 
     let session_data  = SessionData {
         _sessionInput                = session_input 
-        ,_sessionOutput              = session_output_mvar
+        -- ,_sessionOutput              = session_output_mvar
         ,_toDecodeHeaders            = decode_headers_table_mvar
         ,_toEncodeHeaders            = encode_headers_table_mvar
         ,_stream2HeaderBlockFragment = stream_request_headers
@@ -284,7 +287,7 @@ sessionInputThread  = do
             continue 
 
         Right frame@(NH2.Frame _ (NH2.RSTStreamFrame error_code_id)) -> do
-            liftIO $ putStrLn "Stream reset"
+            liftIO $ putStrLn $ "Stream reset: " ++ (show error_code_id)
             cancelled_streams <- liftIO $ readMVar cancelled_streams_mvar
             let stream_id = streamIdFromFrame frame
             liftIO $ putMVar cancelled_streams_mvar $ NS.insert  stream_id cancelled_streams
@@ -310,6 +313,8 @@ workerThread header_list coherent_worker =
     headers_output <- view headersOutput
     stream_id <- view streamId
     (headers, pushed_streams, data_and_conclussion) <- liftIO $ coherent_worker header_list
+
+    liftIO $ putStrLn $ "Num pushed streams: " ++ (show $ length pushed_streams)
 
     -- Now I send the headers, if that's possible at all
     liftIO $ writeChan headers_output (stream_id, headers)
@@ -338,13 +343,17 @@ sendDataOfStream stream_id = do
 
 
 -- sendDataOfStream :: Sink     
-difficultFunction :: (Monad m)
-                  => ConduitM () a2 m r1 -> ConduitM a2 Void m r2
-                  -> m (r2, Maybe r1)
-difficultFunction l r = liftM (fmap getLast) $ runWriterT (l' $$ r')
-  where
-    l' = transPipe lift l >>= lift . tell . Last . Just
-    r' = transPipe lift r
+
+
+-- Allow this very important function to be used in the future to process footers
+
+-- difficultFunction :: (Monad m)
+--                   => ConduitM () a2 m r1 -> ConduitM a2 Void m r2
+--                   -> m (r2, Maybe r1)
+-- difficultFunction l r = liftM (fmap getLast) $ runWriterT (l' $$ r')
+--   where
+--     l' = transPipe lift l >>= lift . tell . Last . Just
+--     r' = transPipe lift r
 
 
 
