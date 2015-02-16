@@ -67,6 +67,8 @@ useChunkLength :: Int
 useChunkLength = 16384
 
 
+
+
 -- Whatever a worker thread is going to need comes here.... 
 -- this is to make refactoring easier, but not strictly needed. 
 data WorkerThreadEnvironment = WorkerThreadEnvironment {
@@ -220,7 +222,7 @@ http2Session coherent_worker _ =   do
     forkIO $ runReaderT (headersOutputThread headers_output session_output_mvar) session_data
 
     -- Create a thread that captures data and sends it down the tube
-    forkIO $ _dataOutputThread data_output session_output_mvar
+    forkIO $ dataOutputThread data_output session_output_mvar
 
     -- The two previous thread fill the session_output argument below (they write to it)
     -- the session machinery in the other end is in charge of sending that data through the 
@@ -388,7 +390,7 @@ streamIdFromFrame (NH2.Frame (NH2.FrameHeader _ _ stream_id) _) = NH2.fromStream
 headersOutputThread :: Chan (GlobalStreamId, Headers)
                        -> MVar (Chan (Either SessionOutputCommand OutputFrame)) 
                        -> ReaderT SessionData IO ()
-headersOutputThread input_chan sesssion_output = forever $ do 
+headersOutputThread input_chan session_output_mvar = forever $ do 
     (stream_id, headers) <- liftIO $ readChan input_chan
 
     -- First encode the headers using the table
@@ -402,7 +404,6 @@ headersOutputThread input_chan sesssion_output = forever $ do
     let bs_chunks = bytestringChunk useChunkLength data_to_send
 
     -- And send the chunks through while locking the output place....
-    session_output_mvar <- view sessionOutput 
     session_output <- liftIO $ takeMVar session_output_mvar
 
     -- First frame is just a headers frame....
@@ -457,10 +458,74 @@ headersOutputThread input_chan sesssion_output = forever $ do
     liftIO $ putMVar session_output_mvar session_output
   
 
-
-
 bytestringChunk :: Int -> B.ByteString -> [B.ByteString]
 bytestringChunk len s | (B.length s) < len = [ s ]
 bytestringChunk len s = h:(bytestringChunk len xs)
   where 
     (h, xs) = B.splitAt len s 
+
+
+-- TODO: find a clean way to finish this thread (maybe with negative stream ids?)
+-- TODO: This function does non-optimal chunking for the case where responses are
+--       actually streamed.... in those cases we need to keep state for frames in 
+--       some other format.... 
+dataOutputThread :: Chan (GlobalStreamId, B.ByteString)
+                    -> MVar (Chan (Either SessionOutputCommand OutputFrame)) 
+                    -> IO ()
+dataOutputThread input_chan session_output_mvar = forever $ do 
+    (stream_id, contents) <- readChan input_chan
+
+    -- And now just simply output it...
+    let bs_chunks = bytestringChunk useChunkLength contents
+
+    -- And send the chunks through while locking the output place....
+    session_output <- liftIO $ takeMVar session_output_mvar
+
+    -- First frame is just a headers frame....
+    if (length bs_chunks) == 1 
+      then
+        do 
+            let flags = NH2.setEndStream NH2.defaultFlags
+
+            -- Write the first frame 
+            liftIO $ writeChan session_output $ Right ( NH2.EncodeInfo {
+                NH2.encodeFlags     = flags
+                ,NH2.encodeStreamId = NH2.toStreamIdentifier stream_id 
+                ,NH2.encodePadding  = Nothing }, 
+
+                NH2.DataFrame (head bs_chunks)
+                )
+      else 
+        do 
+            let flags = NH2.defaultFlags
+            -- Write the first frame 
+            liftIO $ writeChan session_output $ Right ( NH2.EncodeInfo {
+                NH2.encodeFlags     = flags
+                ,NH2.encodeStreamId = NH2.toStreamIdentifier stream_id 
+                ,NH2.encodePadding  = Nothing }, 
+
+                NH2.DataFrame (head bs_chunks)
+                )
+            -- And write the other frames
+            let 
+                writeContinuations :: [B.ByteString] -> IO ()
+                writeContinuations (last_fragment:[]) = liftIO $
+                    writeChan session_output $ Right ( NH2.EncodeInfo {
+                        NH2.encodeFlags     = NH2.setEndStream NH2.defaultFlags 
+                        ,NH2.encodeStreamId = NH2.toStreamIdentifier stream_id 
+                        ,NH2.encodePadding  = Nothing }, 
+
+                        NH2.DataFrame last_fragment
+                        )
+                writeContinuations (fragment:xs) = do 
+                    liftIO $ writeChan session_output $ Right ( NH2.EncodeInfo {
+                        NH2.encodeFlags     = NH2.defaultFlags 
+                        ,NH2.encodeStreamId = NH2.toStreamIdentifier stream_id 
+                        ,NH2.encodePadding  = Nothing }, 
+
+                        NH2.DataFrame fragment
+                        )
+                    writeContinuations xs
+            writeContinuations (tail bs_chunks)
+    -- Restore output capability, so that other pieces waiting can send...
+    liftIO $ putMVar session_output_mvar session_output                    
