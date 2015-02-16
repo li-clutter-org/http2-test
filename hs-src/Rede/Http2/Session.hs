@@ -29,6 +29,7 @@ import           Control.Exception(throwIO)
 
 import           Data.Conduit
 import           Data.Conduit.List                       (foldMapM)
+import qualified Data.Conduit.Combinators                as Com
 import qualified Data.Streaming.Zlib                     as Z
 
 -- import           Data.Conduit.Lift                       (distribute)
@@ -54,7 +55,16 @@ import           Rede.MainLoop.CoherentWorker
 import           Rede.MainLoop.Tokens
 
 
-type Frame = NH2.Frame
+-- type Frame = NH2.Frame
+
+-- Unfortunately the frame encoding API of Network.HTTP2 is a bit difficult to 
+-- use :-( 
+type OutputFrame = (NH2.EncodeInfo, NH2.FramePayload)
+type InputFrame  = NH2.Frame
+
+
+useChunkLength :: Int 
+useChunkLength = 16384
 
 
 -- Whatever a worker thread is going to need comes here.... 
@@ -64,7 +74,7 @@ data WorkerThreadEnvironment = WorkerThreadEnvironment {
     _streamId :: GlobalStreamId
 
     -- A full block of headers can come here
-    , _headersOutput :: Chan (GlobalStreamId,Headers)
+    , _headersOutput :: Chan (GlobalStreamId, Headers)
 
     -- And regular contents can come this way and thus be properly mixed
     -- with everything else.... for now... 
@@ -83,14 +93,14 @@ type Session = (SessionInput, SessionOutput)
 
 -- From outside, one can only write to this one ... the newtype is to enforce 
 --    this.
-newtype SessionInput = SessionInput ( Chan (Either SessionInputCommand Frame) )
-sendFrametoSession :: SessionInput  -> Frame -> IO ()
+newtype SessionInput = SessionInput ( Chan (Either SessionInputCommand InputFrame) )
+sendFrametoSession :: SessionInput  -> InputFrame -> IO ()
 sendFrametoSession (SessionInput chan) frame = writeChan chan $ Right frame
 
 
 -- From outside, one can only read from this one 
-newtype SessionOutput = SessionOutput ( Chan (Either SessionOutputCommand Frame) )
-getFrameFromSession :: SessionOutput -> IO (Either SessionOutputCommand Frame) 
+newtype SessionOutput = SessionOutput ( Chan (Either SessionOutputCommand OutputFrame) )
+getFrameFromSession :: SessionOutput -> IO (Either SessionOutputCommand OutputFrame) 
 getFrameFromSession (SessionOutput chan) = readChan chan
 
 
@@ -130,9 +140,13 @@ data SessionStartData = SessionStartData {
 makeLenses ''SessionStartData
 
 
+-- NH2.Frame != Frame
 data SessionData = SessionData {
-    _sessionInput                :: Chan (Either SessionInputCommand Frame)
-    ,_sessionOutput              :: Chan (Either SessionOutputCommand Frame)
+    _sessionInput                :: Chan (Either SessionInputCommand InputFrame)
+
+    -- We need to lock this channel occassionally so that we can order multiple 
+    -- header frames properly.... 
+    ,_sessionOutput              :: MVar (Chan (Either SessionOutputCommand OutputFrame))
 
     -- Use to encode 
     ,_toEncodeHeaders            :: MVar HP.DynamicTable
@@ -155,15 +169,12 @@ data SessionData = SessionData {
 makeLenses ''SessionData
 
 
-flippedRunReader :: r -> ReaderT r m a -> m a
-flippedRunReader  = (flip runReaderT)
-
-
 --                                v- {headers table size comes here!!}
 http2Session :: CoherentWorker -> SessionStartData -> IO Session
 http2Session coherent_worker _ =   do 
     session_input   <- newChan
     session_output  <- newChan
+    session_output_mvar <- newMVar session_output
 
 
     -- For incremental construction of headers...
@@ -193,7 +204,7 @@ http2Session coherent_worker _ =   do
 
     let session_data  = SessionData {
         _sessionInput                = session_input 
-        ,_sessionOutput              = session_output
+        ,_sessionOutput              = session_output_mvar
         ,_toDecodeHeaders            = decode_headers_table_mvar
         ,_toEncodeHeaders            = encode_headers_table_mvar
         ,_stream2HeaderBlockFragment = stream_request_headers
@@ -202,12 +213,19 @@ http2Session coherent_worker _ =   do
         ,_streamsCancelled           = cancelled_streams_mvar
         }
 
-
-    let for_worker_thread = error "Fill me in "::  WorkerThreadEnvironment 
-
     -- Create an input thread that decodes frames...
-    input_thread <- liftIO . forkIO $ runReaderT sessionInputThread session_data
+    forkIO $ runReaderT sessionInputThread session_data
  
+    -- Create a thread that captures headers and sends them down the tube 
+    forkIO $ runReaderT (headersOutputThread headers_output session_output_mvar) session_data
+
+    -- Create a thread that captures data and sends it down the tube
+    forkIO $ _dataOutputThread data_output session_output_mvar
+
+    -- The two previous thread fill the session_output argument below (they write to it)
+    -- the session machinery in the other end is in charge of sending that data through the 
+    -- socket.
+    
 
     return ( (SessionInput session_input),
              (SessionOutput session_output) )
@@ -240,9 +258,9 @@ sessionInputThread  = do
             if frameEndsHeaders frame then 
               do
                 -- Let's decode the headers
-                let for_worker_thread = set streamId stream_id for_worker_thread_uns 
-                headers_bytes <- getHeaderBytes stream_id
-                dyn_table <- liftIO $ takeMVar decode_headers_table_mvar
+                let for_worker_thread     = set streamId stream_id for_worker_thread_uns 
+                headers_bytes             <- getHeaderBytes stream_id
+                dyn_table                 <- liftIO $ takeMVar decode_headers_table_mvar
                 (new_table, header_list ) <- liftIO $ HP.decodeHeader dyn_table headers_bytes
                 -- Good moment to remove the headers from the table.... we don't want a space
                 -- leak here 
@@ -251,7 +269,7 @@ sessionInputThread  = do
 
                 -- I'm clear to start the worker, in its own thread
                 -- !!
-                liftIO $ forkIO $ runReaderT 
+                liftIO . forkIO $ runReaderT 
                     (workerThread header_list coherent_worker)
                     for_worker_thread 
 
@@ -348,7 +366,7 @@ getHeaderBytes global_stream_id = do
     return bytes
 
 
-frameIsHeaderOfStream :: Frame -> Maybe (GlobalStreamId, B.ByteString)
+frameIsHeaderOfStream :: InputFrame -> Maybe (GlobalStreamId, B.ByteString)
 frameIsHeaderOfStream (NH2.Frame (NH2.FrameHeader _ _ stream_id) ( NH2.HeadersFrame _ block_fragment   ) )
     = Just (NH2.fromStreamIdentifier stream_id, block_fragment)
 frameIsHeaderOfStream (NH2.Frame (NH2.FrameHeader _ _ stream_id) ( NH2.ContinuationFrame block_fragment) )
@@ -357,9 +375,92 @@ frameIsHeaderOfStream _
     = Nothing 
 
 
-frameEndsHeaders  :: NH2.Frame -> Bool 
+frameEndsHeaders  :: InputFrame -> Bool 
 frameEndsHeaders (NH2.Frame (NH2.FrameHeader _ flags _) _) = NH2.testEndHeader flags
 
 
-streamIdFromFrame :: NH2.Frame -> GlobalStreamId
+streamIdFromFrame :: InputFrame -> GlobalStreamId
 streamIdFromFrame (NH2.Frame (NH2.FrameHeader _ _ stream_id) _) = NH2.fromStreamIdentifier stream_id
+
+
+-- TODO: Have different size for the headers..... just now going with a default size of 16 k...
+-- TODO: Find a way to kill this thread....
+headersOutputThread :: Chan (GlobalStreamId, Headers)
+                       -> MVar (Chan (Either SessionOutputCommand OutputFrame)) 
+                       -> ReaderT SessionData IO ()
+headersOutputThread input_chan sesssion_output = forever $ do 
+    (stream_id, headers) <- liftIO $ readChan input_chan
+
+    -- First encode the headers using the table
+    encode_dyn_table_mvar <- view toEncodeHeaders
+
+    encode_dyn_table <- liftIO $ takeMVar encode_dyn_table_mvar
+    (new_dyn_table, data_to_send ) <- liftIO $ HP.encodeHeader HP.defaultEncodeStrategy encode_dyn_table headers
+    liftIO $ putMVar encode_dyn_table_mvar new_dyn_table
+
+    -- Now split the bytestring in chunks of the needed size.... 
+    let bs_chunks = bytestringChunk useChunkLength data_to_send
+
+    -- And send the chunks through while locking the output place....
+    session_output_mvar <- view sessionOutput 
+    session_output <- liftIO $ takeMVar session_output_mvar
+
+    -- First frame is just a headers frame....
+    if (length bs_chunks) == 1 
+      then
+        do 
+            let flags = NH2.setEndHeader NH2.defaultFlags
+
+            -- Write the first frame 
+            liftIO $ writeChan session_output $ Right ( NH2.EncodeInfo {
+                NH2.encodeFlags     = flags
+                ,NH2.encodeStreamId = NH2.toStreamIdentifier stream_id 
+                ,NH2.encodePadding  = Nothing }, 
+
+                NH2.HeadersFrame Nothing (head bs_chunks)
+                )
+      else 
+        do 
+            let flags = NH2.defaultFlags
+            -- Write the first frame 
+            liftIO $ writeChan session_output $ Right ( NH2.EncodeInfo {
+                NH2.encodeFlags     = flags
+                ,NH2.encodeStreamId = NH2.toStreamIdentifier stream_id 
+                ,NH2.encodePadding  = Nothing }, 
+
+                NH2.HeadersFrame Nothing (head bs_chunks)
+                )
+            -- And write the other frames
+            let 
+                writeContinuations :: [B.ByteString] -> ReaderT SessionData IO ()
+                writeContinuations (last_fragment:[]) = liftIO $
+                    writeChan session_output $ Right ( NH2.EncodeInfo {
+                        NH2.encodeFlags     = NH2.setEndHeader NH2.defaultFlags 
+                        ,NH2.encodeStreamId = NH2.toStreamIdentifier stream_id 
+                        ,NH2.encodePadding  = Nothing }, 
+
+                        NH2.ContinuationFrame last_fragment
+                        )
+                writeContinuations (fragment:xs) = do 
+                    liftIO $ writeChan session_output $ Right ( NH2.EncodeInfo {
+                        NH2.encodeFlags     = NH2.defaultFlags 
+                        ,NH2.encodeStreamId = NH2.toStreamIdentifier stream_id 
+                        ,NH2.encodePadding  = Nothing }, 
+
+                        NH2.ContinuationFrame fragment
+                        )
+                    writeContinuations xs
+
+
+            writeContinuations (tail bs_chunks)
+    -- Restore output capability, so that other pieces waiting can send...
+    liftIO $ putMVar session_output_mvar session_output
+  
+
+
+
+bytestringChunk :: Int -> B.ByteString -> [B.ByteString]
+bytestringChunk len s | (B.length s) < len = [ s ]
+bytestringChunk len s = h:(bytestringChunk len xs)
+  where 
+    (h, xs) = B.splitAt len s 
