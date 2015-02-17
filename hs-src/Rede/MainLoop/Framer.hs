@@ -1,5 +1,6 @@
 module Rede.MainLoop.Framer(
     readNextChunk
+    ,readLength
 
 	,Framer
     ,LengthCallback
@@ -11,7 +12,7 @@ import qualified Data.ByteString           as B
 import qualified Data.ByteString.Lazy      as LB
 import           Data.Conduit
 
-import           Data.Monoid               (mappend)
+import           Data.Monoid               (mappend, mempty)
 
 
 type Framer m =        LB.ByteString                        -- Input left overs
@@ -51,5 +52,19 @@ readNextChunk length_callback input_leftovers gen = do
         Nothing -> do 
             -- Read a bit more 
             readNextChunk length_callback new_leftovers gen
+
+
+-- Some protocols, e.g., http/2, have the client transmit a fixed-length
+-- prefix. This function reads both that prefix and returns whatever get's
+-- trapped up there.... 
+readLength :: Monad m => Int -> m B.ByteString -> m (B.ByteString, B.ByteString)
+readLength the_length gen = 
+    readUpTo mempty 
+  where 
+    readUpTo lo  
+      | (B.length lo) >= the_length  = return $ B.splitAt the_length lo
+    readUpTo lo = do 
+            frag <- gen 
+            readUpTo (lo `mappend` frag)
 
   

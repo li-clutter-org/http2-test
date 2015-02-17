@@ -19,7 +19,7 @@ import           Data.X509            (decodeSignedCertificate)
 import qualified Network.TLS          as T
 import           System.FilePath      ((</>))
 import           Crypto.Random
-import           Network.TLS.Extra.Cipher (ciphersuite_strong)
+import           Network.TLS.Extra.Cipher (ciphersuite_all)
 import           System.Exit
 import           System.Posix.Signals
 import qualified Control.Exception    as E
@@ -123,7 +123,8 @@ buildNPNContextParams base_dir protocols  = do
             T.onSuggestNextProtocols = do
                 -- putStrLn "Protocols asked"
                 return $ Just protocols_as_bs
-            ,T.onALPNClientSuggest = Just $ \ suggested_protocolls -> 
+            ,T.onALPNClientSuggest = Just $ \ suggested_protocolls -> do 
+                putStrLn $ "Client suggests through ALPN: " ++ (show suggested_protocolls)
                 chooseFirstMatching protocols_as_bs suggested_protocolls
         }
         ,T.serverSupported = serverSupported
@@ -141,9 +142,10 @@ chooseFirstMatching (_:xs) suggested_protocolls                                 
 
 serverSupported :: T.Supported
 serverSupported = def {
-    T.supportedVersions = [T.TLS11]
-    ,T.supportedCiphers =  ciphersuite_strong
-
+    T.supportedVersions = [T.TLS12]
+    ,T.supportedCiphers =  filter
+        (T.cipherAllowedForVersion T.TLS12)
+        ciphersuite_all
     }
 
 

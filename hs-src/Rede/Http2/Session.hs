@@ -151,7 +151,7 @@ data SessionData = SessionData {
 
     -- We need to lock this channel occassionally so that we can order multiple 
     -- header frames properly.... 
-    -- ,_sessionOutput              :: MVar (Chan (Either SessionOutputCommand OutputFrame))
+    ,_sessionOutput              :: MVar (Chan (Either SessionOutputCommand OutputFrame))
 
     -- Use to encode 
     ,_toEncodeHeaders            :: MVar HP.DynamicTable
@@ -209,7 +209,7 @@ http2Session coherent_worker _ =   do
 
     let session_data  = SessionData {
         _sessionInput                = session_input 
-        -- ,_sessionOutput              = session_output_mvar
+        ,_sessionOutput              = session_output_mvar
         ,_toDecodeHeaders            = decode_headers_table_mvar
         ,_toEncodeHeaders            = encode_headers_table_mvar
         ,_stream2HeaderBlockFragment = stream_request_headers
@@ -294,10 +294,48 @@ sessionInputThread  = do
 
             continue 
 
+
+        Right (NH2.Frame frame_header (NH2.SettingsFrame _)) | isSettingsAck frame_header -> do 
+            -- Frame was received by the peer, do nothing here...
+            continue 
+
+
+        Right (NH2.Frame _ (NH2.SettingsFrame settings_list))  -> do 
+            liftIO $ putStrLn $ "Received settings: " ++ (show settings_list)
+            -- Just acknowledge the frame.... for now 
+            sendOutFrame 
+                (NH2.EncodeInfo
+                    (NH2.setAck NH2.defaultFlags)
+                    (NH2.toStreamIdentifier 0)
+                    Nothing )
+                (NH2.SettingsFrame [])
+
+            continue 
+
+
+        Right somethingelse -> do 
+            liftIO $ putStrLn $ "Received problematic frame: "
+            liftIO $ putStrLn $ "    " ++ (show somethingelse)
+
+            continue 
+
   where 
 
     continue = sessionInputThread
 
+    sendOutFrame :: NH2.EncodeInfo -> NH2.FramePayload -> ReaderT SessionData IO ()
+    sendOutFrame encode_info payload = do 
+        session_output_mvar <- view sessionOutput 
+        session_output <- liftIO $ takeMVar session_output_mvar
+
+        liftIO $ writeChan session_output $ Right (encode_info, payload)
+
+        liftIO $ putMVar session_output_mvar session_output
+
+
+isSettingsAck :: NH2.FrameHeader -> Bool 
+isSettingsAck (NH2.FrameHeader _ flags _) = 
+    NH2.testAck flags
 
 
 isStreamCancelled :: GlobalStreamId  -> WorkerMonad Bool 

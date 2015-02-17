@@ -24,6 +24,10 @@ import           Rede.MainLoop.PushPullType   (Attendant, PullAction,
 import           Rede.Utils                   (Word24, word24ToInt)
 
 
+http2PrefixLength :: Int
+http2PrefixLength = 24
+
+
 wrapSession :: CoherentWorker -> Attendant
 wrapSession coherent_worker push_action pull_action = do
 
@@ -49,8 +53,13 @@ http2FrameLength _ = Nothing
 
 inputGatherer :: PullAction -> SessionInput -> IO ()
 inputGatherer pull_action session_input = do 
+    -- We can start by reading off the prefix....
+    (prefix, remaining) <- F.readLength http2PrefixLength pull_action
+    putStrLn $ "Prefix received: " ++  (show prefix)
+    putStrLn $ "Prefix should be: " ++ (show NH2.connectionPreface)
+
     -- Can I get a whole packer?
-    let source = F.readNextChunk http2FrameLength "" pull_action
+    let source = F.readNextChunk http2FrameLength remaining pull_action
     source $$ consume 
   where 
     consume = do 
@@ -85,19 +94,31 @@ inputGatherer pull_action session_input = do
 outputGatherer :: PushAction -> SessionOutput -> IO ()
 outputGatherer push_action session_output = do 
 
-    command_or_frame  <- getFrameFromSession session_output
+    -- We start by sending a settings frame 
+    pushFrame 
+        (NH2.EncodeInfo NH2.defaultFlags (NH2.toStreamIdentifier 0) Nothing)
+        (NH2.SettingsFrame [])
 
-    case command_or_frame of 
+    loopPart
 
-        Left cmd -> do 
-            -- TODO: This is just a quickie behavior I dropped 
-            -- here, semantics need to be different probably.
-            putStrLn $ "Received a command... terminating " ++ (show cmd)
+  where 
 
-        Right (p1, p2) -> do 
-            -- TODO: This can be optimized.... 
-            let bs = LB.fromStrict $ NH2.encodeFrame p1 p2
-            push_action bs 
+    pushFrame p1 p2 = do
+        let bs = LB.fromStrict $ NH2.encodeFrame p1 p2
+        push_action bs
 
-    outputGatherer push_action session_output
+    loopPart = do 
 
+        command_or_frame  <- getFrameFromSession session_output
+
+        case command_or_frame of 
+
+            Left cmd -> do 
+                -- TODO: This is just a quickie behavior I dropped 
+                -- here, semantics need to be different probably.
+                putStrLn $ "Received a command... terminating " ++ (show cmd)
+
+            Right (p1, p2) -> do 
+                pushFrame p1 p2 
+
+                loopPart

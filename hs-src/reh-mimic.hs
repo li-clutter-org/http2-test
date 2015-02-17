@@ -14,20 +14,20 @@ import           Options.Applicative
 
 import           Rede.SimpleHTTP1Response                (exampleHTTP11Response)
 
-import           Rede.MainLoop.Conduit
+-- import           Rede.MainLoop.Conduit
 import           Rede.MainLoop.ConfigHelp                (configDir,
                                                           getInterfaceName,
                                                           getMimicPort,
                                                           mimicDataDir)
 import           Rede.MainLoop.PushPullType
-import           Rede.MainLoop.Tokens
+-- import           Rede.MainLoop.Tokens
 
 import           Rede.HarFiles.ServedEntry               (hostsFromHarFile)
 
-import           Rede.SpdyProtocol.Framing.ChunkProducer (chunkProducerHelper)
-import           Rede.SpdyProtocol.Session               (basicSession)
+-- import           Rede.SpdyProtocol.Framing.ChunkProducer (chunkProducerHelper)
+-- import           Rede.SpdyProtocol.Session               (basicSession)
 
-import           Rede.Workers.HarWorker                  (HarWorkerParams (..))
+-- import           Rede.Workers.HarWorker                  (HarWorkerParams (..))
 import           Rede.Workers.VeryBasic                  (veryBasic)
 
 -- We import this one for testing sake
@@ -89,10 +89,12 @@ main = do
 
         ServeHar_PA           -> do
             port  <-  getMimicPort
+            putStrLn $  "Mimic port: " ++ (show port)
             iface <-  getInterfaceName mimic_config_dir
+            putStrLn $ "Using interface: " ++ (show iface)
             tlsServeProtocols mimic_dir [ 
-                 ("h2", wrapSession veryBasic)
-                ,("spdy/3.1" ,spdyAttendant har_filename)
+                 ("h2-14", wrapSession veryBasic)
+                --,("spdy/3.1" ,spdyAttendant har_filename)
                 ,("http/1.1",httpAttendant) 
                 ] iface port
   where 
@@ -114,15 +116,15 @@ httpAttendant push _ =
     push $ BL.fromChunks [exampleHTTP11Response]
 
 
-spdyAttendant :: String -> PushAction -> PullAction -> IO () 
-spdyAttendant har_filename push pull = do 
-    har_worker_service_pocket <- initService $ HarWorkerParams har_filename
-    activateSessionManager  
-        id 
-        (basicSession har_worker_service_pocket) 
-        push 
-        pull
-        chunkProducerHelper
+-- spdyAttendant :: String -> PushAction -> PullAction -> IO () 
+-- spdyAttendant har_filename push pull = do 
+--     har_worker_service_pocket <- initService $ HarWorkerParams har_filename
+--     activateSessionManager  
+--         id 
+--         (basicSession har_worker_service_pocket) 
+--         push 
+--         pull
+--         chunkProducerHelper
 
 
 outputHosts :: FilePath -> IO ()
