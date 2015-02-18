@@ -8,6 +8,7 @@ module Rede.MainLoop.Framer(
 
 
 import           Control.Monad.Trans.Class (lift)
+import           Control.Monad.IO.Class    (MonadIO, liftIO)
 import qualified Data.ByteString           as B
 import qualified Data.ByteString.Lazy      as LB
 import           Data.Conduit
@@ -57,13 +58,16 @@ readNextChunk length_callback input_leftovers gen = do
 -- Some protocols, e.g., http/2, have the client transmit a fixed-length
 -- prefix. This function reads both that prefix and returns whatever get's
 -- trapped up there.... 
-readLength :: Monad m => Int -> m B.ByteString -> m (B.ByteString, B.ByteString)
+readLength :: MonadIO m => Int -> m B.ByteString -> m (B.ByteString, B.ByteString)
 readLength the_length gen = 
     readUpTo mempty 
   where 
     readUpTo lo  
-      | (B.length lo) >= the_length  = return $ B.splitAt the_length lo
-    readUpTo lo = do 
+      | (B.length lo) >= the_length  = do
+            liftIO $ putStrLn "Full read"
+            return $ B.splitAt the_length lo
+      | otherwise = do 
+            liftIO $ putStrLn "fragment read"
             frag <- gen 
             readUpTo (lo `mappend` frag)
 

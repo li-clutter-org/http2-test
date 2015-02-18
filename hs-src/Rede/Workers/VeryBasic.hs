@@ -20,7 +20,10 @@ trivialHeaders = [
 
 
 veryBasic :: CoherentWorker
-veryBasic _ = do 
+veryBasic headers = do 
     let data_and_conclussion = yield "Hello world!"
+
+    print "Got these headers: "
+    print headers 
 
     return (trivialHeaders, [], data_and_conclussion)

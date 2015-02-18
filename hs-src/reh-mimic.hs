@@ -1,37 +1,28 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-import Rede.MainLoop.Tls(
-    tlsServeProtocols
+import Rede.MainLoop.OpenSSL_TLS(
+    tlsServeWithALPN
     )
 
 
-import qualified Data.ByteString                         as B
-import qualified Data.ByteString.Lazy                    as BL
+import qualified Data.ByteString            as B
+import qualified Data.ByteString.Lazy       as BL
 import           System.FilePath
 
 import           Options.Applicative
 
-import           Rede.SimpleHTTP1Response                (exampleHTTP11Response)
+import           Rede.SimpleHTTP1Response   (exampleHTTP11Response)
 
--- import           Rede.MainLoop.Conduit
-import           Rede.MainLoop.ConfigHelp                (configDir,
-                                                          getInterfaceName,
-                                                          getMimicPort,
-                                                          mimicDataDir)
+import           Rede.MainLoop.ConfigHelp   (configDir, getInterfaceName,
+                                             getMimicPort, mimicDataDir, 
+                                             getCertFilename, getPrivkeyFilename
+                                             )
 import           Rede.MainLoop.PushPullType
--- import           Rede.MainLoop.Tokens
-
-import           Rede.HarFiles.ServedEntry               (hostsFromHarFile)
-
--- import           Rede.SpdyProtocol.Framing.ChunkProducer (chunkProducerHelper)
--- import           Rede.SpdyProtocol.Session               (basicSession)
-
--- import           Rede.Workers.HarWorker                  (HarWorkerParams (..))
-import           Rede.Workers.VeryBasic                  (veryBasic)
-
+import           Rede.HarFiles.ServedEntry  (hostsFromHarFile)
+import           Rede.Workers.VeryBasic     (veryBasic)
 -- We import this one for testing sake
-import           Rede.Http2.Framer                        (wrapSession)
+import           Rede.Http2.Framer          (wrapSession)
 
 
 
@@ -92,11 +83,14 @@ main = do
             putStrLn $  "Mimic port: " ++ (show port)
             iface <-  getInterfaceName mimic_config_dir
             putStrLn $ "Using interface: " ++ (show iface)
-            tlsServeProtocols mimic_dir [ 
+            let 
+                priv_key_filename = getPrivkeyFilename mimic_config_dir
+                cert_filename  = getCertFilename mimic_config_dir
+            tlsServeWithALPN  cert_filename priv_key_filename iface [ 
                  ("h2-14", wrapSession veryBasic)
                 --,("spdy/3.1" ,spdyAttendant har_filename)
                 ,("http/1.1",httpAttendant) 
-                ] iface port
+                ] port
   where 
     opts_metadata = info 
         ( helper <*> programParser )

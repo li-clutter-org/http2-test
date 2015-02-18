@@ -1,5 +1,5 @@
 -- This one is in charge of taking and producing frames 
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, StandaloneDeriving, FlexibleInstances, DeriveDataTypeable #-}
 module Rede.Http2.Framer (
     wrapSession
     ) where 
@@ -7,11 +7,13 @@ module Rede.Http2.Framer (
 
 
 import           Control.Concurrent
+import           Control.Exception
 import           Control.Monad.IO.Class       (liftIO)
 import           Data.Binary                  (decode)
 import qualified Data.ByteString              as B
 import qualified Data.ByteString.Lazy         as LB
 import           Data.Conduit
+import           Data.Typeable                (Typeable)
 
 import qualified Network.HTTP2                as NH2
 
@@ -25,19 +27,31 @@ import           Rede.Utils                   (Word24, word24ToInt)
 
 
 http2PrefixLength :: Int
-http2PrefixLength = 24
+http2PrefixLength = B.length NH2.connectionPreface
+
+
+data BadPrefixException = BadPrefixException 
+    deriving (Show, Typeable)
+
+instance Exception BadPrefixException
 
 
 wrapSession :: CoherentWorker -> Attendant
 wrapSession coherent_worker push_action pull_action = do
+
+    putStrLn "Wrap session"
 
     -- ?
     let session_start = SessionStartData {}
 
     (session_input, session_output) <- http2Session coherent_worker session_start
 
+    putStrLn "Session start returned"
+
     forkIO $ inputGatherer pull_action session_input 
     forkIO $ outputGatherer push_action session_output
+
+    putStrLn "Workers sparked"
 
     return ()
 
@@ -55,8 +69,12 @@ inputGatherer :: PullAction -> SessionInput -> IO ()
 inputGatherer pull_action session_input = do 
     -- We can start by reading off the prefix....
     (prefix, remaining) <- F.readLength http2PrefixLength pull_action
-    putStrLn $ "Prefix received: " ++  (show prefix)
-    putStrLn $ "Prefix should be: " ++ (show NH2.connectionPreface)
+
+    if prefix /= NH2.connectionPreface 
+      then 
+        throwIO BadPrefixException
+      else 
+        return ()
 
     -- Can I get a whole packer?
     let source = F.readNextChunk http2FrameLength remaining pull_action
@@ -88,7 +106,7 @@ inputGatherer pull_action session_input = do
 
             Nothing    -> 
                 -- We may as well exit this thread
-                return ()
+               return ()
 
 
 outputGatherer :: PushAction -> SessionOutput -> IO ()

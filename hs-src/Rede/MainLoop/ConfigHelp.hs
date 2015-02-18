@@ -7,7 +7,8 @@ module Rede.MainLoop.ConfigHelp(
 	,getHostPort
 	,getInterfaceName
 	,getMimicPort
-
+	,getPrivkeyFilename
+	,getCertFilename
 
 	,HostPort
 	) where 
@@ -57,6 +58,14 @@ getServedHost :: FilePath -> IO String
 getServedHost config_dir = do 
 	contents <- readFile $ config_dir </> "servedhost.conf"
 	return $ contents
+
+
+getCertFilename :: FilePath -> FilePath 
+getCertFilename config_dir = config_dir </> "servercert.pem"
+
+
+getPrivkeyFilename :: FilePath -> FilePath 
+getPrivkeyFilename config_dir = config_dir </> "privkey.pem"
 
 
 getInterfaceName :: FilePath -> IO String 

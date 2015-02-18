@@ -32,11 +32,6 @@ import           Control.Monad.Trans.Reader
 
 import           Data.Conduit
 import           Data.Conduit.List                       (foldMapM)
--- import qualified Data.Conduit.Combinators                as Com
--- import qualified Data.Streaming.Zlib                     as Z
-
--- import           Data.Conduit.Lift                       (distribute)
--- import qualified Data.Conduit.List                       as CL
 import qualified Data.ByteString                         as B
 -- import qualified Data.ByteString.Lazy                    as LB
 -- import           Data.ByteString.Char8                   (pack)
@@ -47,11 +42,7 @@ import           Control.Concurrent.MVar
 -- import           Data.Monoid
 -- import qualified Data.Map                                as MA
 import qualified Data.IntSet                             as NS
--- import           Data.Binary.Put                         (runPut)
--- import qualified Data.Binary                             as Bi
--- import           Data.Binary.Get                         (runGet)
 import qualified Data.HashTable.IO          as H
--- import qualified Data.Dequeue               as D
 
 
 import           Rede.MainLoop.CoherentWorker 
@@ -70,14 +61,20 @@ useChunkLength :: Int
 useChunkLength = 16384
 
 
+-- Singleton instance used for concurrency
+data HeadersSent = HeadersSent 
+
+
 -- Whatever a worker thread is going to need comes here.... 
 -- this is to make refactoring easier, but not strictly needed. 
 data WorkerThreadEnvironment = WorkerThreadEnvironment {
     -- What's the header stream id?
     _streamId :: GlobalStreamId
 
-    -- A full block of headers can come here
-    , _headersOutput :: Chan (GlobalStreamId, Headers)
+    -- A full block of headers can come here... the mvar in the middle should
+    -- be populate to signal end of headers transmission. A thread will be suspended
+    -- waiting for that
+    , _headersOutput :: Chan (GlobalStreamId, MVar HeadersSent, Headers)
 
     -- And regular contents can come this way and thus be properly mixed
     -- with everything else.... for now... 
@@ -109,6 +106,7 @@ getFrameFromSession (SessionOutput chan) = readChan chan
 
 -- Here is how we make a session 
 type SessionMaker = SessionStartData -> IO Session
+
 
 
 -- Here is how we make a session wrapping a CoherentWorker
@@ -194,7 +192,7 @@ http2Session coherent_worker _ =   do
 
     -- These ones need independent threads taking care of sending stuff
     -- their way... 
-    headers_output <- newChan :: IO (Chan (GlobalStreamId,Headers))
+    headers_output <- newChan :: IO (Chan (GlobalStreamId, MVar HeadersSent, Headers))
     data_output <- newChan :: IO (Chan (GlobalStreamId,B.ByteString))
 
     -- What about stream cancellation?
@@ -250,6 +248,10 @@ sessionInputThread  = do
     
 
     input                     <- liftIO $ readChan session_input
+
+
+    liftIO $ putStrLn $ "Got a frame or a command: " ++ (show input)
+
     case input of 
 
         Left _ -> do 
@@ -355,7 +357,8 @@ workerThread header_list coherent_worker =
     liftIO $ putStrLn $ "Num pushed streams: " ++ (show $ length pushed_streams)
 
     -- Now I send the headers, if that's possible at all
-    liftIO $ writeChan headers_output (stream_id, headers)
+    headers_sent <- liftIO $ newEmptyMVar
+    liftIO $ writeChan headers_output (stream_id, headers_sent, headers)
 
     -- At this moment I should ask if the stream hasn't been cancelled by the browser before
     -- commiting to the work of sending addtitional data
@@ -366,18 +369,22 @@ workerThread header_list coherent_worker =
         -- I have a beautiful source that I can de-construct...
         -- TODO: Optionally pulling data out from a Conduit ....
         -- liftIO ( data_and_conclussion $$ (_sendDataOfStream stream_id) )
-        (transPipe liftIO data_and_conclussion) $$ (sendDataOfStream stream_id)
+        -- 
+        -- This threadlet should block here waiting for the headers to finish going
+        (transPipe liftIO data_and_conclussion) $$ (sendDataOfStream stream_id headers_sent)
       else 
 
         return ()
 
-
 --                                                       v-- comp. monad.
-sendDataOfStream :: GlobalStreamId -> Sink B.ByteString (ReaderT WorkerThreadEnvironment IO) ()
-sendDataOfStream stream_id = do
+sendDataOfStream :: GlobalStreamId -> MVar HeadersSent -> Sink B.ByteString (ReaderT WorkerThreadEnvironment IO) ()
+sendDataOfStream stream_id headers_sent = do
     data_output <- view dataOutput
-    transPipe liftIO $ foldMapM $ \ bytes ->
-        writeChan data_output (stream_id, bytes)
+    transPipe liftIO $ do 
+        -- Wait for permission to send the data
+        liftIO $ takeMVar headers_sent
+        foldMapM $ \ bytes ->
+            writeChan data_output (stream_id, bytes)
 
 
 -- sendDataOfStream :: Sink     
@@ -434,11 +441,11 @@ streamIdFromFrame (NH2.Frame (NH2.FrameHeader _ _ stream_id) _) = NH2.fromStream
 
 -- TODO: Have different size for the headers..... just now going with a default size of 16 k...
 -- TODO: Find a way to kill this thread....
-headersOutputThread :: Chan (GlobalStreamId, Headers)
+headersOutputThread :: Chan (GlobalStreamId, MVar HeadersSent, Headers)
                        -> MVar (Chan (Either SessionOutputCommand OutputFrame)) 
                        -> ReaderT SessionData IO ()
 headersOutputThread input_chan session_output_mvar = forever $ do 
-    (stream_id, headers) <- liftIO $ readChan input_chan
+    (stream_id, headers_ready_mvar, headers) <- liftIO $ readChan input_chan
 
     -- First encode the headers using the table
     encode_dyn_table_mvar <- view toEncodeHeaders
@@ -503,6 +510,8 @@ headersOutputThread input_chan session_output_mvar = forever $ do
             writeContinuations (tail bs_chunks)
     -- Restore output capability, so that other pieces waiting can send...
     liftIO $ putMVar session_output_mvar session_output
+    -- And say that the headers for this thread are out 
+    liftIO $ putMVar headers_ready_mvar HeadersSent
   
 
 bytestringChunk :: Int -> B.ByteString -> [B.ByteString]
