@@ -7,7 +7,9 @@
 
 
 module Rede.MainLoop.CoherentWorker(
-    Headers
+    getHeaderFromFlatList
+
+    , Headers
     , Footers
     , CoherentWorker
     , PrincipalStream
@@ -19,6 +21,7 @@ module Rede.MainLoop.CoherentWorker(
 
 import Data.Conduit
 import qualified Data.ByteString as B
+import Data.Foldable(find)
 
 
 type Headers = [(B.ByteString, B.ByteString)]
@@ -36,8 +39,17 @@ type PrincipalStream = (Headers, PushedStreams, DataAndConclussion)
 -- type DataAndConclussion = ConduitM () B.ByteString IO Footers
 
 -- This type could possibly return footers but ... 
+-- Update: there is functionality now to support this....
 type DataAndConclussion = Source IO B.ByteString
 
 type PushedStreams = [ IO PushedStream ]
 
 type PushedStream = (Headers, DataAndConclussion)
+
+
+getHeaderFromFlatList :: Headers -> B.ByteString -> Maybe B.ByteString
+getHeaderFromFlatList unvl bs = 
+    case find (\ (x,_) -> x==bs ) unvl of
+        Just (_, found_value)  -> Just found_value 
+
+        Nothing                -> Nothing  

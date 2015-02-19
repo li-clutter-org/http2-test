@@ -73,6 +73,9 @@ type StreamWorker = Conduit StreamInputToken IO StreamOutputAction
 
 -- | Sequence of steps to get a StreamWorker. This class is independent of things
 --   like the finer details concerning the frames and the streams.
+--
+--   Todo: although this shows a common pattern, I'm not sure how having a class
+--   here helps....
 class StreamWorkerClass serviceParams servicePocket sessionPocket | 
         serviceParams -> sessionPocket servicePocket,
         servicePocket -> sessionPocket serviceParams,

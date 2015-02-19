@@ -6,23 +6,26 @@ import Rede.MainLoop.OpenSSL_TLS(
     )
 
 
-import qualified Data.ByteString            as B
-import qualified Data.ByteString.Lazy       as BL
+import qualified Data.ByteString              as B
+import           Data.ByteString.Char8        (pack)
+import qualified Data.ByteString.Lazy         as BL
 import           System.FilePath
 
 import           Options.Applicative
 
-import           Rede.SimpleHTTP1Response   (exampleHTTP11Response)
+import           Rede.SimpleHTTP1Response     (exampleHTTP11Response)
 
-import           Rede.MainLoop.ConfigHelp   (configDir, getInterfaceName,
-                                             getMimicPort, mimicDataDir, 
-                                             getCertFilename, getPrivkeyFilename
-                                             )
+import           Rede.HarFiles.ServedEntry    (createResolveCenterFromFilePath,
+                                               hostsFromHarFile)
+import           Rede.MainLoop.CoherentWorker (CoherentWorker)
+import           Rede.MainLoop.ConfigHelp     (configDir, getCertFilename,
+                                               getInterfaceName, getMimicPort,
+                                               getPrivkeyFilename, mimicDataDir)
 import           Rede.MainLoop.PushPullType
-import           Rede.HarFiles.ServedEntry  (hostsFromHarFile)
-import           Rede.Workers.VeryBasic     (veryBasic)
+import           Rede.Workers.HarWorker       (harCoherentWorker)
 -- We import this one for testing sake
-import           Rede.Http2.Framer          (wrapSession)
+import           Rede.Http2.Framer            (wrapSession)
+
 
 
 
@@ -87,7 +90,8 @@ main = do
                 priv_key_filename = getPrivkeyFilename mimic_config_dir
                 cert_filename  = getCertFilename mimic_config_dir
             tlsServeWithALPN  cert_filename priv_key_filename iface [ 
-                 ("h2-14", wrapSession veryBasic)
+                 -- ("h2-14", wrapSession veryBasic)
+                 ("h2-14", http2Attendant har_filename)
                 --,("spdy/3.1" ,spdyAttendant har_filename)
                 ,("http/1.1",httpAttendant) 
                 ] port
@@ -119,6 +123,16 @@ httpAttendant push _ =
 --         push 
 --         pull
 --         chunkProducerHelper
+
+
+http2Attendant :: FilePath -> PushAction -> PullAction -> IO ()
+http2Attendant har_filename push_action pull_action = do 
+    resolve_center <- createResolveCenterFromFilePath $ pack har_filename 
+    let 
+        coherent_worker = (harCoherentWorker resolve_center)::CoherentWorker
+        attendant = wrapSession coherent_worker
+    attendant push_action pull_action
+
 
 
 outputHosts :: FilePath -> IO ()
