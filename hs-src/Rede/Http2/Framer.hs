@@ -61,10 +61,15 @@ data FlowControlCommand =
 type Stream2AvailSpace = HashTable GlobalStreamId (Chan FlowControlCommand)
 
 
+data CanOutput 
+
+
+
 data FramerSessionData = FramerSessionData {
       _stream2flow           :: Stream2AvailSpace
     , _stream2outputBytes    :: HashTable GlobalStreamId (Chan LB.ByteString)
     , _defaultStreamWindow   :: MVar Int
+
     }
 
 L.makeLenses ''FramerSessionData
@@ -246,32 +251,32 @@ outputGatherer push_action session_output = do
                 liftIO $ putStrLn $ "Received a command... terminating " ++ (show cmd)
 
 
-            Right ( p1@(NH2.EncodeInfo _ stream_idii _), p2@(NH2.DataFrame _) ) -> do
-                -- This frame is flow-controlled... I may be unable to send this frame in
-                -- some circumstances... 
-                let stream_id = NH2.fromStreamIdentifier stream_idii
-                s2o <- view stream2outputBytes
-                lookup_result <- liftIO $ H.lookup s2o stream_id 
-                bytes_chan <- case lookup_result of 
+            -- Right ( p1@(NH2.EncodeInfo _ stream_idii _), p2@(NH2.DataFrame _) ) -> do
+            --     -- This frame is flow-controlled... I may be unable to send this frame in
+            --     -- some circumstances... 
+            --     let stream_id = NH2.fromStreamIdentifier stream_idii
+            --     s2o <- view stream2outputBytes
+            --     lookup_result <- liftIO $ H.lookup s2o stream_id 
+            --     bytes_chan <- case lookup_result of 
 
-                    Nothing ->  do 
-                        -- New thread for handling outputs of this stream is needed
-                        bytes_chan <- liftIO newChan 
-                        command_chan <- liftIO newChan 
-                        liftIO $ H.insert s2o stream_id bytes_chan 
-                        s2c <- view stream2flow
-                        liftIO $ H.insert s2c stream_id command_chan 
-                        initial_cap_mvar <- view defaultStreamWindow
-                        initial_cap <- liftIO $ readMVar initial_cap_mvar
+            --         Nothing ->  do 
+            --             -- New thread for handling outputs of this stream is needed
+            --             bytes_chan <- liftIO newChan 
+            --             command_chan <- liftIO newChan 
+            --             liftIO $ H.insert s2o stream_id bytes_chan 
+            --             s2c <- view stream2flow
+            --             liftIO $ H.insert s2c stream_id command_chan 
+            --             initial_cap_mvar <- view defaultStreamWindow
+            --             initial_cap <- liftIO $ readMVar initial_cap_mvar
 
-                        -- And don't forget the thread itself
-                        liftIO $ forkIO $ flowControlOutput initial_cap command_chan bytes_chan push_action
+            --             -- And don't forget the thread itself
+            --             liftIO $ forkIO $ flowControlOutput initial_cap command_chan bytes_chan push_action
 
-                        return bytes_chan 
+            --             return bytes_chan 
 
-                    Just bytes_chan -> return bytes_chan 
+            --         Just bytes_chan -> return bytes_chan 
 
-                liftIO $ writeChan bytes_chan $ dataForFrame p1 p2
+            --     liftIO $ writeChan bytes_chan $ dataForFrame p1 p2
 
 
             Right (p1, p2) -> do 

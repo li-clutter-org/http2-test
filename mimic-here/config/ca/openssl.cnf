@@ -4,7 +4,7 @@
  
 # Establish working directory.
  
-dir					= /home/alcides/projects/spdy-ping/share/ca
+dir					= /home/alcides/projects/rede/mimic-here/config/ca
  
 [ ca ]
 default_ca				= CA_default

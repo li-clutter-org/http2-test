@@ -251,7 +251,7 @@ sessionInputThread  = do
     input                     <- liftIO $ readChan session_input
 
 
-    liftIO $ putStrLn $ "Got a frame or a command: " ++ (show input)
+    -- liftIO $ putStrLn $ "Got a frame or a command: " ++ (show input)
 
     case input of 
 
@@ -447,6 +447,7 @@ headersOutputThread :: Chan (GlobalStreamId, MVar HeadersSent, Headers)
                        -> ReaderT SessionData IO ()
 headersOutputThread input_chan session_output_mvar = forever $ do 
     (stream_id, headers_ready_mvar, headers) <- liftIO $ readChan input_chan
+    liftIO $ putStrLn $ "Output headers: " ++ (show headers)
 
     -- First encode the headers using the table
     encode_dyn_table_mvar <- view toEncodeHeaders
@@ -513,6 +514,7 @@ headersOutputThread input_chan session_output_mvar = forever $ do
     liftIO $ putMVar session_output_mvar session_output
     -- And say that the headers for this thread are out 
     liftIO $ putMVar headers_ready_mvar HeadersSent
+    liftIO $ putStrLn "Headers were output"
   
 
 bytestringChunk :: Int -> B.ByteString -> [B.ByteString]
@@ -585,4 +587,5 @@ dataOutputThread input_chan session_output_mvar = forever $ do
                     writeContinuations xs
             writeContinuations (tail bs_chunks)
     -- Restore output capability, so that other pieces waiting can send...
+    liftIO $ putStrLn "Output capability restored"
     liftIO $ putMVar session_output_mvar session_output                    

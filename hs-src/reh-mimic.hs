@@ -8,8 +8,15 @@ import Rede.MainLoop.OpenSSL_TLS(
 
 import qualified Data.ByteString              as B
 import           Data.ByteString.Char8        (pack)
+import qualified Data.ByteString.Builder      as Bu
 import qualified Data.ByteString.Lazy         as BL
+import           Data.Monoid
+import           Data.Foldable                (foldMap)
+
+import           System.IO
 import           System.FilePath
+import           System.Process
+import           System.Directory
 
 import           Options.Applicative
 
@@ -18,7 +25,7 @@ import           Rede.SimpleHTTP1Response     (exampleHTTP11Response)
 import           Rede.HarFiles.ServedEntry    (createResolveCenterFromFilePath,
                                                hostsFromHarFile)
 import           Rede.MainLoop.CoherentWorker (CoherentWorker)
-import           Rede.MainLoop.ConfigHelp     (configDir, getCertFilename,
+import           Rede.MainLoop.ConfigHelp     (configDir,
                                                getInterfaceName, getMimicPort,
                                                getPrivkeyFilename, mimicDataDir)
 import           Rede.MainLoop.PushPullType
@@ -77,8 +84,12 @@ main = do
     prg   <-  execParser opts_metadata
     let har_filename = harFileName prg
     case Main.action prg of 
-        OutputHosts_PA        -> 
-            outputHosts har_filename
+        OutputHosts_PA        -> do
+            all_seen_hosts <- hostsFromHarFile har_filename
+            outputHosts all_seen_hosts
+            -- And since I'm on that, let's create a big fluffy certificate to 
+            -- use in this case..
+            getComprehensiveCertificate mimic_dir har_filename all_seen_hosts
 
 
         ServeHar_PA           -> do
@@ -88,7 +99,7 @@ main = do
             putStrLn $ "Using interface: " ++ (show iface)
             let 
                 priv_key_filename = getPrivkeyFilename mimic_config_dir
-                cert_filename  = getCertFilename mimic_config_dir
+                cert_filename  = certificateFilename mimic_dir har_filename
             tlsServeWithALPN  cert_filename priv_key_filename iface [ 
                  -- ("h2-14", wrapSession veryBasic)
                  ("h2-14", http2Attendant har_filename)
@@ -135,9 +146,84 @@ http2Attendant har_filename push_action pull_action = do
 
 
 
-outputHosts :: FilePath -> IO ()
-outputHosts har_filename = do 
-    all_seen_hosts <- hostsFromHarFile har_filename
+certificateFilename :: FilePath -> FilePath -> FilePath 
+certificateFilename mimic_dir harfilename = let
+    basename = takeFileName harfilename
+    namesprefix = mimic_dir </> "fakecerts" </> basename
+  in 
+    namesprefix </> "server.pem" 
+
+
+getComprehensiveCertificate :: FilePath -> FilePath -> [B.ByteString] -> IO ()
+getComprehensiveCertificate mimic_dir harfilename all_seen_hosts = do 
+
+    let 
+        basename = takeFileName harfilename
+        mimic_config_dir = mimic_dir </> "config"
+        namesprefix = mimic_dir </> "fakecerts" </> basename
+
+    createDirectoryIfMissing True namesprefix
+    let 
+        ca_location       = mimic_config_dir </> "ca"
+        cnf_filename      = ca_location </> "openssl-noprompt.cnf"
+        -- ca_config      = ca_location </> "openssl.cnf"
+        db_filename       = ca_location </> "certindex.txt"
+        ca_cert           = ca_location </> "cacert.pem"
+        -- ca_privkey     = ca_location </> "certindex.txt"
+        csr_filename      = namesprefix </> "cert.csr"
+        template_cnf      = namesprefix </> "openssl.conf" 
+        priv_key_filename = getPrivkeyFilename mimic_config_dir
+        cert_filename     = namesprefix </> "server.pem"
+
+    -- Create a food file 
+    templatefile <- B.readFile cnf_filename
+
+    let 
+        builder0 = Bu.byteString templatefile
+        builderM1 = Bu.byteString $ "dir =" `mappend` (pack ca_location) `mappend` "\n\n\n"
+        segment_builder = foldMap ( \ (hostname,i) -> 
+                    Bu.byteString $ B.concat ["DNS.", (pack $ show i), "=", hostname, "\n"]
+                ) all_seen_hosts_and_indices
+        all_seen_hosts_and_indices = zip all_seen_hosts [2 .. ] :: [(B.ByteString,Int)]
+        complete_builder = builderM1 `mappend` builder0 `mappend` segment_builder
+
+    -- Save it 
+    withFile template_cnf WriteMode $ \ handle -> 
+        Bu.hPutBuilder handle complete_builder
+
+    -- Invoke openssl to create a signing request
+    (_, _, _, h ) <- createProcess $ proc "openssl" 
+        ["req", 
+            "-outform" , "PEM", 
+            "-new"     , 
+            "-key"     , priv_key_filename, 
+            "-out"     , csr_filename,
+            "-config"  , template_cnf
+        ]
+    waitForProcess h 
+
+    -- Restart the database....
+    B.writeFile db_filename ""
+
+    -- Invoke to sign the certificate...
+    (_, _, _, h2 ) <- createProcess $ proc "openssl"
+        [ 
+              "ca"
+            , "-config", template_cnf
+            , "-in"    , csr_filename
+            , "-out"   , cert_filename
+            , "-batch"
+            , "-cert"  , ca_cert
+        ]
+    waitForProcess h2
+
+    return ()
+
+
+outputHosts :: [B.ByteString] -> IO ()
+outputHosts all_seen_hosts = do 
+    -- all_seen_hosts <- hostsFromHarFile har_filename
+
     mimic_data_dir <- mimicDataDir
     hosts_filename <- return $ mimic_data_dir </> "har_hosts.txt"
     B.writeFile hosts_filename $ B.intercalate "\n" $ map 

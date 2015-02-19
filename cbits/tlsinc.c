@@ -284,6 +284,7 @@ static int protocol_select (
   {
     // Got a protocol.... can I satisfy it?
     char sublen = *incursor;
+    printf("offered prot %.*s \n", sublen, incursor+1);
 
     char* stored_cursor = conn->protocol_list;
     int sto_protocol = 0;
