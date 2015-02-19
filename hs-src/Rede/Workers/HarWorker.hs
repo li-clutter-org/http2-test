@@ -185,6 +185,7 @@ adaptHeaders status_code (UnpackedNameValueList raw_headers) = let
 harCoherentWorker :: ResolveCenter -> CoherentWorker 
 harCoherentWorker resolve_center input_headers = do 
 
+    liftIO $ putStrLn $ printf $ "headers: " ++ (show input_headers)
     liftIO $ putStrLn $ printf "Got request to %s" $ show resource_handle
     let 
         maybe_served_entry  = resolver resource_handle :: Maybe ServedEntry
@@ -204,7 +205,7 @@ harCoherentWorker resolve_center input_headers = do
 
   where 
     (Just path)                            = getHeaderFromFlatList input_headers ":path"
-    (Just host)                            = getHeaderFromFlatList input_headers ":host"
+    (Just host)                            = getHeaderFromFlatList input_headers ":authority"
     Just (U.URI _ _ u_path u_query u_frag) = U.parseURIReference $ unpack path
     complete_url                           = U.URI {
         U.uriScheme     = "https:"

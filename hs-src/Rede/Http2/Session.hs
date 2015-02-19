@@ -166,11 +166,12 @@ data SessionData = SessionData {
 
     -- Some streams may be cancelled 
     ,_streamsCancelled :: MVar NS.IntSet
+
+    -- Flow control for each stream
     }
 
 
 makeLenses ''SessionData
-
 
 --                                v- {headers table size comes here!!}
 http2Session :: CoherentWorker -> SessionStartData -> IO Session

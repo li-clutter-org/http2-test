@@ -22,6 +22,7 @@ type Framer m =        LB.ByteString                        -- Input left overs
                        -> m (LB.ByteString, LB.ByteString)  -- To yield, left-overs...
 
 
+
 -- * Doing it by parts
 
 type LengthCallback = B.ByteString -> Maybe Int
