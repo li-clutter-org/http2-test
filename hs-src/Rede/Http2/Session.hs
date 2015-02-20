@@ -293,6 +293,7 @@ sessionInputThread  = do
             liftIO $ putStrLn $ "Stream reset: " ++ (show error_code_id)
             cancelled_streams <- liftIO $ readMVar cancelled_streams_mvar
             let stream_id = streamIdFromFrame frame
+            liftIO $ putStrLn $ "Cancelled stream was: " ++ (show stream_id)
             liftIO $ putMVar cancelled_streams_mvar $ NS.insert  stream_id cancelled_streams
 
             continue 
@@ -536,11 +537,12 @@ dataOutputThread input_chan session_output_mvar = forever $ do
 
     -- And now just simply output it...
     let bs_chunks = bytestringChunk useChunkLength contents
+    putStrLn $ "Chunk lengths: " ++ (show (map B.length bs_chunks))
 
     -- And send the chunks through while locking the output place....
     session_output <- liftIO $ takeMVar session_output_mvar
 
-    -- First frame is just a headers frame....
+    -- First frame is the only one:
     if (length bs_chunks) == 1 
       then
         do 

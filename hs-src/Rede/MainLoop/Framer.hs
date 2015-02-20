@@ -34,10 +34,8 @@ readNextChunk :: Monad m =>
     -> m B.ByteString                      -- ^ Generator action
     -> Source m B.ByteString               -- ^ Packet and leftovers, if we could get them 
 readNextChunk length_callback input_leftovers gen = do 
-    new_fragment <- lift gen 
     let 
-        new_leftovers = mappend input_leftovers new_fragment
-        maybe_length = length_callback new_leftovers
+        maybe_length = length_callback input_leftovers
         readUpTo lo the_length | (B.length lo) >= the_length = 
             return $ B.splitAt the_length lo
         readUpTo lo the_length = do 
@@ -47,12 +45,14 @@ readNextChunk length_callback input_leftovers gen = do
     case maybe_length of 
         Just the_length -> do 
             -- Just need to read the rest .... 
-            (package_bytes, newnewleftovers) <- readUpTo new_leftovers the_length 
+            (package_bytes, newnewleftovers) <- readUpTo input_leftovers the_length
             yield package_bytes 
             readNextChunk length_callback newnewleftovers gen 
 
         Nothing -> do 
             -- Read a bit more 
+            new_fragment <- lift gen 
+            let new_leftovers = input_leftovers `mappend` new_fragment
             readNextChunk length_callback new_leftovers gen
 
 
@@ -68,7 +68,7 @@ readLength the_length gen =
             liftIO $ putStrLn "Full read"
             return $ B.splitAt the_length lo
       | otherwise = do 
-            liftIO $ putStrLn "fragment read"
+            liftIO $ putStrLn $ "fragment read " ++ (show lo) 
             frag <- gen 
             readUpTo (lo `mappend` frag)
 

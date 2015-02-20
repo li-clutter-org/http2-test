@@ -27,7 +27,7 @@ import           Rede.HarFiles.ServedEntry    (createResolveCenterFromFilePath,
 import           Rede.MainLoop.CoherentWorker (CoherentWorker)
 import           Rede.MainLoop.ConfigHelp     (configDir,
                                                getInterfaceName, getMimicPort,
-                                               getPrivkeyFilename, mimicDataDir)
+                                               mimicDataDir)
 import           Rede.MainLoop.PushPullType
 import           Rede.Workers.HarWorker       (harCoherentWorker)
 -- We import this one for testing sake
@@ -97,9 +97,12 @@ main = do
             putStrLn $  "Mimic port: " ++ (show port)
             iface <-  getInterfaceName mimic_config_dir
             putStrLn $ "Using interface: " ++ (show iface)
+
             let 
-                priv_key_filename = getPrivkeyFilename mimic_config_dir
+                priv_key_filename = privKeyFilename mimic_dir har_filename
                 cert_filename  = certificateFilename mimic_dir har_filename
+            putStrLn $ "Chosen cert. at file: " ++ (show cert_filename)
+            putStrLn $ "... with private key: " ++ (show priv_key_filename)
             tlsServeWithALPN  cert_filename priv_key_filename iface [ 
                  -- ("h2-14", wrapSession veryBasic)
                  ("h2-14", http2Attendant har_filename)
@@ -154,6 +157,14 @@ certificateFilename mimic_dir harfilename = let
     namesprefix </> "server.pem" 
 
 
+privKeyFilename :: FilePath -> FilePath -> FilePath 
+privKeyFilename mimic_dir harfilename = let
+    basename = takeFileName harfilename
+    namesprefix = mimic_dir </> "fakecerts" </> basename
+  in 
+    namesprefix </> "privkey.pem" 
+
+
 getComprehensiveCertificate :: FilePath -> FilePath -> [B.ByteString] -> IO ()
 getComprehensiveCertificate mimic_dir harfilename all_seen_hosts = do 
 
@@ -165,15 +176,13 @@ getComprehensiveCertificate mimic_dir harfilename all_seen_hosts = do
     createDirectoryIfMissing True namesprefix
     let 
         ca_location       = mimic_config_dir </> "ca"
-        cnf_filename      = ca_location </> "openssl-noprompt.cnf"
-        -- ca_config      = ca_location </> "openssl.cnf"
-        db_filename       = ca_location </> "certindex.txt"
-        ca_cert           = ca_location </> "cacert.pem"
-        -- ca_privkey     = ca_location </> "certindex.txt"
-        csr_filename      = namesprefix </> "cert.csr"
-        template_cnf      = namesprefix </> "openssl.conf" 
-        priv_key_filename = getPrivkeyFilename mimic_config_dir
-        cert_filename     = namesprefix </> "server.pem"
+        cnf_filename      = ca_location      </> "openssl-noprompt.cnf"
+        db_filename       = ca_location      </> "certindex.txt"
+        ca_cert           = ca_location      </> "cacert.pem"
+        csr_filename      = namesprefix      </> "cert.csr"
+        template_cnf      = namesprefix      </> "openssl.conf" 
+        priv_key_filename = privKeyFilename  mimic_dir harfilename
+        cert_filename     = namesprefix      </> "server.pem"
 
     -- Create a food file 
     templatefile <- B.readFile cnf_filename
@@ -195,8 +204,11 @@ getComprehensiveCertificate mimic_dir harfilename all_seen_hosts = do
     (_, _, _, h ) <- createProcess $ proc "openssl" 
         ["req", 
             "-outform" , "PEM", 
+            "-batch"   ,
             "-new"     , 
-            "-key"     , priv_key_filename, 
+            "-newkey"  , "rsa:2048",
+            "-nodes"   ,
+            "-keyout"  ,  priv_key_filename,
             "-out"     , csr_filename,
             "-config"  , template_cnf
         ]
