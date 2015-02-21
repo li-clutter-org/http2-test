@@ -5,7 +5,9 @@
 spdy-ping
 /reh
 /reh-mimic
+/mimic-here/
 /demo-site/
+/mimic/
 /tests/
 /kel-data-dir/www
 /makeenvsensible
