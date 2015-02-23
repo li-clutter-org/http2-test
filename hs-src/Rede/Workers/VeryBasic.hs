@@ -24,7 +24,7 @@ trivialHeaders = [
 
 
 veryBasic :: CoherentWorker
-veryBasic headers = do 
+veryBasic (headers, _) = do 
     let data_and_conclussion = yield "Hello world!"
 
     putStrLn "Got these headers: "

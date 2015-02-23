@@ -10,12 +10,14 @@ module Rede.MainLoop.CoherentWorker(
     getHeaderFromFlatList
 
     , Headers
+    , Request
     , Footers
     , CoherentWorker
     , PrincipalStream
     , PushedStreams
     , PushedStream
     , DataAndConclussion
+    , InputDataStream
     ) where 
 
 
@@ -26,12 +28,18 @@ import Data.Foldable(find)
 
 type Headers = [(B.ByteString, B.ByteString)]
 
+type InputDataStream = Source IO B.ByteString
+
+-- A request is a set of headers and a request body....
+-- which will normally be empty
+type Request = (Headers, Maybe InputDataStream)
+
 type FinalizationHeaders = Headers
 
 -- Thanks to Luis Cobian for the name... 
 type Footers = FinalizationHeaders
 
-type CoherentWorker = Headers -> IO PrincipalStream
+type CoherentWorker = Request -> IO PrincipalStream
 
 type PrincipalStream = (Headers, PushedStreams, DataAndConclussion)
 

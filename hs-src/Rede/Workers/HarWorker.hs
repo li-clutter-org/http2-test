@@ -183,7 +183,7 @@ adaptHeaders status_code (UnpackedNameValueList raw_headers) = let
     
 
 harCoherentWorker :: ResolveCenter -> CoherentWorker 
-harCoherentWorker resolve_center input_headers = do 
+harCoherentWorker resolve_center (input_headers, _ ) = do 
 
     liftIO $ putStrLn $ "headers: " ++ (show input_headers)
     liftIO $ putStrLn $ "Got request to %s" ++(show resource_handle)

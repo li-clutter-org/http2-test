@@ -8,21 +8,23 @@ module Rede.Utils (
     ,timeAsDouble 
     ,reportTimedEvent
     ,lowercaseText
+    ,unfoldChannelAndSource
     ) where 
 
 
-import           Data.Binary            (Binary,  put, get, putWord8)
--- import           Data.Binary.Get        (runGet)
-import           Data.Binary.Put     (putWord16be, Put)
-import           Data.Binary.Get     (getWord16be, getWord8, Get)
-import           Data.Text.Encoding 
-import qualified Data.Text                  as T
+import           Control.Concurrent.Chan
+import           Control.Monad.Trans.Class (lift)
+import           Data.Binary               (Binary, get, put, putWord8)
+import           Data.Binary.Get           (Get, getWord16be, getWord8)
+import           Data.Binary.Put           (Put, putWord16be)
 import           Data.Bits
-import  qualified System.Clock as SC
-import           Text.Printf(printf)
--- import           Data.Binary.Put        (runPut)
-import qualified Data.ByteString        as B
--- import qualified Data.ByteString.Lazy   as LB
+import qualified Data.ByteString           as B
+import           Data.Conduit
+import qualified Data.Text                 as T
+import           Data.Text.Encoding
+import qualified System.Clock              as SC
+import           Text.Printf               (printf)
+
 
 
 strToInt::String -> Int 
@@ -91,3 +93,20 @@ lowercaseText bs0 =
   where 
     ts1 = T.toLower ts0 
     ts0 = decodeUtf8 bs0
+
+
+unfoldChannelAndSource :: IO (Chan (Maybe a), Source IO a)
+unfoldChannelAndSource = do 
+  chan <- newChan 
+  let 
+    source = do 
+      e <- lift $ readChan chan
+      case e of 
+          Just ee -> do
+              yield ee
+              source 
+
+          Nothing -> 
+              return ()
+
+  return (chan, source)

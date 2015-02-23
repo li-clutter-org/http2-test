@@ -33,20 +33,14 @@ import           Control.Monad.Trans.Reader
 import           Data.Conduit
 import           Data.Conduit.List                       (foldMapM)
 import qualified Data.ByteString                         as B
--- import qualified Data.ByteString.Lazy                    as LB
--- import           Data.ByteString.Char8                   (pack)
 import           Control.Concurrent.MVar
--- import           Data.Void                               (Void)
--- import           Data.Default                            (def)
-
--- import           Data.Monoid
--- import qualified Data.Map                                as MA
 import qualified Data.IntSet                             as NS
 import qualified Data.HashTable.IO          as H
 
 
 import           Rede.MainLoop.CoherentWorker 
 import           Rede.MainLoop.Tokens
+import           Rede.Utils                             (unfoldChannelAndSource)
 
 
 -- type Frame = NH2.Frame
@@ -143,6 +137,9 @@ data SessionStartData = SessionStartData {
 makeLenses ''SessionStartData
 
 
+data PostInputMechanism = PostInputMechanism (Chan (Maybe B.ByteString), InputDataStream)
+
+
 -- NH2.Frame != Frame
 data SessionData = SessionData {
     _sessionInput                :: Chan (Either SessionInputCommand InputFrame)
@@ -159,15 +156,17 @@ data SessionData = SessionData {
     -- Used for decoding the headers
     ,_stream2HeaderBlockFragment :: Stream2HeaderBlockFragment
 
-    -- Used for worker threads
+    -- Used for worker threads... this is actually a pre-filled template
+    -- I make copies of it in different contexts, and as needed. 
     ,_forWorkerThread            :: WorkerThreadEnvironment
 
     ,_coherentWorker             :: CoherentWorker
 
     -- Some streams may be cancelled 
-    ,_streamsCancelled :: MVar NS.IntSet
+    ,_streamsCancelled           :: MVar NS.IntSet
 
-    -- Flow control for each stream
+    -- Data input mechanism corresponding to some threads
+    ,_stream2PostInputMechanism  :: HashTable Int PostInputMechanism 
     }
 
 
@@ -196,6 +195,8 @@ http2Session coherent_worker _ =   do
     headers_output <- newChan :: IO (Chan (GlobalStreamId, MVar HeadersSent, Headers))
     data_output <- newChan :: IO (Chan (GlobalStreamId,B.ByteString))
 
+    stream2postinputmechanism <- H.new 
+
     -- What about stream cancellation?
     cancelled_streams_mvar <- newMVar $ NS.empty :: IO (MVar NS.IntSet)
 
@@ -215,6 +216,7 @@ http2Session coherent_worker _ =   do
         ,_forWorkerThread            = for_worker_thread
         ,_coherentWorker             = coherent_worker
         ,_streamsCancelled           = cancelled_streams_mvar
+        ,_stream2PostInputMechanism  = stream2postinputmechanism
         }
 
     -- Create an input thread that decodes frames...
@@ -275,10 +277,20 @@ sessionInputThread  = do
                 liftIO $ H.delete stream_request_headers stream_id
                 liftIO $ putMVar decode_headers_table_mvar new_table
 
+                -- If the headers end the request.... 
+                post_data_source <- if frameEndsStream frame 
+                  then do 
+                    mechanism <- createMechanismForStream stream_id 
+                    let source = postDataSourceFromMechanism mechanism
+                    return $ Just source
+                  else do 
+                    return Nothing
+
+
                 -- I'm clear to start the worker, in its own thread
                 -- !!
                 liftIO . forkIO $ runReaderT 
-                    (workerThread header_list coherent_worker)
+                    (workerThread (header_list, post_data_source) coherent_worker)
                     for_worker_thread 
 
                 return ()
@@ -295,6 +307,22 @@ sessionInputThread  = do
             let stream_id = streamIdFromFrame frame
             liftIO $ putStrLn $ "Cancelled stream was: " ++ (show stream_id)
             liftIO $ putMVar cancelled_streams_mvar $ NS.insert  stream_id cancelled_streams
+
+            continue 
+
+
+        Right frame@(NH2.Frame (NH2.FrameHeader _ _ nh2_stream_id) (NH2.DataFrame somebytes)) -> do 
+            -- So I got data to process
+            -- TODO: Handle end of stream
+            let stream_id = NH2.fromStreamIdentifier nh2_stream_id 
+            streamWorkerSendData stream_id somebytes
+
+            if frameEndsStream frame  
+              then do 
+                -- Good place to close the source ... 
+                closePostDataSource stream_id 
+              else 
+                return ()
 
             continue 
 
@@ -337,6 +365,63 @@ sessionInputThread  = do
         liftIO $ putMVar session_output_mvar session_output
 
 
+frameEndsStream :: InputFrame -> Bool 
+frameEndsStream (NH2.Frame (NH2.FrameHeader _ flags _) _)  = NH2.testEndStream flags
+
+
+createMechanismForStream :: GlobalStreamId -> ReaderT SessionData IO PostInputMechanism
+createMechanismForStream stream_id = do 
+    (chan, source) <- liftIO $ unfoldChannelAndSource
+    stream2postinputmechanism <- view stream2PostInputMechanism
+    let pim = PostInputMechanism (chan, source)
+    liftIO $ H.insert stream2postinputmechanism stream_id pim 
+    return pim
+
+
+-- TODO: Can be optimized by factoring out the mechanism lookup
+closePostDataSource :: GlobalStreamId -> ReaderT SessionData IO ()
+closePostDataSource stream_id = do 
+    stream2postinputmechanism <- view stream2PostInputMechanism
+
+    pim_maybe <- liftIO $ H.lookup stream2postinputmechanism stream_id 
+
+    case pim_maybe of 
+
+        Just (PostInputMechanism (chan, _))  -> 
+            liftIO $ writeChan chan Nothing
+
+        Nothing -> 
+            -- This is an internal error, the mechanism should be 
+            -- created when the stream ends
+            error "Internal error/closePostDataSource"
+
+
+
+streamWorkerSendData :: Int -> B.ByteString -> ReaderT SessionData IO ()
+streamWorkerSendData stream_id bytes = do 
+    s2pim <- view stream2PostInputMechanism
+    pim_maybe <- liftIO $ H.lookup s2pim stream_id 
+
+    case pim_maybe of 
+
+        Just pim  -> 
+            sendBytesToPim pim bytes
+
+        Nothing -> 
+            -- This is an internal error, the mechanism should be 
+            -- created when the headers end
+            error "Internal error"
+
+
+sendBytesToPim :: PostInputMechanism -> B.ByteString -> ReaderT SessionData IO ()
+sendBytesToPim (PostInputMechanism (chan, _)) bytes = 
+    liftIO $ writeChan chan (Just bytes)
+
+
+postDataSourceFromMechanism :: PostInputMechanism -> InputDataStream
+postDataSourceFromMechanism (PostInputMechanism (_, source)) = source
+
+
 isSettingsAck :: NH2.FrameHeader -> Bool 
 isSettingsAck (NH2.FrameHeader _ flags _) = 
     NH2.testAck flags
@@ -349,12 +434,12 @@ isStreamCancelled stream_id = do
     return $ NS.member stream_id cancelled_streams
 
 
-workerThread :: Headers -> CoherentWorker -> WorkerMonad ()
-workerThread header_list coherent_worker =
+workerThread :: Request -> CoherentWorker -> WorkerMonad ()
+workerThread req coherent_worker =
   do
     headers_output <- view headersOutput
     stream_id <- view streamId
-    (headers, pushed_streams, data_and_conclussion) <- liftIO $ coherent_worker header_list
+    (headers, pushed_streams, data_and_conclussion) <- liftIO $ coherent_worker req
 
     liftIO $ putStrLn $ "Num pushed streams: " ++ (show $ length pushed_streams)
 
