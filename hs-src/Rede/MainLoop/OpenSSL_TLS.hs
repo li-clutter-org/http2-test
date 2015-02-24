@@ -1,6 +1,7 @@
 {-# LANGUAGE ForeignFunctionInterface, OverloadedStrings #-}
 module Rede.MainLoop.OpenSSL_TLS(
     tlsServeWithALPN
+    ,tlsServeWithALPNOnce
     ) where 
 
 
@@ -138,6 +139,66 @@ tlsServeWithALPN certificate_filename key_filename interface_name attendants int
 
                 Nothing ->
                     error "TODO: Say something terrible and close the connection. Or curse in HTTP/1.1 "
+
+
+tlsServeWithALPNOnce :: FilePath 
+                     -> FilePath 
+                     -> String 
+                     -> [(String, Attendant)]
+                     -> Int 
+                     -> IO ()
+tlsServeWithALPNOnce certificate_filename key_filename interface_name attendants interface_port = do 
+
+    let protocols_bs = protocolsToWire $ fmap (\ (s,_) -> pack s) attendants
+    withCString certificate_filename $ \ c_certfn -> withCString key_filename $ \ c_keyfn -> withCString interface_name $ \ c_iname -> do 
+
+        connection_ptr <- BU.unsafeUseAsCStringLen protocols_bs $ \ (pchar, len) ->
+            makeConnection 
+                c_certfn
+                c_keyfn
+                c_iname
+                (fromIntegral interface_port)
+                pchar 
+                (fromIntegral len)
+
+ 
+        wired_ptr <- alloca $ \ wired_ptr_ptr -> do 
+            result <- waitForConnection connection_ptr wired_ptr_ptr
+            case result of  
+                r | r == allOk        -> peek wired_ptr_ptr
+                  | r == badHappened  -> error "Wired failed"
+        let 
+            pushAction datum = BU.unsafeUseAsCStringLen (LB.toStrict datum) $ \ (pchar, len) -> do 
+                result <- sendData wired_ptr pchar (fromIntegral len)
+                case result of  
+                    r | r == allOk           -> return ()
+                      | r == badHappened     -> error "Could not send data"
+            pullAction = do 
+                allocaBytes useBufferSize $ \ pcharbuffer -> 
+                    alloca $ \ data_recvd_ptr -> do 
+                        result <- recvData wired_ptr pcharbuffer (fromIntegral useBufferSize) data_recvd_ptr
+                        recvd_bytes <- case result of 
+                            r | r == allOk       -> peek data_recvd_ptr
+                              | r == badHappened -> error "Could not wait for data"
+
+                        B.packCStringLen (pcharbuffer, fromIntegral recvd_bytes)
+
+        use_protocol <- getSelectedProtocol wired_ptr
+
+        putStrLn $ "Use protocol: " ++ (show use_protocol)
+
+        let 
+            maybe_session_attendant = case fromIntegral use_protocol of 
+                n | (use_protocol >= 0)  -> Just $ snd $ attendants !! n 
+                  | otherwise          -> Nothing 
+
+        case maybe_session_attendant of 
+
+            Just session_attendant -> 
+                session_attendant pushAction pullAction
+
+            Nothing ->
+                error "TODO: Say something terrible and close the connection. Or curse in HTTP/1.1 "                    
 
 -- simpleSession :: PushAction -> PullAction -> IO ()
 -- simpleSession push_action pull_action = do 

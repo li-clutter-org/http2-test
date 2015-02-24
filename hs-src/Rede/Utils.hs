@@ -9,6 +9,7 @@ module Rede.Utils (
     ,reportTimedEvent
     ,lowercaseText
     ,unfoldChannelAndSource
+    ,stripString
     ) where 
 
 
@@ -110,3 +111,7 @@ unfoldChannelAndSource = do
               return ()
 
   return (chan, source)
+
+
+stripString :: String -> String 
+stripString  = filter $ \ ch -> (ch /= '\n') && ( ch /= ' ')

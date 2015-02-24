@@ -6,32 +6,39 @@ import Rede.MainLoop.OpenSSL_TLS(
     )
 
 
-import qualified Data.ByteString              as B
-import           Data.ByteString.Char8        (pack)
-import qualified Data.ByteString.Builder      as Bu
-import qualified Data.ByteString.Lazy         as BL
+import qualified Data.ByteString                 as B
+import qualified Data.ByteString.Builder         as Bu
+import           Data.ByteString.Char8           (pack)
+import qualified Data.ByteString.Lazy            as BL
+import           Data.Foldable                   (foldMap)
 import           Data.Monoid
-import           Data.Foldable                (foldMap)
 
-import           System.IO
-import           System.FilePath
-import           System.Process
 import           System.Directory
+import           System.FilePath
+import           System.IO
+import           System.Process
 
 import           Options.Applicative
 
-import           Rede.SimpleHTTP1Response     (exampleHTTP11Response)
+import           Rede.SimpleHTTP1Response        (exampleHTTP11Response)
 
-import           Rede.HarFiles.ServedEntry    (createResolveCenterFromFilePath,
-                                               hostsFromHarFile)
-import           Rede.MainLoop.CoherentWorker (CoherentWorker)
-import           Rede.MainLoop.ConfigHelp     (configDir,
-                                               getInterfaceName, getMimicPort,
-                                               mimicDataDir)
+import           Rede.HarFiles.ServedEntry       (createResolveCenterFromFilePath,
+                                                  hostsFromHarFile)
+import           Rede.MainLoop.CoherentWorker    (CoherentWorker)
+import           Rede.MainLoop.ConfigHelp        (configDir, getInterfaceName,
+                                                  getMimicPort, mimicDataDir,
+                                                  getMimicPostPort, getMimicPostInterface,
+                                                  getPrivkeyFilename,
+                                                  getCertFilename
+                                                  )
 import           Rede.MainLoop.PushPullType
-import           Rede.Workers.HarWorker       (harCoherentWorker)
+import           Rede.Workers.AcceptCoherentPost (acceptCoherentPost)
+import           Rede.Workers.HarWorker          (harCoherentWorker)
 -- We import this one for testing sake
-import           Rede.Http2.Framer            (wrapSession)
+import           Rede.Http2.Framer               (wrapSession)
+import           Rede.Research.Main              (research)
+import           Rede.Http2.MakeAttendant        (http2Attendant)
+
 
 
 
@@ -39,6 +46,7 @@ import           Rede.Http2.Framer            (wrapSession)
 -- What is the program going to do?
 data ProgramAction = 
     OutputHosts_PA
+    |ResearchUrl_PA -- Wait for a POST request from the browser
     |ServeHar_PA
 
 
@@ -52,6 +60,7 @@ data ProgramAction =
 actionStrToAction :: String -> ProgramAction
 actionStrToAction "output-hosts" = OutputHosts_PA 
 actionStrToAction "serve"        = ServeHar_PA
+actionStrToAction "research"     = ResearchUrl_PA
 actionStrToAction _              = error "Action doesn't exist"
 
 
@@ -67,12 +76,12 @@ programParser = Program <$> (
         strOption
              ( long "action"
                 <> metavar "ACTION"
-                <> help    "What's the program going to do: output-hosts or serve" )
+                <> help    "What's the program going to do: output-hosts, serve or research url" )
     ) <*> (
         strOption
             ( long "har-file"
                <>  metavar "HARFILE"
-               <>  help    "Har file to process"
+               <>  help    "Har file to process, if action is output-hosts or serve. The actual url if action is \"research\""
             )
     )
 
@@ -92,6 +101,11 @@ main = do
             getComprehensiveCertificate mimic_dir har_filename all_seen_hosts
 
 
+        ResearchUrl_PA       -> do 
+            let url_to_research = har_filename
+            research mimic_config_dir url_to_research har_filename
+
+
         ServeHar_PA           -> do
             port  <-  getMimicPort
             putStrLn $  "Mimic port: " ++ (show port)
@@ -103,9 +117,12 @@ main = do
                 cert_filename  = certificateFilename mimic_dir har_filename
             putStrLn $ "Chosen cert. at file: " ++ (show cert_filename)
             putStrLn $ "... with private key: " ++ (show priv_key_filename)
+            resolve_center <- createResolveCenterFromFilePath $ pack har_filename 
+            let 
+                http2worker = harCoherentWorker resolve_center
             tlsServeWithALPN  cert_filename priv_key_filename iface [ 
                  -- ("h2-14", wrapSession veryBasic)
-                 ("h2-14", http2Attendant har_filename)
+                 ("h2-14", http2Attendant http2worker)
                 --,("spdy/3.1" ,spdyAttendant har_filename)
                 ,("http/1.1",httpAttendant) 
                 ] port
@@ -137,15 +154,6 @@ httpAttendant push _ =
 --         push 
 --         pull
 --         chunkProducerHelper
-
-
-http2Attendant :: FilePath -> PushAction -> PullAction -> IO ()
-http2Attendant har_filename push_action pull_action = do 
-    resolve_center <- createResolveCenterFromFilePath $ pack har_filename 
-    let 
-        coherent_worker = (harCoherentWorker resolve_center)::CoherentWorker
-        attendant = wrapSession coherent_worker
-    attendant push_action pull_action
 
 
 

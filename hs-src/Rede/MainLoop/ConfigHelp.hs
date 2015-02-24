@@ -9,6 +9,8 @@ module Rede.MainLoop.ConfigHelp(
 	,getMimicPort
 	,getPrivkeyFilename
 	,getCertFilename
+	,getMimicPostPort
+	,getMimicPostInterface
 
 	,HostPort
 	) where 
@@ -18,6 +20,8 @@ import System.FilePath
 import System.Environment
 import Control.Exception
 import System.Directory
+
+import Rede.Utils (stripString)
 
 
 type HostPort = (String, Int)
@@ -94,3 +98,15 @@ getMimicPort = do
 	let config_dir = configDir mimic_dir
 	contents <- readFile $ config_dir </> "port.conf"
 	return $ read contents
+
+
+getMimicPostPort :: FilePath -> IO Int
+getMimicPostPort config_dir = do 
+	contents <- readFile $ config_dir </> "post-port.conf"
+	return $  read contents
+
+
+getMimicPostInterface :: FilePath -> IO String
+getMimicPostInterface config_dir = do 
+	contents <-  readFile $ config_dir </> "post-interface.conf"
+	return $ stripString contents

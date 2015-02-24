@@ -278,12 +278,14 @@ sessionInputThread  = do
                 liftIO $ putMVar decode_headers_table_mvar new_table
 
                 -- If the headers end the request.... 
-                post_data_source <- if frameEndsStream frame 
+                post_data_source <- if not (frameEndsStream frame)
                   then do 
+                    
                     mechanism <- createMechanismForStream stream_id 
                     let source = postDataSourceFromMechanism mechanism
                     return $ Just source
                   else do 
+                    liftIO $ putStrLn "Headers end reqeust"
                     return Nothing
 
 
