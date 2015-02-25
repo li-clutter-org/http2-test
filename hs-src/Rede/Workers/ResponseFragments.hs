@@ -29,6 +29,7 @@ trivialHeaders status_code content_length = [
     (":status", (pack . show) status_code ),
     ("server",  "reh0m" ),
     ("content-type", "plain/text" ),
+    ("access-control-allow-origin", "*"),
     ("content-length", (pack.show) content_length)
     ]
 
@@ -68,6 +69,6 @@ getMethodFromHeaders :: Headers -> RequestMethod
 getMethodFromHeaders headers = let 
     (Just method) = getHeaderFromFlatList headers ":method"
   in case method of 
-    m | m == "get"   -> Get_RM
-    m | m == "post"  -> Post_RM
-    m | m == "put"   -> Put_RM
+    m | m == "get" || m == "GET"   -> Get_RM
+    m | m == "post"|| m == "POST"  -> Post_RM
+    m | m == "put" || m == "PUT"   -> Put_RM

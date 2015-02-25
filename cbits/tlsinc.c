@@ -649,6 +649,12 @@ static unsigned long id_function(void)
   return ((unsigned long)THREAD_ID);
 }
 
+void dispose_wired_session(wired_session_t* ws)
+{
+  SSL_shutdown( ws->sslHandle );
+  close(ws->socket);
+}
+
 
 int thread_setup(void)
 {

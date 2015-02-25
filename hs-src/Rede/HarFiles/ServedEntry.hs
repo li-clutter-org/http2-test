@@ -13,6 +13,8 @@ module Rede.HarFiles.ServedEntry(
     ,resourceHandleToByteString
     ,hostsFromHarFile
     ,handleFromMethodAndUrl
+    ,createResolveCenterFromLazyByteString
+    ,resolveCenterAndOriginUrlFromLazyByteString
 
     ,ServedEntry  (..)
     ,ResolveCenter(..)
@@ -134,6 +136,25 @@ createResolveCenterFromFilePath filename = do
         Just doc_model -> return $ createResolveCenter doc_model
 
         Nothing -> throw $ BadHarFile filename
+
+
+createResolveCenterFromLazyByteString :: LB.ByteString -> ResolveCenter
+createResolveCenterFromLazyByteString file_contents = do 
+    case (decode file_contents :: Maybe Har_Outer ) of 
+
+        Just doc_model ->  createResolveCenter doc_model
+
+        Nothing -> throw $ BadHarFile "InputString"
+
+
+resolveCenterAndOriginUrlFromLazyByteString :: LB.ByteString -> (ResolveCenter, B.ByteString)
+resolveCenterAndOriginUrlFromLazyByteString file_contents = do 
+    case (decode file_contents :: Maybe Har_PostResponse ) of 
+
+        Just (Har_PostResponse doc_model oirigin_url) ->  
+            (createResolveCenter doc_model, oirigin_url)
+
+        Nothing -> throw $ BadHarFile "InputString"
 
 
 -- Convenience function to extract all the hosts from a .har file. 

@@ -318,6 +318,28 @@ sessionInputThread  = do
             -- TODO: Handle end of stream
             let stream_id = NH2.fromStreamIdentifier nh2_stream_id 
             streamWorkerSendData stream_id somebytes
+            -- After that data has been received and forwarded downstream, we can issue a windows update
+            --
+            -- TODO: We can use wider frames to avoid congestion...
+            -- .... and we can also be more compositional with these short bursts of data....
+            sendOutFrame
+                (NH2.EncodeInfo
+                    NH2.defaultFlags
+                    nh2_stream_id
+                    Nothing
+                )
+                (NH2.WindowUpdateFrame
+                    (fromIntegral (B.length somebytes))
+                )
+            sendOutFrame
+                (NH2.EncodeInfo
+                    NH2.defaultFlags
+                    (NH2.toStreamIdentifier 0)
+                    Nothing
+                )
+                (NH2.WindowUpdateFrame
+                    (fromIntegral (B.length somebytes))
+                )                
 
             if frameEndsStream frame  
               then do 
@@ -328,6 +350,23 @@ sessionInputThread  = do
 
             continue 
 
+
+        Right (NH2.Frame (NH2.FrameHeader _ flags _) (NH2.PingFrame _)) | NH2.testAck flags-> do 
+            -- Deal with pings: this is an Ack, so do nothing
+            continue 
+
+        Right (NH2.Frame (NH2.FrameHeader _ _ _) (NH2.PingFrame somebytes))  -> do 
+            -- Deal with pings: NOT an Ack, so answer
+            liftIO $ putStrLn "Ping processed"
+            sendOutFrame
+                (NH2.EncodeInfo
+                    (NH2.setAck NH2.defaultFlags)
+                    (NH2.toStreamIdentifier 0)
+                    Nothing 
+                )
+                (NH2.PingFrame somebytes)
+
+            continue 
 
         Right (NH2.Frame frame_header (NH2.SettingsFrame _)) | isSettingsAck frame_header -> do 
             -- Frame was received by the peer, do nothing here...

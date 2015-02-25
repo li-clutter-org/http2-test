@@ -1,6 +1,7 @@
 /dist
 /.cabal-sandbox*
 .*.swp
+*.pyc
 *.sublime-workspace
 spdy-ping
 /reh

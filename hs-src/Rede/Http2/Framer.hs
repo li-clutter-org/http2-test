@@ -163,7 +163,6 @@ inputGatherer pull_action session_input = do
       else 
         liftIO $ putStrLn "Prologue validated"
 
-    -- Can I get a whole packer?
     let 
         source::Source FramerSession B.ByteString
         source = transPipe liftIO $ F.readNextChunk http2FrameLength remaining pull_action
@@ -196,7 +195,7 @@ inputGatherer pull_action session_input = do
                         return ()
 
 
-                    Right (NH2.Frame _ (NH2.SettingsFrame settings_list) ) -> do 
+                    Right frame@(NH2.Frame _ (NH2.SettingsFrame settings_list) ) -> do 
                         -- Increase all the stuff....
                         case find (\(i,_) -> i == NH2.SettingsInitialWindowSize) settings_list of 
 
@@ -221,11 +220,11 @@ inputGatherer pull_action session_input = do
                             Nothing -> 
                                 return ()
 
+                        -- And send the frame down to the session
+                        liftIO $ sendFrametoSession session_input frame
 
 
                     Right a_frame   -> do 
-                        -- TODO: Check if we receive a settings frame, and consequently change it....
-
                         liftIO $ sendFrametoSession session_input a_frame
 
                 -- tail recursion: go again...
@@ -296,7 +295,7 @@ outputGatherer session_output = do
                 loopPart
 
             Right (p1, p2) -> do 
-                -- Most frames go right away... as long as no headers are in process...
+                -- Most other frames go right away... as long as no headers are in process...
                 no_headers <- view noHeadersInChannel
                 liftIO $ takeMVar no_headers
                 pushFrame p1 p2 

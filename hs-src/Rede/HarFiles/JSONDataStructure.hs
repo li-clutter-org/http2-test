@@ -69,6 +69,12 @@ data Har_Outer = Har_Outer {
     }
 
 
+data Har_PostResponse = Har_PostResponse {
+    _harOuter   :: !Har_Outer
+    ,_originUrl :: !HereString
+    }
+
+
 data Har_Page = Har_Page {
     _startedDateTime   :: !HereString 
     ,_pageTimings      :: !Har_PageTimings
@@ -116,6 +122,7 @@ makeLenses ''Har_Request
 makeLenses ''Har_PageTimings
 makeLenses ''Har_QueryString
 makeLenses ''Har_Content
+makeLenses ''Har_PostResponse
 
 
 
@@ -214,6 +221,14 @@ instance FromJSON Har_Outer where
 
     parseJSON (Object v) = Har_Outer <$> 
         v .: "log"
+
+
+instance FromJSON  Har_PostResponse where 
+
+    parseJSON (Object v) = Har_PostResponse <$>
+        v .:  "har"                      <*>
+        (pack <$> v .: "originUrl" )    
+        
 
 
 ------ Some small functions to try this out 

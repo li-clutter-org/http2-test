@@ -24,18 +24,13 @@ import           Rede.SimpleHTTP1Response        (exampleHTTP11Response)
 
 import           Rede.HarFiles.ServedEntry       (createResolveCenterFromFilePath,
                                                   hostsFromHarFile)
-import           Rede.MainLoop.CoherentWorker    (CoherentWorker)
 import           Rede.MainLoop.ConfigHelp        (configDir, getInterfaceName,
-                                                  getMimicPort, mimicDataDir,
-                                                  getMimicPostPort, getMimicPostInterface,
-                                                  getPrivkeyFilename,
-                                                  getCertFilename
+                                                  getMimicPort, mimicDataDir
+                                                  
                                                   )
 import           Rede.MainLoop.PushPullType
-import           Rede.Workers.AcceptCoherentPost (acceptCoherentPost)
 import           Rede.Workers.HarWorker          (harCoherentWorker)
 -- We import this one for testing sake
-import           Rede.Http2.Framer               (wrapSession)
 import           Rede.Research.Main              (research)
 import           Rede.Http2.MakeAttendant        (http2Attendant)
 
@@ -103,7 +98,7 @@ main = do
 
         ResearchUrl_PA       -> do 
             let url_to_research = har_filename
-            research mimic_config_dir url_to_research har_filename
+            research mimic_config_dir url_to_research
 
 
         ServeHar_PA           -> do

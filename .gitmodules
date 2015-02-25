@@ -1,3 +1,6 @@
 [submodule "kazu-yamamoto-http2"]
 	path = kazu-yamamoto-http2
 	url = ssh://git@gitlab.zunzun.se:10022/alcides/kazu-yamamoto-http2.git
+[submodule "scripts/StationA/chrome_captures_hars"]
+	path = scripts/StationA/chrome_captures_hars
+	url = ssh://git@gitlab.zunzun.se:10022/http2studytool/chrome_captures_hars.git

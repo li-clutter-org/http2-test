@@ -5,7 +5,7 @@ module Rede.Http2.MakeAttendant (
 
 
 import Rede.MainLoop.CoherentWorker
-import           Rede.MainLoop.PushPullType   (Attendant, PullAction,
+import           Rede.MainLoop.PushPullType   (PullAction,
                                                PushAction)
 import Rede.Http2.Framer  (wrapSession)
 
