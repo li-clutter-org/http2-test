@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings, TemplateHaskell, DeriveDataTypeable #-}
+
 module Rede.MainLoop.ConfigHelp(
 	configDir
 	,mimicDataDir
@@ -11,20 +13,50 @@ module Rede.MainLoop.ConfigHelp(
 	,getCertFilename
 	,getMimicPostPort
 	,getMimicPostInterface
+	,readRedisConfig
 
 	,HostPort
 	) where 
 
 
-import System.FilePath
-import System.Environment
-import Control.Exception
-import System.Directory
+import           Control.Exception
 
-import Rede.Utils (stripString)
+import           System.Directory
+import           System.Environment
+import           System.FilePath
 
+import qualified Database.Redis        as Re
+
+
+import           Control.Applicative
+import           Control.Lens          ((^.))
+import           Control.Lens.TH       (makeLenses)
+
+
+import           Data.Typeable
+import           Data.Aeson
+import           Data.Aeson.Types      ()
+import qualified Data.ByteString       as B
+import qualified Data.ByteString.Lazy  as LB
+import           Data.ByteString.Char8 (pack)
+
+import           Rede.Utils            (stripString)
+
+
+data BadAesonFile = BadAesonFile B.ByteString
+    deriving (Show, Typeable)
+
+instance Exception BadAesonFile
 
 type HostPort = (String, Int)
+
+data SimpleRedisConnectInfo = SimpleRedisConnectInfo {
+	_connectHost_SRCI      :: Re.HostName
+	,_connectPort_SRCI     :: Int
+	,_connectDatabase_SRCI :: Int
+	}
+
+makeLenses ''SimpleRedisConnectInfo
 
 
 kelDataDir :: IO FilePath
@@ -110,3 +142,36 @@ getMimicPostInterface :: FilePath -> IO String
 getMimicPostInterface config_dir = do 
 	contents <-  readFile $ config_dir </> "post-interface.conf"
 	return $ stripString contents
+
+
+getRedisConfigPlace :: FilePath -> FilePath 
+getRedisConfigPlace config_dir = do 
+	config_dir </> "redis.conf"
+
+
+readRedisConfig :: FilePath -> IO Re.ConnectInfo 
+readRedisConfig config_dir = do 
+	contents <- LB.readFile $ getRedisConfigPlace config_dir
+	case (eitherDecode contents :: Either String SimpleRedisConnectInfo) of 
+
+		Right json_doc -> do 
+			return $ toConnectionInfo json_doc 
+
+		Left msg -> do 
+			throwIO $ BadAesonFile $ pack msg
+
+
+instance FromJSON SimpleRedisConnectInfo where 
+
+	parseJSON (Object v) = SimpleRedisConnectInfo <$> 
+		(  v .:  "server"     )       <*> 
+		(  v .:  "port"       )       <*>
+		(  v .:? "dbno" .!= 0 )
+
+
+toConnectionInfo :: SimpleRedisConnectInfo -> Re.ConnectInfo 
+toConnectionInfo srci = Re.defaultConnectInfo {
+	Re.connectHost     = srci ^. connectHost_SRCI,
+	Re.connectPort     = Re.PortNumber $ fromIntegral $ srci ^. connectPort_SRCI,
+	Re.connectDatabase = fromIntegral $ srci ^. connectDatabase_SRCI
+	}

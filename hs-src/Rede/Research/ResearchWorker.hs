@@ -110,7 +110,7 @@ researchWorkerComp (input_headers, maybe_source) = do
         case maybe_bytes of 
 
             Just bytes -> do
-                liftIO $ putStrLn $ "Got bytes " ++ (show $ B.length bytes)
+                -- liftIO $ putStrLn $ "Got bytes " ++ (show $ B.length bytes)
                 consumer $ b `M.mappend` (Bu.byteString bytes)
 
             Nothing -> do

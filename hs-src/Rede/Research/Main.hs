@@ -1,15 +1,19 @@
-
+{-# LANGUAGE OverloadedStrings #-}
 module Rede.Research.Main(research) where 
 
 
-import           Control.Concurrent.Chan 
+import           Control.Concurrent.Chan
 -- import           Control.Concurrent.MVar
-import qualified Data.ByteString                 as B
+import           Control.Concurrent           (forkIO)
+import qualified Data.ByteString              as B
 -- import qualified Data.ByteString.Builder         as Bu
-import           Data.ByteString.Char8           (pack)
+import           Control.Monad.IO.Class       (liftIO)
+-- import           Data.ByteString.Char8        (pack)
+
+import qualified Database.Redis               as Re
 -- import qualified Data.ByteString.Lazy            as BL
 -- import           Data.Foldable                   (foldMap)
--- import           Data.Monoid
+import           Data.Monoid
 
 -- import           System.Directory
 -- import           System.FilePath
@@ -23,20 +27,16 @@ import           Data.ByteString.Char8           (pack)
 -- import           Rede.HarFiles.ServedEntry       (createResolveCenterFromFilePath,
 --                                                   hostsFromHarFile)
 -- import           Rede.MainLoop.CoherentWorker    (CoherentWorker)
-import           Rede.MainLoop.ConfigHelp        (
-                                                  -- configDir, 
-                                                  -- getInterfaceName,
-                                                  -- getMimicPort, 
-                                                  -- mimicDataDir,
-                                                  getMimicPostPort, 
-                                                  getMimicPostInterface,
-                                                  getPrivkeyFilename,
-                                                  getCertFilename
-                                                  )
-import           Rede.MainLoop.OpenSSL_TLS        (tlsServeWithALPN)
-import           Rede.Research.ResearchWorker     (startResearchWorker)
+import           Rede.MainLoop.ConfigHelp     (getCertFilename,
+                                               getMimicPostInterface,
+                                               getMimicPostPort,
+                                               getPrivkeyFilename,
+                                               readRedisConfig)
+import           Rede.MainLoop.OpenSSL_TLS    (tlsServeWithALPN)
+import           Rede.Research.ResearchWorker (startResearchWorker)
 
-import           Rede.Http2.MakeAttendant        (http2Attendant)
+import           Rede.Http2.MakeAttendant     (http2Attendant)
+
 
 
 
@@ -48,7 +48,10 @@ research mimic_config_dir url_to_research = do
     -- Things to do: 
     -- First publish this url to the capture webserver
     url_chan <- newChan
-    writeChan url_chan $ pack url_to_research
+
+    -- WARNING: Not using the argument url
+    --  writeChan url_chan $ pack url_to_research
+    forkIO $ takeTasks mimic_config_dir url_chan 
 
     publishUrlToCaptureWebserver mimic_config_dir url_chan 
 
@@ -61,6 +64,30 @@ research mimic_config_dir url_to_research = do
 
     -- When confirmation of .har colaborator is received, publish a task definition 
     -- file to the fake -loader 
+
+
+-- Listen to a redis connection and take urls from some queue there
+takeTasks :: FilePath -> Chan B.ByteString -> IO ()
+takeTasks config_dir url_chan = do
+  -- Start by getting the Redis connection info...
+  config <- readRedisConfig config_dir 
+  conn <- Re.connect config
+
+  Re.runRedis conn $ do  
+    Re.pubSub 
+      (Re.subscribe ["RedeInstr_processUrl"]) 
+      (\ msg -> case msg of 
+
+          (Re.Message _ bsmsg)  -> do 
+            liftIO $ writeChan url_chan bsmsg
+            return mempty
+
+
+          _ -> do 
+            return mempty
+      )
+
+
 
 
 publishUrlToCaptureWebserver :: String -> Chan B.ByteString -> IO ()
