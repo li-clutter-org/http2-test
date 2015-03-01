@@ -61,6 +61,7 @@ executable reh-mimic
                  , optparse-applicative
                  , aeson >= 0.8
                  , connection >= 0.2 && < 0.3
+                 , exceptions >= 0.6
                  , bytestring == 0.10.4.0
                  , data-default == 0.5.3
                  , tls >= 1.2 && < 1.3

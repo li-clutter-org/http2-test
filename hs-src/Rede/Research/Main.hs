@@ -53,7 +53,7 @@ research mimic_config_dir url_to_research = do
     --  writeChan url_chan $ pack url_to_research
     forkIO $ takeTasks mimic_config_dir url_chan 
 
-    publishUrlToCaptureWebserver mimic_config_dir url_chan 
+    publishUrlToCaptureWebserver mimic_config_dir url_chan
 
 
     -- Then wait for a POST with the contents of the website. 
@@ -88,20 +88,16 @@ takeTasks config_dir url_chan = do
       )
 
 
-
-
 publishUrlToCaptureWebserver :: String -> Chan B.ByteString -> IO ()
 publishUrlToCaptureWebserver mimic_config_dir url_chan  = do
     post_port <- getMimicPostPort mimic_config_dir
     iface <- getMimicPostInterface mimic_config_dir
-    serving_har <- newChan
     let 
         priv_key_filename = getPrivkeyFilename mimic_config_dir
         cert_filename  = getCertFilename mimic_config_dir
 
-        http2worker = startResearchWorker url_chan serving_har
+        http2worker = startResearchWorker url_chan
 
     tlsServeWithALPN  cert_filename priv_key_filename iface [ 
          ("h2-14", http2Attendant http2worker)
         ] post_port  
-   

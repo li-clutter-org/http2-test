@@ -18,6 +18,7 @@ module Rede.HarFiles.ServedEntry(
 
     ,ServedEntry  (..)
     ,ResolveCenter(..)
+    ,BadHarFile   (..)
     ) where 
 
 
@@ -28,7 +29,7 @@ import           Control.Lens.TH        (makeLenses)
 
 import           Data.Typeable
 import           Data.Maybe             (fromMaybe)
-import           Data.Aeson             (decode)
+import           Data.Aeson             (decode, eitherDecode)
 import qualified Data.ByteString        as B
 import qualified Data.ByteString.Base64 as B64
 import           Network.URI            (parseURI, uriAuthority, uriRegName)
@@ -135,7 +136,7 @@ createResolveCenterFromFilePath filename = do
 
         Just doc_model -> return $ createResolveCenter doc_model
 
-        Nothing -> throw $ BadHarFile filename
+        Nothing -> throw $ BadHarFile  filename
 
 
 createResolveCenterFromLazyByteString :: LB.ByteString -> ResolveCenter
@@ -144,17 +145,21 @@ createResolveCenterFromLazyByteString file_contents = do
 
         Just doc_model ->  createResolveCenter doc_model
 
-        Nothing -> throw $ BadHarFile "InputString"
+        Nothing -> throw $ BadHarFile $"InputString"
 
 
 resolveCenterAndOriginUrlFromLazyByteString :: LB.ByteString -> (ResolveCenter, B.ByteString)
 resolveCenterAndOriginUrlFromLazyByteString file_contents = do 
-    case (decode file_contents :: Maybe Har_PostResponse ) of 
+    case (eitherDecode file_contents :: Either String Har_PostResponse ) of 
 
-        Just (Har_PostResponse doc_model oirigin_url) ->  
+        Right (Har_PostResponse har_log oirigin_url) ->  
+        -- Right (Har_PostResponse oirigin_url) ->  
+          let
+            doc_model = Har_Outer har_log
+            in 
             (createResolveCenter doc_model, oirigin_url)
 
-        Nothing -> throw $ BadHarFile "InputString"
+        Left msg -> throw $ BadHarFile $ pack msg
 
 
 -- Convenience function to extract all the hosts from a .har file. 

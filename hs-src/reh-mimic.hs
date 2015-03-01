@@ -26,8 +26,9 @@ import           Rede.HarFiles.ServedEntry       (createResolveCenterFromFilePat
                                                   hostsFromHarFile)
 import           Rede.MainLoop.ConfigHelp        (configDir, getInterfaceName,
                                                   getMimicPort, mimicDataDir
-                                                  
-                                                  )
+                                                 )
+import           Rede.HarFiles.DnsMasq           (dnsMasqFileContents
+                                                 )
 import           Rede.MainLoop.PushPullType
 import           Rede.Workers.HarWorker          (harCoherentWorker)
 -- We import this one for testing sake
@@ -241,6 +242,4 @@ outputHosts all_seen_hosts = do
 
     mimic_data_dir <- mimicDataDir
     hosts_filename <- return $ mimic_data_dir </> "har_hosts.txt"
-    B.writeFile hosts_filename $ B.intercalate "\n" $ map 
-        (\ hostname -> B.append "127.0.0.1      " hostname) 
-        all_seen_hosts
+    B.writeFile hosts_filename $ dnsMasqFileContents all_seen_hosts

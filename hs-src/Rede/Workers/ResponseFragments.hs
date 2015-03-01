@@ -10,11 +10,12 @@ module Rede.Workers.ResponseFragments (
     ) where 
 
 
-import Data.Conduit (yield, Source)
+import           Data.Conduit                 (Source, yield)
+import qualified Data.Map                     as DM
 
-import Data.ByteString.Char8 (pack)
-import qualified Data.ByteString as B
-import Rede.MainLoop.CoherentWorker
+import qualified Data.ByteString              as B
+import           Data.ByteString.Char8        (pack)
+import           Rede.MainLoop.CoherentWorker
 
 
 -- TODO: Add the others....
@@ -26,7 +27,7 @@ data RequestMethod =
 
 trivialHeaders :: Int -> Int -> [(B.ByteString, B.ByteString)] 
 trivialHeaders status_code content_length = [
-    (":status", (pack . show) status_code ),
+    (":status", B.append ((pack . show) status_code) (DM.findWithDefault "" status_code code2Message) ),
     ("server",  "reh0m" ),
     ("content-type", "plain/text" ),
     ("access-control-allow-origin", "*"),
@@ -72,3 +73,11 @@ getMethodFromHeaders headers = let
     m | m == "get" || m == "GET"   -> Get_RM
     m | m == "post"|| m == "POST"  -> Post_RM
     m | m == "put" || m == "PUT"   -> Put_RM
+
+
+code2Message :: DM.Map Int B.ByteString
+code2Message = DM.fromList [
+    (200, " OK")
+    ,(500, " INTERNAL SERVER ERROR")
+    ,(404, " NOT FOUND")
+    ]

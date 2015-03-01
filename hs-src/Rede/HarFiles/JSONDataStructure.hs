@@ -16,10 +16,6 @@ import           Data.ByteString.Char8  (pack)
 
 
 
-
-
-
-
 -- Implementation details ####################################
 
 -- String type to be used when de-serializing an 
@@ -70,8 +66,9 @@ data Har_Outer = Har_Outer {
 
 
 data Har_PostResponse = Har_PostResponse {
-    _harOuter   :: !Har_Outer
-    ,_originUrl :: !HereString
+    _harLogPR   :: !Har_Log
+    ,
+    _originUrl :: !HereString
     }
 
 
