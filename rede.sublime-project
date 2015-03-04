@@ -5,11 +5,14 @@
 			"file_exclude_patterns":
 			[
 				
-				".*.swp"
+				".*.swp",
+				".idea",
+				"**/.idea"
 			],
 			"folder_exclude_patterns":
 			[
 				"dist",
+				"**/.idea",
 				".cabal-sandbox",
 				"demo-site/http2",
 				"demo-site/mathjax23"

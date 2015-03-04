@@ -28,3 +28,4 @@ time.sleep(0.5)
 # Get chrome as full-screen, so to make taking screenshots easier.
 tool("xdotool key --window {0} \"F11\"".format(winid))
 chrome_process.wait()
+
