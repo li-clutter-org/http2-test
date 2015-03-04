@@ -107,10 +107,10 @@ tlsServeWithALPN certificate_filename key_filename interface_name attendants int
                 result <- waitForConnection connection_ptr wired_ptr_ptr
                 let 
                     r = case result of  
-                        r | r == allOk        -> do 
+                        re  | re == allOk        -> do 
                                 p <- peek wired_ptr_ptr
                                 return $ Right  p
-                          | r == badHappened  -> return $ Left "Wired failed"
+                            | re == badHappened  -> return $ Left "Wired failed"
                 r 
 
             case either_wired_ptr of 

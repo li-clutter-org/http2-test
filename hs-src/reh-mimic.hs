@@ -98,8 +98,7 @@ main = do
 
 
         ResearchUrl_PA       -> do 
-            let url_to_research = har_filename
-            research mimic_config_dir url_to_research
+            research mimic_config_dir
 
 
         ServeHar_PA           -> do

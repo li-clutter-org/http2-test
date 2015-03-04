@@ -13,7 +13,7 @@ import           Control.Concurrent.Chan
 
 import           Data.Conduit
 import qualified Data.ByteString                as B
-import           Data.ByteString.Char8          (pack, unpack)
+import           Data.ByteString.Char8          (unpack)
 import qualified Data.Monoid                    as M
 -- import qualified Data.ByteString.Lazy           as LB 
 import qualified Data.ByteString.Builder        as Bu
@@ -157,7 +157,7 @@ researchWorkerComp (input_headers, maybe_source) = do
 
   where 
     error_handler :: BadHarFile -> ServiceStateMonad PrincipalStream
-    error_handler  (BadHarFile contents) = 
+    error_handler  (BadHarFile _) = 
         return $ simpleResponse 500 "BadHarFile"
 
     output_computation :: InputDataStream -> IO (ResolveCenter, B.ByteString)
