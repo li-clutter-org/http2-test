@@ -131,9 +131,11 @@ researchWorkerComp (input_headers, maybe_source) = do
                     error_handler
 
             | req_url == "/dnsmasq/" -> do 
+                liftIO $ putStrLn ".. /dnsmasq/ asked"
                 -- Serve the DNS masq file corresponding to the last .har file 
                 -- received.
                 dnsmasq_contents <- liftIO $ readChan next_dnsmasq_chan
+                liftIO $ putStrLn ".. /dnsmasq/ about to answer"
                 
                 return $ simpleResponse 200 dnsmasq_contents
 

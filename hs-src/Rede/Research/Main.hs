@@ -40,8 +40,8 @@ import           Rede.Http2.MakeAttendant     (http2Attendant)
 
 
 
-research :: String -> String -> IO ()
-research mimic_config_dir url_to_research = do 
+research :: String -> IO ()
+research mimic_config_dir  = do 
   -- TODO: Generate .har from url
 
 
@@ -49,8 +49,6 @@ research mimic_config_dir url_to_research = do
     -- First publish this url to the capture webserver
     url_chan <- newChan
 
-    -- WARNING: Not using the argument url
-    --  writeChan url_chan $ pack url_to_research
     forkIO $ takeTasks mimic_config_dir url_chan 
 
     publishUrlToCaptureWebserver mimic_config_dir url_chan

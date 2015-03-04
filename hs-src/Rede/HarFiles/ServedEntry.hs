@@ -21,6 +21,7 @@ module Rede.HarFiles.ServedEntry(
     ,BadHarFile   (..)
     ) where 
 
+import           Debug.Trace
 
 import           Control.Exception
 import qualified Control.Lens           as L
@@ -226,7 +227,7 @@ servedEntryFromStatusHeadersAndContents :: Int
 servedEntryFromStatusHeadersAndContents statusx unvl contents the_url = 
     heedContentTypeAndDecode preliminar
   where 
-    Just uri    = parseURI $ unpack the_url
+    Just uri    = parseURI $ unpack (traceShow the_url the_url)
     Just auth   = uriAuthority uri
     host_of_url = pack $ uriRegName auth
     preliminar  = ServedEntry statusx unvl contents host_of_url
