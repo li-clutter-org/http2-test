@@ -103,42 +103,54 @@ tlsServeWithALPN certificate_filename key_filename interface_name attendants int
                 (fromIntegral len)
 
         forever $ do 
-            wired_ptr <- alloca $ \ wired_ptr_ptr -> do 
+            either_wired_ptr <- alloca $ \ wired_ptr_ptr -> do 
                 result <- waitForConnection connection_ptr wired_ptr_ptr
-                case result of  
-                    r | r == allOk        -> peek wired_ptr_ptr
-                      | r == badHappened  -> error "Wired failed"
-            let 
-                pushAction datum = BU.unsafeUseAsCStringLen (LB.toStrict datum) $ \ (pchar, len) -> do 
-                    result <- sendData wired_ptr pchar (fromIntegral len)
-                    case result of  
-                        r | r == allOk           -> return ()
-                          | r == badHappened     -> error "Could not send data"
-                pullAction = do 
-                    allocaBytes useBufferSize $ \ pcharbuffer -> 
-                        alloca $ \ data_recvd_ptr -> do 
-                            result <- recvData wired_ptr pcharbuffer (fromIntegral useBufferSize) data_recvd_ptr
-                            recvd_bytes <- case result of 
-                                r | r == allOk       -> peek data_recvd_ptr
-                                  | r == badHappened -> error "Could not wait for data"
+                let 
+                    r = case result of  
+                        r | r == allOk        -> do 
+                                p <- peek wired_ptr_ptr
+                                return $ Right  p
+                          | r == badHappened  -> return $ Left "Wired failed"
+                r 
 
-                            B.packCStringLen (pcharbuffer, fromIntegral recvd_bytes)
+            case either_wired_ptr of 
 
-            use_protocol <- getSelectedProtocol wired_ptr
+                Left msg -> do 
+                    putStrLn $ "Wired failed: " ++ msg
 
-            putStrLn $ "Use protocol: " ++ (show use_protocol)
 
-            let 
-                maybe_session_attendant = case fromIntegral use_protocol of 
-                    n | (use_protocol >= 0)  -> Just $ snd $ attendants !! n 
-                      | otherwise          -> Nothing 
+                Right wired_ptr -> do 
+                    let 
+                        pushAction datum = BU.unsafeUseAsCStringLen (LB.toStrict datum) $ \ (pchar, len) -> do 
+                            result <- sendData wired_ptr pchar (fromIntegral len)
+                            case result of  
+                                r | r == allOk           -> return ()
+                                  | r == badHappened     -> error "Could not send data"
+                        pullAction = do 
+                            allocaBytes useBufferSize $ \ pcharbuffer -> 
+                                alloca $ \ data_recvd_ptr -> do 
+                                    result <- recvData wired_ptr pcharbuffer (fromIntegral useBufferSize) data_recvd_ptr
+                                    recvd_bytes <- case result of 
+                                        r | r == allOk       -> peek data_recvd_ptr
+                                          | r == badHappened -> error "Could not wait for data"
 
-            case maybe_session_attendant of 
+                                    B.packCStringLen (pcharbuffer, fromIntegral recvd_bytes)
 
-                Just session_attendant -> 
-                    session_attendant pushAction pullAction
+                    use_protocol <- getSelectedProtocol wired_ptr
 
-                Nothing ->
-                    disposeWiredSession wired_ptr
+                    putStrLn $ "Use protocol: " ++ (show use_protocol)
+
+                    let 
+                        maybe_session_attendant = case fromIntegral use_protocol of 
+                            n | (use_protocol >= 0)  -> Just $ snd $ attendants !! n 
+                              | otherwise          -> Nothing 
+
+                    case maybe_session_attendant of 
+
+                        Just session_attendant -> 
+                            session_attendant pushAction pullAction
+
+                        Nothing ->
+                            disposeWiredSession wired_ptr
 
                  

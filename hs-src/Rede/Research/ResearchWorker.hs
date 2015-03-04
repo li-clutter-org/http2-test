@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
 module Rede.Research.ResearchWorker(
-    startResearchWorker
+    runResearchWorker
     ) where 
 
 
@@ -13,6 +13,7 @@ import           Control.Concurrent.Chan
 
 import           Data.Conduit
 import qualified Data.ByteString                as B
+import           Data.ByteString.Char8          (pack, unpack)
 import qualified Data.Monoid                    as M
 -- import qualified Data.ByteString.Lazy           as LB 
 import qualified Data.ByteString.Builder        as Bu
@@ -40,12 +41,14 @@ import           Rede.HarFiles.ServedEntry      (ResolveCenter,
                                                  allSeenHosts
                                                  )
 import           Rede.HarFiles.DnsMasq          (dnsMasqFileContents)
+import           Rede.Utils.ConcatConduit       (concatConduit)
 
 
 data ServiceState = ServiceState {
     -- Put one here, let it run through the pipeline...
     _nextHarvestUrl :: Chan B.ByteString
 
+    -- To be passed on to StationB
     ,_nextTestUrl :: Chan B.ByteString
 
     -- Files to be handed out to DNSMasq
@@ -61,24 +64,26 @@ L.makeLenses ''ServiceState
 type ServiceStateMonad = ReaderT ServiceState IO
 
 
-startResearchWorker :: 
+runResearchWorker :: 
     Chan B.ByteString 
-    -> CoherentWorker
-startResearchWorker url_chan   request = do 
+    -> IO CoherentWorker
+runResearchWorker url_chan  = do 
+    liftIO $ putStrLn "Init block called"
     next_test_url_chan <- newChan 
     next_dns_masq_file <- newChan
+    liftIO $ putStrLn "End of init block"
     let    
         state = ServiceState {
              _nextHarvestUrl = url_chan
             ,_nextTestUrl    = next_test_url_chan
             ,_nextDNSMasqFile = next_dns_masq_file
             }
-    runReaderT (researchWorkerComp request) state
+    return $ \request -> runReaderT (researchWorkerComp request) state
 
 
 researchWorkerComp :: Request -> ServiceStateMonad PrincipalStream
 researchWorkerComp (input_headers, maybe_source) = do 
-    url_chan           <- L.view nextHarvestUrl
+    next_harvest_url   <- L.view nextHarvestUrl
     next_dnsmasq_chan  <- L.view nextDNSMasqFile
     next_test_url_chan <- L.view nextTestUrl
     let 
@@ -93,14 +98,17 @@ researchWorkerComp (input_headers, maybe_source) = do
             | req_url == "/nexturl/" -> do 
                 -- This is it... Let the browser use this data
                 -- This can block here... hope it don't be the end of the world...
-                url <- liftIO $ readChan url_chan
+                liftIO $ putStrLn "..  /nexturl/"
+                url <- liftIO $ readChan next_harvest_url
                 return $ simpleResponse 200 url 
 
             | req_url == "/testurl/" -> do 
+                liftIO $ putStrLn "..  /testurl/"
                 url <- liftIO $ readChan next_test_url_chan
                 return $ simpleResponse 200 url
 
-            | req_url == "/har/", Just source <- maybe_source -> 
+            | req_url == "/har/", Just source <- maybe_source -> do
+                liftIO $ putStrLn "..  /har/"
                 catch 
                     (do
                         (resolve_center, test_url) <- liftIO $ output_computation source
@@ -129,10 +137,17 @@ researchWorkerComp (input_headers, maybe_source) = do
                 
                 return $ simpleResponse 200 dnsmasq_contents
 
+            | req_url == "/setnexturl/", Just source <- maybe_source -> do 
+                liftIO $ putStrLn ".. /setnexturl/"
+                post_contents <- liftIO $ source $$ concatConduit
+                -- Wishful thinking: post_contents is just the url to analyze...
+                liftIO $ writeChan next_harvest_url post_contents
+                liftIO $ putStrLn $ "... " ++ (unpack post_contents)
+
+                return $ simpleResponse 200 "url queued"
 
             | otherwise     -> do 
                 return $ simpleResponse 500 "Can't handle url and method"
-
 
         _ -> do 
                 return $ simpleResponse 500 "Can't handle url and method"

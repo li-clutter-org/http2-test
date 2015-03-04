@@ -27,7 +27,8 @@ data RequestMethod =
 
 trivialHeaders :: Int -> Int -> [(B.ByteString, B.ByteString)] 
 trivialHeaders status_code content_length = [
-    (":status", B.append ((pack . show) status_code) (DM.findWithDefault "" status_code code2Message) ),
+    (":status", (pack . show) status_code),
+    ("reason", (DM.findWithDefault "" status_code code2Message) ),
     ("server",  "reh0m" ),
     ("content-type", "plain/text" ),
     ("access-control-allow-origin", "*"),

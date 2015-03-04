@@ -33,7 +33,7 @@ import           Rede.MainLoop.ConfigHelp     (getCertFilename,
                                                getPrivkeyFilename,
                                                readRedisConfig)
 import           Rede.MainLoop.OpenSSL_TLS    (tlsServeWithALPN)
-import           Rede.Research.ResearchWorker (startResearchWorker)
+import           Rede.Research.ResearchWorker (runResearchWorker)
 
 import           Rede.Http2.MakeAttendant     (http2Attendant)
 
@@ -96,7 +96,7 @@ publishUrlToCaptureWebserver mimic_config_dir url_chan  = do
         priv_key_filename = getPrivkeyFilename mimic_config_dir
         cert_filename  = getCertFilename mimic_config_dir
 
-        http2worker = startResearchWorker url_chan
+    http2worker <- runResearchWorker url_chan
 
     tlsServeWithALPN  cert_filename priv_key_filename iface [ 
          ("h2-14", http2Attendant http2worker)

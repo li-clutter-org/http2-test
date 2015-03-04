@@ -285,7 +285,7 @@ sessionInputThread  = do
                     let source = postDataSourceFromMechanism mechanism
                     return $ Just source
                   else do 
-                    liftIO $ putStrLn "Headers end reqeust"
+                    -- liftIO $ putStrLn "Headers end reqeust"
                     return Nothing
 
 
