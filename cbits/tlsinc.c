@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <pthread.h>
+#include <sys/time.h>
+#include <sys/types.h>
 
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
@@ -38,10 +40,11 @@ void free_connection(connection_t* conn);
 // Wait for the next one...
 #define ALL_OK  0 
 #define BAD_HAPPENED 1
+#define TIMEOUT_REACHED 3
 // This is also a failed IO with SSL, but this one may be quite
 // natural and we want to handle it differently
 #define TRANSPORT_CLOSED 2
-int wait_for_connection(connection_t* conn, wired_session_t** wired_session);
+int wait_for_connection(connection_t* conn, int microseconds, wired_session_t** wired_session);
 int send_data(wired_session_t* ws, char* buffer, int buffer_size);
 int recv_data(wired_session_t* ws, char* inbuffer, int buffer_size, int* data_recvd);
 int get_selected_protocol(wired_session_t* ws){ return ws->protocol_index; }
@@ -492,11 +495,37 @@ connection_t* make_connection(char* certificate_filename, char* privkey_filename
 
 int wait_for_connection(
   connection_t* c, 
+  int microseconds,
   wired_session_t** wired_session)
 {
     int clilen, newsockfd;
     // Don't return anything if there's a failure...
     *wired_session = 0;
+
+    // Wait for a connection
+    struct sockaddr_in cli_addr;
+    clilen = sizeof(cli_addr);
+
+    // Use select to get "interruptible" accepts 
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(c->socket, &rfds);
+    struct timeval tv;
+    tv.tv_sec = microseconds / 1000000;
+    tv.tv_usec = microseconds % 1000000;
+    int retval = select(1, &rfds, NULL, NULL, &tv);
+
+    if ( retval == -1 )
+    {
+      perror("select()");
+    } else if (retval > 0)
+    {
+      // We got data, just let it go...
+    } else 
+    {
+      // We didn't get data, finish and terminate
+      return TIMEOUT_REACHED;
+    }
 
     wired_session_t* result = (wired_session_t*) malloc(sizeof(wired_session_t) );
     if ( result == 0 )
@@ -504,9 +533,7 @@ int wait_for_connection(
         perror("Malloc failed");
         return BAD_HAPPENED;
     }
-    // Wait for a connection
-    struct sockaddr_in cli_addr;
-    clilen = sizeof(cli_addr);
+
     /* Accept actual connection from the client */
     newsockfd = accept(c->socket, (struct sockaddr *)&cli_addr, &clilen);
 
@@ -653,6 +680,7 @@ void dispose_wired_session(wired_session_t* ws)
 {
   SSL_shutdown( ws->sslHandle );
   close(ws->socket);
+  free(ws);
 }
 
 

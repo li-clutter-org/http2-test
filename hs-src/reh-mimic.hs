@@ -98,7 +98,7 @@ main = do
 
 
         ResearchUrl_PA       -> do 
-            research mimic_config_dir
+            research mimic_dir
 
 
         ServeHar_PA           -> do

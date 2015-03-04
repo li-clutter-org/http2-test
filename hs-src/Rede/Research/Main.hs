@@ -2,68 +2,52 @@
 module Rede.Research.Main(research) where 
 
 
+import           Control.Concurrent           (forkIO)
 import           Control.Concurrent.Chan
 import qualified Data.ByteString              as B
 
--- import qualified Data.ByteString.Lazy            as BL
--- import           Data.Foldable                   (foldMap)
-
--- import           System.Directory
--- import           System.FilePath
--- import           System.IO
--- import           System.Process
-
--- import           Options.Applicative
-
--- import           Rede.SimpleHTTP1Response        (exampleHTTP11Response)
-
--- import           Rede.HarFiles.ServedEntry       (createResolveCenterFromFilePath,
---                                                   hostsFromHarFile)
--- import           Rede.MainLoop.CoherentWorker    (CoherentWorker)
 import           Rede.MainLoop.ConfigHelp     (getCertFilename,
                                                getMimicPostInterface,
                                                getMimicPostPort,
+                                               configDir,
                                                getPrivkeyFilename)
-import           Rede.MainLoop.OpenSSL_TLS    (tlsServeWithALPN)
-import           Rede.Research.ResearchWorker (runResearchWorker)
+import           Rede.MainLoop.OpenSSL_TLS    (tlsServeWithALPN, FinishRequest(..))
+import           Rede.Research.ResearchWorker (runResearchWorker,
+                                               spawnHarServer)
 
 import           Rede.Http2.MakeAttendant     (http2Attendant)
+import           Rede.HarFiles.ServedEntry    (ResolveCenter)
 
 
 
 
-research :: String -> IO ()
-research mimic_config_dir  = do 
-  -- TODO: Generate .har from url
 
-
-    -- Things to do: 
-    -- First publish this url to the capture webserver
+research :: FilePath -> IO ()
+research mimic_dir  = do 
+    let 
+        mimic_config_dir = configDir mimic_dir
     url_chan <- newChan
+    resolve_center_chan <- newChan 
+    finish_request_chan <- newChan
 
-    publishUrlToCaptureWebserver mimic_config_dir url_chan
+    forkIO $ spawnHarServer mimic_dir resolve_center_chan finish_request_chan
 
-
-    -- Then wait for a POST with the contents of the website. 
-
-
-    -- Then publish a task definition file to the .har colaborator 
-
-
-    -- When confirmation of .har colaborator is received, publish a task definition 
-    -- file to the fake -loader 
+    publishUrlToCaptureWebserver 
+          mimic_config_dir 
+          url_chan 
+          resolve_center_chan 
+          finish_request_chan
 
 
-
-publishUrlToCaptureWebserver :: String -> Chan B.ByteString -> IO ()
-publishUrlToCaptureWebserver mimic_config_dir url_chan  = do
+publishUrlToCaptureWebserver :: String -> Chan B.ByteString -> Chan ResolveCenter -> Chan FinishRequest -> IO ()
+publishUrlToCaptureWebserver mimic_config_dir url_chan  resolve_center_chan finish_request_chan = do
     post_port <- getMimicPostPort mimic_config_dir
     iface <- getMimicPostInterface mimic_config_dir
     let 
         priv_key_filename = getPrivkeyFilename mimic_config_dir
         cert_filename  = getCertFilename mimic_config_dir
 
-    http2worker <- runResearchWorker url_chan
+    http2worker <- runResearchWorker url_chan resolve_center_chan finish_request_chan
 
     tlsServeWithALPN  cert_filename priv_key_filename iface [ 
          ("h2-14", http2Attendant http2worker)
