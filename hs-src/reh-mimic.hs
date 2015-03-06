@@ -86,6 +86,14 @@ configureLogging = do
         setHandlers [s] .  -- Remember that composition works in reverse...
         setLevel ERROR  
         )
+    updateGlobalLogger "OpenSSL" (
+        setHandlers [s] .  -- Remember that composition works in reverse...
+        setLevel DEBUG  
+        )
+    updateGlobalLogger "HarWorker" (
+        setHandlers [s] .  -- Remember that composition works in reverse...
+        setLevel DEBUG  
+        )
     updateGlobalLogger "ResearchWorker" (
         setHandlers [s] .  -- Remember that composition works in reverse...
         setLevel DEBUG  

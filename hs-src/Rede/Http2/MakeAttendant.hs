@@ -6,12 +6,14 @@ module Rede.Http2.MakeAttendant (
 
 import Rede.MainLoop.CoherentWorker
 import           Rede.MainLoop.PushPullType   (PullAction,
-                                               PushAction)
+                                               PushAction,
+                                               CloseAction
+                                               )
 import Rede.Http2.Framer  (wrapSession)
 
 
-http2Attendant :: CoherentWorker -> PushAction -> PullAction ->  IO ()
-http2Attendant coherent_worker push_action pull_action  = do 
+http2Attendant :: CoherentWorker -> PushAction -> PullAction -> CloseAction ->  IO ()
+http2Attendant coherent_worker push_action pull_action  close_action = do 
     let 
         attendant = wrapSession coherent_worker
-    attendant push_action pull_action        
+    attendant push_action pull_action close_action    

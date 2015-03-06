@@ -72,7 +72,7 @@ harCoherentWorker :: ResolveCenter -> CoherentWorker
 harCoherentWorker resolve_center (input_headers, _ ) = do 
 
     -- liftIO $ putStrLn $ "headers: " ++ (show input_headers)
-    liftIO $ infoM "HarWorker" $ " .. request to" ++ (show resource_handle)
+    liftIO $ infoM "HarWorker" $ " .. request to " ++ (show resource_handle)
     let 
         maybe_served_entry  = resolver resource_handle :: Maybe ServedEntry
         resolver = resolveFromHar resolve_center

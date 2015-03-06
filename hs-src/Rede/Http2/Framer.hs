@@ -3,13 +3,17 @@
 {-# LANGUAGE OverloadedStrings, StandaloneDeriving, FlexibleInstances, 
              DeriveDataTypeable, TemplateHaskell #-}
 module Rede.Http2.Framer (
-    wrapSession
+    wrapSession,
+
+    -- Not needed anywhere, but supress the warning about unneeded symbol
+    closeAction
     ) where 
 
 
 
 import           Control.Concurrent
 import           Control.Exception
+import qualified Control.Exception            as E
 import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Reader 
@@ -31,7 +35,7 @@ import           Rede.Http2.Session
 import           Rede.MainLoop.CoherentWorker (CoherentWorker)
 import qualified Rede.MainLoop.Framer         as F
 import           Rede.MainLoop.PushPullType   (Attendant, PullAction,
-                                               PushAction)
+                                               PushAction, CloseAction)
 import           Rede.Utils                   (Word24, word24ToInt)
 
 
@@ -75,6 +79,7 @@ data FramerSessionData = FramerSessionData {
     , _canOutput             :: MVar CanOutput
     , _noHeadersInChannel    :: MVar NoHeadersInChannel
     , _pushAction            :: PushAction
+    , _closeAction           :: CloseAction
     }
 
 
@@ -85,7 +90,7 @@ type FramerSession = ReaderT FramerSessionData IO
 
 
 wrapSession :: CoherentWorker -> Attendant
-wrapSession coherent_worker push_action pull_action = do
+wrapSession coherent_worker push_action pull_action close_action = do
 
     let session_start = SessionStartData {}
 
@@ -107,12 +112,16 @@ wrapSession coherent_worker push_action pull_action = do
         ,_canOutput           = can_output 
         ,_noHeadersInChannel  = no_headers_in_channel
         ,_pushAction          = push_action
+        ,_closeAction         = close_action
         }
 
-    forkIO $ runReaderT (inputGatherer pull_action session_input   ) framer_session_data  
-    forkIO $ runReaderT (outputGatherer session_output ) framer_session_data 
+    forkIO $ close_on_error $ runReaderT (inputGatherer pull_action session_input   ) framer_session_data  
+    forkIO $ close_on_error $ runReaderT (outputGatherer session_output ) framer_session_data 
 
     return ()
+
+  where 
+    close_on_error comp = E.finally comp close_action
 
 
 http2FrameLength :: F.LengthCallback

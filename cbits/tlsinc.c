@@ -45,7 +45,7 @@ typedef struct {
 // No arguments, all are wired here somewhere... for now
 connection_t* make_connection();
 // Call when you are done 
-void free_connection(connection_t* conn);
+void close_connection(connection_t* conn);
 // Wait for the next one...
 #define ALL_OK  0 
 #define BAD_HAPPENED 1
@@ -67,9 +67,21 @@ static int thread_setup(void);
 static int threads_are_up = 0;
 
 // Leaky implementation now 
-void free_connection(connection_t* conn)
+void close_connection(connection_t* conn)
 {
-    // Do nothing
+    if (conn->socket)
+    {
+      close (conn->socket);
+      conn->socket = 0;
+    }
+
+    if (conn->sslContext)
+    {
+      SSL_CTX_free(conn->sslContext);
+      conn->sslContext = 0;
+    }
+
+  free(conn);
 }
 
 // For this example, we'll be testing on openssl.org
@@ -724,8 +736,18 @@ static unsigned long id_function(void)
 
 void dispose_wired_session(wired_session_t* ws)
 {
-  SSL_shutdown( ws->sslHandle );
-  close(ws->socket);
+  if (ws == 0)
+    return ;
+  if ( ws-> sslHandle )
+  {
+    SSL_shutdown( ws->sslHandle );
+    ws -> sslHandle = 0;
+  }
+  if (ws->socket)
+  {
+    close(ws->socket);
+    ws -> socket = 0;
+  }
   free(ws);
 }
 

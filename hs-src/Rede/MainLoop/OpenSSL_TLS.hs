@@ -12,7 +12,8 @@ module Rede.MainLoop.OpenSSL_TLS(
 
 import           Control.Monad
 import           Control.Concurrent.MVar    
-import           Control.Exception
+import           Control.Exception  
+import qualified Control.Exception  as      E
 import           Data.Foldable              (foldMap)
 import           Data.Typeable              
 import           Data.Monoid                ()
@@ -24,6 +25,8 @@ import qualified Data.ByteString.Builder    as BB
 import           Data.ByteString.Char8      (pack)
 import qualified Data.ByteString.Lazy       as LB
 import qualified Data.ByteString.Unsafe     as BU
+
+import           System.Log.Logger
 
 import           Rede.MainLoop.PushPullType
            
@@ -91,6 +94,8 @@ foreign import ccall "get_selected_protocol" getSelectedProtocol :: Wired_Ptr ->
 -- void dispose_wired_session(wired_session_t* ws);
 foreign import ccall "dispose_wired_session" disposeWiredSession :: Wired_Ptr -> IO ()
 
+foreign import ccall "close_connection" closeConnection :: Connection_Ptr -> IO ()
+
 
 useBufferSize :: Int
 useBufferSize = 4096
@@ -155,10 +160,11 @@ tlsServeWithALPN certificate_filename key_filename interface_name attendants int
             case either_wired_ptr of 
 
                 Left msg -> do 
-                    putStrLn $ ".. No connection " ++ msg
+                    errorM "OpenSSL" $ ".. wait for connection failed. " ++ msg
 
 
                 Right wired_ptr -> do 
+                    already_closed_mvar <- newMVar False
                     let 
                         pushAction datum = BU.unsafeUseAsCStringLen (LB.toStrict datum) $ \ (pchar, len) -> do 
                             result <- sendData wired_ptr pchar (fromIntegral len)
@@ -175,6 +181,16 @@ tlsServeWithALPN certificate_filename key_filename interface_name attendants int
 
                                     B.packCStringLen (pcharbuffer, fromIntegral recvd_bytes)
 
+                        -- Ensure that the socket and the struct are only closed once
+                        closeAction = do
+                            b <- readMVar already_closed_mvar
+                            if not b 
+                              then do
+                                putMVar already_closed_mvar True
+                                disposeWiredSession wired_ptr
+                              else 
+                                return ()
+
                     use_protocol <- getSelectedProtocol wired_ptr
 
                     -- putStrLn $ ".. Using protocol: " ++ (show use_protocol)
@@ -187,16 +203,17 @@ tlsServeWithALPN certificate_filename key_filename interface_name attendants int
                     case maybe_session_attendant of 
 
                         Just session_attendant -> 
-                            catch 
-                                (session_attendant pushAction pullAction)
-                                ((\_ -> do 
-                                    putStrLn " ** Session ended by ConnectionIOError (well handled)"
+                            E.catch 
+                                (session_attendant pushAction pullAction closeAction)
+                                ((\ e -> do 
+                                    errorM "OpenSSL" " ** Session ended by ConnectionIOError (well handled)"
+                                    throwIO e
                                 )::ConnectionIOError -> IO () )
 
 
                         Nothing ->
-                            disposeWiredSession wired_ptr
-
+                            return ()
+                       
 
 tlsServeWithALPNAndFinishOnRequest :: FilePath 
                  -> FilePath 
@@ -210,6 +227,7 @@ tlsServeWithALPNAndFinishOnRequest certificate_filename key_filename interface_n
     let protocols_bs = protocolsToWire $ fmap (\ (s,_) -> pack s) attendants
     withCString certificate_filename $ \ c_certfn -> withCString key_filename $ \ c_keyfn -> withCString interface_name $ \ c_iname -> do 
 
+        -- Create an accepting endpoint
         connection_ptr <- BU.unsafeUseAsCStringLen protocols_bs $ \ (pchar, len) ->
             makeConnection 
                 c_certfn
@@ -219,9 +237,10 @@ tlsServeWithALPNAndFinishOnRequest certificate_filename key_filename interface_n
                 pchar 
                 (fromIntegral len)
 
-
+        -- Create a computation that accepts a connection, runs a session on it and recurses
         let 
             recursion = do 
+                -- Get a SSL session
                 either_wired_ptr <- alloca $ \ wired_ptr_ptr -> 
                     let 
                         tryOnce = do 
@@ -242,18 +261,19 @@ tlsServeWithALPNAndFinishOnRequest certificate_filename key_filename interface_n
                                         | re == badHappened  -> return $ Left_I "A wait for connection failed"
                             r 
                     in tryOnce
-                    
 
+                -- With the potentially obtained SSL session do...
                 case either_wired_ptr of 
 
                     Left_I msg -> do 
-                        putStrLn $ ".. No connection " ++ msg
+                        errorM "OpenSSL" $ ".. wait for connection failed. " ++ msg
 
                         -- // .. //
                         recursion
 
 
                     Right_I wired_ptr -> do 
+                        already_closed_mvar <- newMVar False
                         let 
                             pushAction datum = BU.unsafeUseAsCStringLen (LB.toStrict datum) $ \ (pchar, len) -> do 
                                 result <- sendData wired_ptr pchar (fromIntegral len)
@@ -269,10 +289,18 @@ tlsServeWithALPNAndFinishOnRequest certificate_filename key_filename interface_n
                                               | r == badHappened -> throwIO $ ConnectionIOError "Could not receive data"
 
                                         B.packCStringLen (pcharbuffer, fromIntegral recvd_bytes)
+                            closeAction = do
+                                b <- readMVar already_closed_mvar
+                                if not b 
+                                  then do
+                                    putMVar already_closed_mvar True
+                                    disposeWiredSession wired_ptr
+                                  else 
+                                    return ()
 
                         use_protocol <- getSelectedProtocol wired_ptr
 
-                        putStrLn $ ".. Using protocol: " ++ (show use_protocol)
+                        infoM "OpenSSL" $ ".. Using protocol: " ++ (show use_protocol)
 
                         let 
                             maybe_session_attendant = case fromIntegral use_protocol of 
@@ -282,21 +310,17 @@ tlsServeWithALPNAndFinishOnRequest certificate_filename key_filename interface_n
                         case maybe_session_attendant of 
 
                             Just session_attendant -> 
-                                catch 
-                                    (session_attendant pushAction pullAction)
-                                    ((\_ -> do 
-                                        putStrLn " ** Session ended by ConnectionIOError (well handled)"
-                                    )::ConnectionIOError -> IO () )
-                                -- session_attendant pushAction pullAction
+                                session_attendant pushAction pullAction closeAction
 
                             Nothing ->
-                                disposeWiredSession wired_ptr
+                                return ()
 
                         -- // .. //
                         recursion 
 
-                    Interrupted -> 
-                        return ()
+                    Interrupted -> do
+                        infoM "OpenSSL" "Connection closed"
+                        closeConnection connection_ptr
 
         -- Start the loop defined above...
         recursion 
