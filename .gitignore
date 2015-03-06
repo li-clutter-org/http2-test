@@ -14,3 +14,8 @@ spdy-ping
 /makeenvsensible
 /httptwodd
 /cabal.sandbox.config
+/mimic-here/config/ca/serial
+/mimic-here/config/ca/serial.old
+/mimic-here/config/ca/certindex.txt
+/dump.rdb
+**/.idea
