@@ -1,3 +1,6 @@
+-- Session: links frames to streams, and helps in ordering the header frames
+-- so that they don't get mixed with header frames from other streams when 
+-- resources are being served concurrently.
 {-# LANGUAGE FlexibleContexts, Rank2Types, TemplateHaskell #-}
 module Rede.Http2.Session(
     http2Session
@@ -11,10 +14,9 @@ module Rede.Http2.Session(
     ) where
 
 
--- import qualified Blaze.ByteString.Builder            as Bu
--- import           Blaze.ByteString.Builder.ByteString (fromByteString)
 import           Control.Lens
--- import qualified Control.Lens                        as L
+-- import           Blaze.ByteString.Builder.ByteString (fromByteString)
+-- import qualified Blaze.ByteString.Builder            as Bu
 
 
 -- No framing layer here... let's use Kazu's Yamamoto library
@@ -42,8 +44,6 @@ import           Rede.MainLoop.CoherentWorker
 import           Rede.MainLoop.Tokens
 import           Rede.Utils                             (unfoldChannelAndSource)
 
-
--- type Frame = NH2.Frame
 
 -- Unfortunately the frame encoding API of Network.HTTP2 is a bit difficult to 
 -- use :-( 

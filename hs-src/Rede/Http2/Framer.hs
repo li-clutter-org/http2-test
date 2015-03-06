@@ -1,4 +1,5 @@
--- This one is in charge of taking and producing frames 
+-- The framer has two functions: to convert bytes to Frames and the other way around,
+-- and two keep track of flow-control quotas. 
 {-# LANGUAGE OverloadedStrings, StandaloneDeriving, FlexibleInstances, 
              DeriveDataTypeable, TemplateHaskell #-}
 module Rede.Http2.Framer (
@@ -8,7 +9,6 @@ module Rede.Http2.Framer (
 
 
 import           Control.Concurrent
--- import           Control.Concurrent.Chan
 import           Control.Exception
 import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
@@ -150,6 +150,12 @@ addCapacity stream_id delta_cap = do
                 liftIO $ writeChan command_chan $ AddBytes_FCM delta_cap
         
 
+-- This works by pulling bytes from the input side of the pipeline and converting them to frames.
+-- The frames are then put in the SessionInput. In the other end of the SessionInput they can be 
+-- interpreted according to their HTTP/2 meaning. 
+-- 
+-- This function also does part of the flow control: it registers WindowUpdate frames and triggers
+-- quota updates on the streams. 
 inputGatherer :: PullAction -> SessionInput -> FramerSession ()
 inputGatherer pull_action session_input = do 
     -- We can start by reading off the prefix....
@@ -323,6 +329,8 @@ startStreamOutputQueue stream_id = do
     return (bytes_chan , command_chan)
 
 
+-- This works in the output side of the HTTP/2 framing session, and it acts as a 
+-- semaphore ensuring that headers are output without any interleaved frames. 
 handleHeadersOfStream :: NH2.EncodeInfo -> NH2.FramePayload -> FramerSession ()
 handleHeadersOfStream p1@(NH2.EncodeInfo _ _ _) frame_payload
     | (frameIsHeaderOfStream frame_payload) && (not $ frameEndsHeaders p1 frame_payload) = do
