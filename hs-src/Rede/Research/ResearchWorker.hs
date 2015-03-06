@@ -273,8 +273,8 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
     let 
         watcher = do 
             r <- readChan finish_request_chan
-            infoM "ResearchWorker.SpawnHarServer" $ " .. Finishing mimic service  " 
-            putMVar finish_request_mvar r
+            -- infoM "ResearchWorker.SpawnHarServer" $ " .. Finishing mimic service  " 
+            -- putMVar finish_request_mvar r
             watcher 
 
     forkIO watcher
