@@ -15,7 +15,6 @@ module Rede.HarFiles.ServedEntry(
     ,handleFromMethodAndUrl
     ,createResolveCenterFromLazyByteString
     ,resolveCenterAndOriginUrlFromLazyByteString
-    ,hashFromResolveCenter
     ,rcName
     ,handlesAtResolveCenter
 
@@ -44,7 +43,6 @@ import           Data.ByteString.Char8  (unpack, pack)
 -- import           Data.Text(Text)
 import qualified Data.Map.Strict        as M
 import qualified Data.Set               as S
-import qualified Crypto.Hash.MD5        as MD5
 -- import qualified Data.ByteString.Base64 as B64
 
 
@@ -319,10 +317,3 @@ heedContentTypeAndDecode served_entry =
     maybe_content_type = getHeader (served_entry ^. sreHeaders) "content-type"
     Right rightly_decoded      = B64.decode not_decoded
     not_decoded = served_entry ^. sreContents
-
-
-hashFromResolveCenter :: ResolveCenter -> B.ByteString
-hashFromResolveCenter resolve_center = 
-    MD5.finalize $ foldl MD5.update MD5.init resource_handles 
-  where 
-    resource_handles = map resourceHandleToByteString $ M.keys $ resolve_center ^. servedResources

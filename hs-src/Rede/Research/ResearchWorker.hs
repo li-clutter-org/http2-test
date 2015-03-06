@@ -8,20 +8,18 @@ module Rede.Research.ResearchWorker(
 import           Control.Lens                   ((^.))
 import qualified Control.Lens                   as L
 -- import           Control.Exception              (catch)
+import           Control.Concurrent             (forkIO)
 import           Control.Concurrent.Chan
 import           Control.Concurrent.MVar
-import           Control.Concurrent             (forkIO)
 import           Control.Monad.Catch            (catch)
 
 import qualified Data.ByteString                as B
+import           Data.ByteString.Char8          (pack, unpack)
 import qualified Data.ByteString.Lazy           as LB
-import           Data.ByteString.Char8          (unpack, pack)
 import           Data.Conduit
-import qualified Data.Monoid                    as M
-import           Data.Monoid                    (
-                                                --mempty, 
-                                                mappend)
 import           Data.Foldable                  (foldMap)
+import           Data.Monoid                    (mappend)
+import qualified Data.Monoid                    as M
 -- import qualified Data.ByteString.Lazy           as LB
 import qualified Data.ByteString.Builder        as Bu
 
@@ -34,6 +32,9 @@ import           System.Process
 
 import qualified Network.URI                    as U
 
+import           System.Log.Logger
+import           Text.Printf                    (printf)
+
 import           Rede.Workers.ResponseFragments (RequestMethod (..),
                                                  getMethodFromHeaders,
                                                  getUrlFromHeaders,
@@ -41,16 +42,16 @@ import           Rede.Workers.ResponseFragments (RequestMethod (..),
 
 import           Rede.HarFiles.DnsMasq          (dnsMasqFileContentsToIp)
 import           Rede.HarFiles.ServedEntry      (BadHarFile (..), ResolveCenter,
-                                                 allSeenHosts, resolveCenterAndOriginUrlFromLazyByteString,
-                                                 rcName
-                                                 )
-import           Rede.MainLoop.CoherentWorker
-import           Rede.Workers.HarWorker         (harCoherentWorker)
+                                                 allSeenHosts, rcName, resolveCenterAndOriginUrlFromLazyByteString)
 import           Rede.Http2.MakeAttendant       (http2Attendant)
+import           Rede.MainLoop.CoherentWorker
 import           Rede.MainLoop.ConfigHelp       (configDir, getInterfaceName,
                                                  getMimicPort)
-import           Rede.MainLoop.OpenSSL_TLS      (FinishRequest(..), tlsServeWithALPNAndFinishOnRequest)
+import           Rede.MainLoop.OpenSSL_TLS      (FinishRequest (..), tlsServeWithALPNAndFinishOnRequest)
 import           Rede.Utils.ConcatConduit       (concatConduit)
+import           Rede.Utils.PrintfArgByteString ()
+import           Rede.Workers.HarWorker         (harCoherentWorker)
+
 
 
 
@@ -91,10 +92,10 @@ runResearchWorker ::
     -> B.ByteString
     -> IO CoherentWorker
 runResearchWorker url_chan resolve_center_chan finish_request_chan research_dir use_address_for_station_b = do 
-    liftIO $ putStrLn "Init block called"
+    liftIO $ infoM "ResearchWorker" "Starting research worker"
     next_test_url_chan <- newChan 
     next_dns_masq_file <- newChan
-    liftIO $ putStrLn "End of init block"
+
     let     
         state = ServiceState {
              _nextHarvestUrl = url_chan
@@ -129,21 +130,21 @@ researchWorkerComp (input_headers, maybe_source) = do
         Post_RM 
             | req_url == "/nexturl/" -> do 
                 -- Starts harvesting of a resource
-                liftIO $ putStrLn "..  /nexturl/"
+                liftIO $ infoM "ResearchWorker" "..  /nexturl/"
                 url <- liftIO $ readChan next_harvest_url
                 return $ simpleResponse 200 url 
 
             | req_url == "/testurl/" -> do 
                 -- Sends the next test url to the Chrome extension, this starts processing by 
                 -- StationB
-                liftIO $ putStrLn "..  /testurl/"
+                liftIO $ infoM "ResearchWorker" "..  /testurl/"
                 url <- liftIO $ readChan next_test_url_chan
                 return $ simpleResponse 200 url
 
             | req_url == "/har/", Just source <- maybe_source -> do
                 -- Receives a .har object from the harvest station ("StationA"), and 
                 -- makes all the arrangements for it to be tested using HTTP 2
-                liftIO $ putStrLn "..  /har/"
+                liftIO $ infoM "ResearchWorker" "..  /har/"
                 catch 
                     (do
                         (resolve_center, test_url, har_file_contents) <- liftIO $ output_computation source
@@ -179,7 +180,7 @@ researchWorkerComp (input_headers, maybe_source) = do
             | req_url == "/http2har/", Just source <- maybe_source -> do
                 -- Receives a .har object from the harvest station ("StationA"), and 
                 -- makes all the arrangements for it to be tested using HTTP 2
-                liftIO $ putStrLn "..  /http2har/"
+                liftIO $ infoM "ResearchWorker" "..  /http2har/"
                 catch 
                     (do
                         (resolve_center, _, har_contents_lb) <- liftIO $ output_computation source
@@ -200,23 +201,23 @@ researchWorkerComp (input_headers, maybe_source) = do
 
             | req_url == "/dnsmasq/" -> do 
                 -- Sends a DNSMASQ file to the test station ("StationB")
-                liftIO $ putStrLn ".. /dnsmasq/ asked"
+                liftIO $ infoM "ResearchWorker" ".. /dnsmasq/ asked"
                 -- Serve the DNS masq file corresponding to the last .har file 
                 -- received.
                 dnsmasq_contents <- liftIO $ readChan next_dnsmasq_chan
-                liftIO $ putStrLn ".. /dnsmasq/ about to answer"
+                liftIO $ infoM "ResearchWorker" ".. /dnsmasq/ answer"
                 
                 return $ simpleResponse 200 dnsmasq_contents
 
             | req_url == "/setnexturl/", Just source <- maybe_source -> do 
                 -- Receives a url to investigate from the user front-end, or from curl
-                liftIO $ putStrLn ".. /setnexturl/"
+                liftIO $ infoM "ResearchWorker" ".. /setnexturl/"
                 post_contents <- liftIO $ source $$ concatConduit
                 -- Wishful thinking: post_contents is just the url to analyze...
                 liftIO $ writeChan next_harvest_url post_contents
                 liftIO $ putStrLn $ "... " ++ (unpack post_contents)
 
-                return $ simpleResponse 200 "url queued"
+                return $ simpleResponse 200 "url queued\n"
 
             | otherwise     -> do 
                 return $ simpleResponse 500 "Can't handle url and method"
@@ -256,9 +257,9 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
     let 
         mimic_config_dir = configDir mimic_dir    
     port  <-  getMimicPort
-    putStrLn $  ".. Mimic port: " ++ (show port)
+    infoM "ResearchWorker.SpawnHarServer"  $ ".. Mimic port: " ++ (show port)
     iface <-  getInterfaceName mimic_config_dir
-    putStrLn $ ".. Mimic using interface: " ++ (show iface)
+    infoM "ResearchWorker.SpawnHarServer" $ ".. Mimic using interface: " ++ (show iface)
 
 
     finish_request_mvar <- newEmptyMVar 
@@ -266,7 +267,7 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
     let 
         watcher = do 
             r <- readChan finish_request_chan
-            putStrLn $ " .. Finishing mimic service  " 
+            infoM "ResearchWorker.SpawnHarServer" $ " .. Finishing mimic service  " 
             putMVar finish_request_mvar r
             watcher 
 
@@ -277,18 +278,20 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
 
             resolve_center <- readChan resolve_center_chan
 
+            infoM "ResearchWorker.SpawnHarServer" $ printf ".. START for resolve center %s" (resolve_center ^. rcName)
+
             let 
                 har_filename = unpack $ resolve_center ^. rcName 
                 priv_key_filename = privKeyFilename mimic_dir har_filename
                 cert_filename  = certificateFilename mimic_dir har_filename
                 host_list = resolve_center ^. allSeenHosts
 
-            putStrLn $ ".. .. about to create comprhensive certificate for " ++ har_filename
+            infoM "ResearchWorker.SpawnHarServer" $ ".. .. about to create comprhensive certificate for " ++ har_filename
             getComprehensiveCertificate mimic_dir har_filename host_list
 
-            putStrLn $ ".. .. .. Chosen cert. at file: " ++ (show cert_filename)
-            putStrLn $ ".. .. .. ..  with private key: " ++ (show priv_key_filename)
-            putStrLn $ ".. Starting mimic server"
+            infoM "ResearchWorker.SpawnHarServer" $ ".. .. .. Chosen cert. at file: " ++ (show cert_filename)
+            infoM "ResearchWorker.SpawnHarServer" $ ".. .. .. ..  with private key: " ++ (show priv_key_filename)
+            infoM "ResearchWorker.SpawnHarServer" $ ".. Starting mimic server"
 
             let 
                 http2worker = harCoherentWorker resolve_center
@@ -299,7 +302,7 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
                  -- TODO: Let the user select HTTP/1.1 from time to time...
                 ] port finish_request_mvar
             -- 
-            putStrLn ".. Finished a har serve session"
+            infoM "ResearchWorker.SpawnHarServer" $ printf ".. FINISH for resolve center %s" (resolve_center ^. rcName)
             serveWork 
 
     serveWork

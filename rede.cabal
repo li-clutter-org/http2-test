@@ -104,6 +104,7 @@ executable reh-mimic
                  , blaze-builder >= 0.3.3 &&  < 0.4
                  , process >= 1.2 && < 1.3
                  , void 
+                 , hslogger >= 1.2.6
      -- , asn-data
   
   -- Directories containing source files.
@@ -131,58 +132,3 @@ executable reh-mimic
   extra-lib-dirs: /opt/openssl-1.0.2/lib
   
 
-
-executable spdy-ping
-  -- .hs or .lhs file containing the Main module.
-  main-is: main.hs      
-  
-  -- Modules included in this executable, other than Main.
-  other-modules:   Rede.Constants  
-                  ,Rede.MainLoop.Pipes  
-                  ,Rede.Subprograms.BasicConnect 
-                  ,Rede.Subprograms.BasicPing 
-                  ,Rede.TLSConnect  
-                  ,Rede.Utils 
-                  ,Rede.SpdyProtocol.Framing.AnyFrame   
-                  ,Rede.SpdyProtocol.Framing.Frame  
-                  ,Rede.SpdyProtocol.Framing.RstStream  
-                  ,Rede.SpdyProtocol.Framing.WindowUpdate
-                  ,Rede.SpdyProtocol.Framing.DataFrame  
-                  ,Rede.SpdyProtocol.Framing.Ping   
-                  ,Rede.SpdyProtocol.Framing.Settings
-                  ,Rede.MainLoop.OpenSSL_TLS
-
-  
-  -- LANGUAGE extensions used by modules in this package.
-  -- other-extensions:    
-  
-  -- Other library packages from which modules are imported.
-  build-depends:    base >=4.7 && <4.8
-                  , optparse-applicative
-                  , connection>=0.2.4 && < 0.3
-                  , bytestring == 0.10.4.0
-                  , data-default == 0.5.3
-                  , tls >= 1.2 && < 1.3
-                  , data-default-class == 0.0.1
-                  , network == 2.6.0.2
-                  , x509 == 1.5.0.1
-                  , certificate == 1.3.9
-                  , x509-store ==  1.5.0
-                  , x509-system == 1.5.0
-                  , bitset == 1.4.8
-                  , binary == 0.7.1.0
-                  , pipes == 4.1.4
-                  , containers == 0.5.5.1
-                  , clock == 0.4.1.3
-                  , network-simple == 0.4.0.2
-                  , pipes-concurrency >= 2.0 && <2.2 
-                  , conduit == 1.2.3.1
-                  , transformers >=0.3 && <= 0.5
-                  , text >= 1.2
-  
-  -- Directories containing source files.
-  hs-source-dirs: hs-src
-  
-  -- Base language which the package is written in.
-  default-language:    Haskell2010
-  

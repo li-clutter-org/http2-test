@@ -3,21 +3,27 @@ module Rede.HarFiles.JSONDataStructure where
 
 
 import           Control.Applicative
-import           Control.Lens          (to, (^.))
-import           Control.Lens.TH       (makeLenses)
-import           Text.Printf           (printf)
+import           Control.Lens                   (to, (^.))
+import           Control.Lens.TH                (makeLenses)
+import           Text.Printf                    (printf)
 
-import           Data.Maybe            (fromJust)
 import           Data.Aeson
-import           Data.Aeson.Types      (Parser)
-import           Data.ByteString       (ByteString)
+import           Data.Aeson.Types               (Parser)
+import           Data.ByteString                (ByteString)
+import           Data.Maybe                     (fromJust)
 
-import           Data.ByteString.Char8 (pack, unpack)
-import qualified Data.ByteString.Lazy  as LB
+import           Data.ByteString.Char8          (pack, unpack)
+import qualified Data.ByteString.Lazy           as LB
 -- import           Data.Functor.Identity
 
+import qualified Crypto.Hash.MD5                as MD5
 import           Network.URI
-import qualified Crypto.Hash.MD5        as MD5
+
+import           Rede.Utils                     (neutralizeUrl)
+import           Rede.Utils.PrintfArgByteString ()
+
+import           Debug.Trace                    (trace)
+
 
 
 -- Implementation details ####################################
@@ -247,18 +253,14 @@ firstDomainFromHarLog lg = let
   in pack domain
 
 
-
--- hashFromHarLog :: Har_Log -> HereString
--- hashFromHarLog lg = 
---     -- TODO: Learn to use lenses properly
---     MD5.finalize $ foldl MD5.update MD5.init $ map (\ e -> e ^. request ^. reqUrl ) (lg ^. entries)
-
-
-
 hashFromHarLog :: Har_Log -> HereString
 hashFromHarLog lg = 
     -- TODO: Learn to use lenses properly
-    MD5.finalize $ foldl MD5.update MD5.init $  [firstUrlFromHarLog lg]
+    MD5.finalize $ foldl MD5.update MD5.init $  [trace (printf "url to hash: %s\n" $ unpack url_fragment) url_fragment]
+  where 
+    url = firstUrlFromHarLog lg
+    url_fragment = neutralizeUrl url
+
 
 
 ------ Some small functions to try this out 

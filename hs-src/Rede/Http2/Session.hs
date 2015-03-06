@@ -14,6 +14,23 @@ module Rede.Http2.Session(
     ) where
 
 
+-- System grade utilities
+import           Control.Monad                           (forever)
+import           Control.Concurrent                      (forkIO)
+import           Control.Concurrent.Chan
+import           Control.Monad.IO.Class                  (liftIO)
+-- import           Control.Monad.Trans.Class               (lift)
+-- import           Control.Monad.Trans.Writer
+import           Control.Monad.Trans.Reader
+
+-- import           Text.Printf                             (printf)
+import           Data.Conduit
+import           Data.Conduit.List                       (foldMapM)
+import qualified Data.ByteString                         as B
+import           Control.Concurrent.MVar
+import qualified Data.IntSet                             as NS
+import qualified Data.HashTable.IO          as H
+
 import           Control.Lens
 -- import           Blaze.ByteString.Builder.ByteString (fromByteString)
 -- import qualified Blaze.ByteString.Builder            as Bu
@@ -23,23 +40,14 @@ import           Control.Lens
 import qualified Network.HTTP2            as NH2
 import qualified Network.HPACK            as HP
 
+-- Logging utilities
+-- import           System.Log.Formatter
+-- import           System.Log.Handler         (setFormatter)
+-- import           System.Log.Handler.Simple
+-- import           System.Log.Handler.Syslog
+import           System.Log.Logger
 
-import           Control.Monad                           (forever)
-import           Control.Concurrent                      (forkIO)
-import           Control.Concurrent.Chan
-import           Control.Monad.IO.Class                  (liftIO)
--- import           Control.Monad.Trans.Class               (lift)
--- import           Control.Monad.Trans.Writer
-import           Control.Monad.Trans.Reader
-
-import           Data.Conduit
-import           Data.Conduit.List                       (foldMapM)
-import qualified Data.ByteString                         as B
-import           Control.Concurrent.MVar
-import qualified Data.IntSet                             as NS
-import qualified Data.HashTable.IO          as H
-
-
+-- Imports from other parts of the program
 import           Rede.MainLoop.CoherentWorker 
 import           Rede.MainLoop.Tokens
 import           Rede.Utils                             (unfoldChannelAndSource)
@@ -123,6 +131,7 @@ data SessionInputCommand =
     CancelSession_SIC
   deriving Show 
 
+
 -- temporary
 data  SessionOutputCommand = 
     CancelSession_SOC
@@ -133,6 +142,7 @@ data  SessionOutputCommand =
 data SessionStartData = SessionStartData {
     
     }
+
 
 makeLenses ''SessionStartData
 
@@ -171,6 +181,7 @@ data SessionData = SessionData {
 
 
 makeLenses ''SessionData
+
 
 --                                v- {headers table size comes here!!}
 http2Session :: CoherentWorker -> SessionStartData -> IO Session
@@ -240,6 +251,11 @@ http2Session coherent_worker _ =   do
 
 sessionInputThread :: ReaderT SessionData IO ()
 sessionInputThread  = do 
+    liftIO $ debugM "HTTP2.Session" "Entering sessionInputThread"
+
+    -- This is an introductory and declarative block... all of this is tail-executed
+    -- every time that  a packet needs to be processed. It may be a good idea to abstract
+    -- these values in a closure... 
     session_input             <- view sessionInput 
     
     decode_headers_table_mvar <- view toDecodeHeaders 
@@ -248,12 +264,10 @@ sessionInputThread  = do
     coherent_worker           <- view coherentWorker
 
     for_worker_thread_uns     <- view forWorkerThread
-    
 
     input                     <- liftIO $ readChan session_input
 
-
-    -- liftIO $ putStrLn $ "Got a frame or a command: " ++ (show input)
+    liftIO $ debugM "HTTP2.Session" $ "Got a frame or a command: " ++ (show input)
 
     case input of 
 
@@ -304,10 +318,10 @@ sessionInputThread  = do
             continue 
 
         Right frame@(NH2.Frame _ (NH2.RSTStreamFrame error_code_id)) -> do
-            liftIO $ putStrLn $ "Stream reset: " ++ (show error_code_id)
+            liftIO $ infoM "HTTP2.Session" $ "Stream reset: " ++ (show error_code_id)
             cancelled_streams <- liftIO $ readMVar cancelled_streams_mvar
             let stream_id = streamIdFromFrame frame
-            liftIO $ putStrLn $ "Cancelled stream was: " ++ (show stream_id)
+            liftIO $ infoM "HTTP2.Session" $ "Cancelled stream was: " ++ (show stream_id)
             liftIO $ putMVar cancelled_streams_mvar $ NS.insert  stream_id cancelled_streams
 
             continue 
@@ -357,7 +371,7 @@ sessionInputThread  = do
 
         Right (NH2.Frame (NH2.FrameHeader _ _ _) (NH2.PingFrame somebytes))  -> do 
             -- Deal with pings: NOT an Ack, so answer
-            liftIO $ putStrLn "Ping processed"
+            liftIO $ debugM "HTTP2.Session" "Ping processed"
             sendOutFrame
                 (NH2.EncodeInfo
                     (NH2.setAck NH2.defaultFlags)
@@ -374,7 +388,7 @@ sessionInputThread  = do
 
 
         Right (NH2.Frame _ (NH2.SettingsFrame settings_list))  -> do 
-            liftIO $ putStrLn $ "Received settings: " ++ (show settings_list)
+            liftIO $ debugM "HTTP2.Session" $ "Received settings: " ++ (show settings_list)
             -- Just acknowledge the frame.... for now 
             sendOutFrame 
                 (NH2.EncodeInfo
@@ -387,8 +401,8 @@ sessionInputThread  = do
 
 
         Right somethingelse -> do 
-            liftIO $ putStrLn $ "Received problematic frame: "
-            liftIO $ putStrLn $ "    " ++ (show somethingelse)
+            liftIO $ errorM "HTTP2.Session" $  "Received problematic frame: "
+            liftIO $ errorM "HTTP2.Session" $  "..  " ++ (show somethingelse)
 
             continue 
 
@@ -435,7 +449,6 @@ closePostDataSource stream_id = do
             -- This is an internal error, the mechanism should be 
             -- created when the stream ends
             error "Internal error/closePostDataSource"
-
 
 
 streamWorkerSendData :: Int -> B.ByteString -> ReaderT SessionData IO ()
@@ -715,5 +728,5 @@ dataOutputThread input_chan session_output_mvar = forever $ do
                     writeContinuations xs
             writeContinuations (tail bs_chunks)
     -- Restore output capability, so that other pieces waiting can send...
-    liftIO $ putStrLn "Output capability restored"
+    liftIO $ debugM "HTTP2.Session" $  "Output capability restored"
     liftIO $ putMVar session_output_mvar session_output                    

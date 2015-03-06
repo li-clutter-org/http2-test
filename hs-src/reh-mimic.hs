@@ -6,12 +6,14 @@ import Rede.MainLoop.OpenSSL_TLS(
     )
 
 
-import qualified Data.ByteString                 as B
-import qualified Data.ByteString.Builder         as Bu
-import           Data.ByteString.Char8           (pack)
-import qualified Data.ByteString.Lazy            as BL
-import           Data.Foldable                   (foldMap)
+-- System grade imports
+import qualified Data.ByteString            as B
+import qualified Data.ByteString.Builder    as Bu
+import           Data.ByteString.Char8      (pack)
+import qualified Data.ByteString.Lazy       as BL
+import           Data.Foldable              (foldMap)
 import           Data.Monoid
+import           Text.Printf                (printf)
 
 import           System.Directory
 import           System.FilePath
@@ -20,23 +22,25 @@ import           System.Process
 
 import           Options.Applicative
 
-import           Rede.SimpleHTTP1Response        (exampleHTTP11Response)
+-- Logging utilities
+import           System.Log.Logger
+import           System.Log.Handler        (setFormatter)
+import           System.Log.Handler.Simple
+import           System.Log.Formatter      (simpleLogFormatter)
 
-import           Rede.HarFiles.ServedEntry       (createResolveCenterFromFilePath,
-                                                  hostsFromHarFile)
-import           Rede.MainLoop.ConfigHelp        (configDir, getInterfaceName,
-                                                  getMimicPort, mimicDataDir
-                                                 )
-import           Rede.HarFiles.DnsMasq           (dnsMasqFileContents
-                                                 )
+-- Imports from other parts of the program
+import           Rede.SimpleHTTP1Response   (exampleHTTP11Response)
+
+import           Rede.HarFiles.DnsMasq      (dnsMasqFileContents)
+import           Rede.HarFiles.ServedEntry  (createResolveCenterFromFilePath,
+                                             hostsFromHarFile)
+import           Rede.MainLoop.ConfigHelp   (configDir, getInterfaceName,
+                                             getMimicPort, mimicDataDir)
 import           Rede.MainLoop.PushPullType
-import           Rede.Workers.HarWorker          (harCoherentWorker)
--- We import this one for testing sake
-import           Rede.Research.Main              (research)
-import           Rede.Http2.MakeAttendant        (http2Attendant)
+import           Rede.Workers.HarWorker     (harCoherentWorker)
 
-
-
+import           Rede.Http2.MakeAttendant   (http2Attendant)
+import           Rede.Research.Main         (research)
 
 
 -- What is the program going to do?
@@ -44,13 +48,6 @@ data ProgramAction =
     OutputHosts_PA
     |ResearchUrl_PA -- Wait for a POST request from the browser
     |ServeHar_PA
-
-
-
--- data ImproperlyConfigured = ImproperlyConfigured B.ByteString
---     deriving (Show, Typeable)
-
--- instance Exception ImproperlyConfigured
 
 
 actionStrToAction :: String -> ProgramAction
@@ -84,7 +81,9 @@ programParser = Program <$> (
 
 main :: IO ()
 main = do
+    configureLogging
     mimic_dir <- mimicDataDir
+    infoM "RehMimic" $ printf "Mimic dir: \"%s\"" mimic_dir
     let mimic_config_dir = configDir mimic_dir
     prg   <-  execParser opts_metadata
     let har_filename = harFileName prg
@@ -103,15 +102,15 @@ main = do
 
         ServeHar_PA           -> do
             port  <-  getMimicPort
-            putStrLn $  "Mimic port: " ++ (show port)
+            infoM "RehMimic" $ "Mimic port: " ++ (show port)
             iface <-  getInterfaceName mimic_config_dir
-            putStrLn $ "Using interface: " ++ (show iface)
+            infoM "RehMimic" $ "Using interface: " ++ (show iface)
 
             let 
                 priv_key_filename = privKeyFilename mimic_dir har_filename
                 cert_filename  = certificateFilename mimic_dir har_filename
-            putStrLn $ "Chosen cert. at file: " ++ (show cert_filename)
-            putStrLn $ "... with private key: " ++ (show priv_key_filename)
+            infoM "RehMimic" $ "Chosen cert. at file: " ++ (show cert_filename)
+            infoM "RehMimic" $ "... with private key: " ++ (show priv_key_filename)
             resolve_center <- createResolveCenterFromFilePath $ pack har_filename 
             let 
                 http2worker = harCoherentWorker resolve_center
@@ -138,18 +137,6 @@ main = do
 httpAttendant :: PushAction -> PullAction -> IO ()
 httpAttendant push _ = 
     push $ BL.fromChunks [exampleHTTP11Response]
-
-
--- spdyAttendant :: String -> PushAction -> PullAction -> IO () 
--- spdyAttendant har_filename push pull = do 
---     har_worker_service_pocket <- initService $ HarWorkerParams har_filename
---     activateSessionManager  
---         id 
---         (basicSession har_worker_service_pocket) 
---         push 
---         pull
---         chunkProducerHelper
-
 
 
 certificateFilename :: FilePath -> FilePath -> FilePath 
@@ -242,3 +229,18 @@ outputHosts all_seen_hosts = do
     mimic_data_dir <- mimicDataDir
     hosts_filename <- return $ mimic_data_dir </> "har_hosts.txt"
     B.writeFile hosts_filename $ dnsMasqFileContents all_seen_hosts
+
+
+configureLogging :: IO ()
+configureLogging = do 
+    s <- streamHandler stderr DEBUG  >>= 
+        \lh -> return $ setFormatter lh (simpleLogFormatter "[$time : $loggername : $prio] $msg")
+    updateGlobalLogger rootLoggerName removeHandler
+    updateGlobalLogger "HTTP2.Session" (
+        setHandlers [s] .  -- Remember that composition works in reverse...
+        setLevel ERROR  
+        )
+    updateGlobalLogger "ResearchWorker" (
+        setHandlers [s] .  -- Remember that composition works in reverse...
+        setLevel DEBUG  
+        )
