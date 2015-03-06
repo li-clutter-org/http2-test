@@ -67,7 +67,6 @@ data CanOutput = CanOutput
 data NoHeadersInChannel = NoHeadersInChannel
 
 
-
 data FramerSessionData = FramerSessionData {
       _stream2flow           :: Stream2AvailSpace
     , _stream2outputBytes    :: HashTable GlobalStreamId (Chan LB.ByteString)
@@ -78,7 +77,9 @@ data FramerSessionData = FramerSessionData {
     , _pushAction            :: PushAction
     }
 
+
 L.makeLenses ''FramerSessionData
+
 
 type FramerSession = ReaderT FramerSessionData IO
 
@@ -148,9 +149,6 @@ addCapacity stream_id delta_cap = do
             Just command_chan -> do
                 liftIO $ writeChan command_chan $ AddBytes_FCM delta_cap
         
-
-
-
 
 inputGatherer :: PullAction -> SessionInput -> FramerSession ()
 inputGatherer pull_action session_input = do 
