@@ -14,6 +14,7 @@ import           Control.Concurrent             (forkIO)
 import           Control.Monad.Catch            (catch)
 
 import qualified Data.ByteString                as B
+import qualified Data.ByteString.Lazy           as LB
 import           Data.ByteString.Char8          (unpack, pack)
 import           Data.Conduit
 import qualified Data.Monoid                    as M
@@ -31,21 +32,23 @@ import           System.FilePath
 import           System.IO
 import           System.Process
 
+import qualified Network.URI                    as U
+
 import           Rede.Workers.ResponseFragments (RequestMethod (..),
                                                  getMethodFromHeaders,
                                                  getUrlFromHeaders,
                                                  simpleResponse)
 
-import           Rede.HarFiles.DnsMasq          (dnsMasqFileContents)
+import           Rede.HarFiles.DnsMasq          (dnsMasqFileContentsToIp)
 import           Rede.HarFiles.ServedEntry      (BadHarFile (..), ResolveCenter,
                                                  allSeenHosts, resolveCenterAndOriginUrlFromLazyByteString,
-                                                 hashFromResolveCenter
+                                                 rcName
                                                  )
 import           Rede.MainLoop.CoherentWorker
 import           Rede.Workers.HarWorker         (harCoherentWorker)
 import           Rede.Http2.MakeAttendant       (http2Attendant)
 import           Rede.MainLoop.ConfigHelp       (configDir, getInterfaceName,
-                                                 getMimicPort, mimicDataDir)
+                                                 getMimicPort)
 import           Rede.MainLoop.OpenSSL_TLS      (FinishRequest(..), tlsServeWithALPNAndFinishOnRequest)
 import           Rede.Utils.ConcatConduit       (concatConduit)
 
@@ -65,6 +68,11 @@ data ServiceState = ServiceState {
 
     , _finishRequestChan :: Chan FinishRequest
 
+    , _researchDir :: FilePath 
+
+    -- The IP address that StationB needs to connect
+    , _useAddressForStationB :: B.ByteString
+
     -- This one we use in the opposite sense: we write here...
     -- ,_servingHar    :: Chan (ResolveCenter, OriginUrl )
     }
@@ -79,19 +87,23 @@ runResearchWorker ::
     Chan B.ByteString 
     -> Chan ResolveCenter 
     -> Chan FinishRequest 
+    -> FilePath
+    -> B.ByteString
     -> IO CoherentWorker
-runResearchWorker url_chan resolve_center_chan finish_request_chan = do 
+runResearchWorker url_chan resolve_center_chan finish_request_chan research_dir use_address_for_station_b = do 
     liftIO $ putStrLn "Init block called"
     next_test_url_chan <- newChan 
     next_dns_masq_file <- newChan
     liftIO $ putStrLn "End of init block"
-    let    
+    let     
         state = ServiceState {
              _nextHarvestUrl = url_chan
             ,_nextTestUrl    = next_test_url_chan
             ,_nextDNSMasqFile = next_dns_masq_file
             ,_resolveCenterChan = resolve_center_chan
             ,_finishRequestChan = finish_request_chan
+            ,_researchDir = research_dir
+            ,_useAddressForStationB = use_address_for_station_b
             }
     return $ \request -> runReaderT (researchWorkerComp request) state
 
@@ -103,6 +115,9 @@ researchWorkerComp (input_headers, maybe_source) = do
     next_test_url_chan  <- L.view nextTestUrl
     resolve_center_chan <- L.view resolveCenterChan 
     finish_chan         <- L.view finishRequestChan 
+    base_research_dir   <- L.view researchDir
+    use_address_for_station_b <- L.view useAddressForStationB
+
     let 
         method = getMethodFromHeaders input_headers
         req_url  = getUrlFromHeaders input_headers
@@ -119,7 +134,8 @@ researchWorkerComp (input_headers, maybe_source) = do
                 return $ simpleResponse 200 url 
 
             | req_url == "/testurl/" -> do 
-                -- Sends the next test url to the Chrome extension
+                -- Sends the next test url to the Chrome extension, this starts processing by 
+                -- StationB
                 liftIO $ putStrLn "..  /testurl/"
                 url <- liftIO $ readChan next_test_url_chan
                 return $ simpleResponse 200 url
@@ -130,7 +146,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                 liftIO $ putStrLn "..  /har/"
                 catch 
                     (do
-                        (resolve_center, test_url) <- liftIO $ output_computation source
+                        (resolve_center, test_url, har_file_contents) <- liftIO $ output_computation source
                         let 
                             use_text = "Response processed"
                         -- serving_har_chan <- L.view servingHar
@@ -138,19 +154,49 @@ researchWorkerComp (input_headers, maybe_source) = do
                         -- Create the contents to go in the dnsmasq file, and queue them 
                         let 
                             all_seen_hosts = resolve_center ^. allSeenHosts
-                            dnsmasq_contents = dnsMasqFileContents all_seen_hosts 
+                            dnsmasq_contents = dnsMasqFileContentsToIp use_address_for_station_b all_seen_hosts 
 
                         liftIO $ writeChan next_dnsmasq_chan dnsmasq_contents
 
                         -- We also need to queue the url somewhere to be used by StationB
-                        liftIO $ writeChan next_test_url_chan test_url
+                        liftIO $ writeChan next_test_url_chan $ urlToHTTPSScheme test_url
 
                         -- And the resolve center to be used by the serving side
                         liftIO $ writeChan resolve_center_chan resolve_center
 
+                        -- We can also use this opportunity to create a folder for this research 
+                        -- project 
+                        let 
+                            scratch_folder = (base_research_dir) </> (resolve_center ^. rcName . L.to unpack)
+                            har_filename = scratch_folder </> "harvested.har"
+                        liftIO $ createDirectoryIfMissing True scratch_folder
+                        liftIO $ LB.writeFile har_filename har_file_contents
+
                         return $ simpleResponse 200 use_text
                     )
-                    error_handler
+                    on_bad_har_file
+
+            | req_url == "/http2har/", Just source <- maybe_source -> do
+                -- Receives a .har object from the harvest station ("StationA"), and 
+                -- makes all the arrangements for it to be tested using HTTP 2
+                liftIO $ putStrLn "..  /http2har/"
+                catch 
+                    (do
+                        (resolve_center, _, har_contents_lb) <- liftIO $ output_computation source
+                        let 
+                            use_text = "Response processed"
+
+                        let 
+                            scratch_folder = base_research_dir </> (unpack (resolve_center ^. rcName ) )
+                            har_filename = scratch_folder </> "test_http2.har"
+                        liftIO $ LB.writeFile har_filename har_contents_lb
+
+                        -- And finish the business
+                        liftIO $ writeChan finish_chan FinishRequest
+
+                        return $ simpleResponse 200 use_text
+                    )
+                    on_bad_har_file
 
             | req_url == "/dnsmasq/" -> do 
                 -- Sends a DNSMASQ file to the test station ("StationB")
@@ -163,7 +209,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                 return $ simpleResponse 200 dnsmasq_contents
 
             | req_url == "/setnexturl/", Just source <- maybe_source -> do 
-                -- Receives a url to investigate from the user front-end
+                -- Receives a url to investigate from the user front-end, or from curl
                 liftIO $ putStrLn ".. /setnexturl/"
                 post_contents <- liftIO $ source $$ concatConduit
                 -- Wishful thinking: post_contents is just the url to analyze...
@@ -180,17 +226,17 @@ researchWorkerComp (input_headers, maybe_source) = do
 
 
   where 
-    error_handler :: BadHarFile -> ServiceStateMonad PrincipalStream
-    error_handler  (BadHarFile _) = 
+    on_bad_har_file :: BadHarFile -> ServiceStateMonad PrincipalStream
+    on_bad_har_file  (BadHarFile _) = 
         return $ simpleResponse 500 "BadHarFile"
 
-    output_computation :: InputDataStream -> IO (ResolveCenter, B.ByteString)
+    output_computation :: InputDataStream -> IO (ResolveCenter, B.ByteString, LB.ByteString)
     output_computation source = do 
         full_builder <- source $$ consumer ""
         let
             lb  = Bu.toLazyByteString full_builder
-            resolve_center_and_url = resolveCenterAndOriginUrlFromLazyByteString lb
-        return resolve_center_and_url
+            (a,b) = resolveCenterAndOriginUrlFromLazyByteString lb
+        return (a, b, lb)
     consumer  b = do 
         maybe_bytes <- await 
         case maybe_bytes of 
@@ -200,7 +246,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                 consumer $ b `M.mappend` (Bu.byteString bytes)
 
             Nothing -> do
-                liftIO $ putStrLn "Finishing"
+                -- liftIO $ putStrLn "Finishing"
                 return b
 
 
@@ -210,9 +256,9 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
     let 
         mimic_config_dir = configDir mimic_dir    
     port  <-  getMimicPort
-    putStrLn $  "Mimic port: " ++ (show port)
+    putStrLn $  ".. Mimic port: " ++ (show port)
     iface <-  getInterfaceName mimic_config_dir
-    putStrLn $ "Using interface: " ++ (show iface)
+    putStrLn $ ".. Mimic using interface: " ++ (show iface)
 
 
     finish_request_mvar <- newEmptyMVar 
@@ -220,6 +266,7 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
     let 
         watcher = do 
             r <- readChan finish_request_chan
+            putStrLn $ " .. Finishing mimic service  " 
             putMVar finish_request_mvar r
             watcher 
 
@@ -231,17 +278,17 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
             resolve_center <- readChan resolve_center_chan
 
             let 
-                har_filename = unpack $ hashFromResolveCenter resolve_center
+                har_filename = unpack $ resolve_center ^. rcName 
                 priv_key_filename = privKeyFilename mimic_dir har_filename
                 cert_filename  = certificateFilename mimic_dir har_filename
                 host_list = resolve_center ^. allSeenHosts
 
-            putStrLn $ "About to create comprhensive certificate for " ++ har_filename
+            putStrLn $ ".. .. about to create comprhensive certificate for " ++ har_filename
             getComprehensiveCertificate mimic_dir har_filename host_list
 
-            putStrLn $ "Chosen cert. at file: " ++ (show cert_filename)
-            putStrLn $ "... with private key: " ++ (show priv_key_filename)
-            putStrLn $ "Starting server"
+            putStrLn $ ".. .. .. Chosen cert. at file: " ++ (show cert_filename)
+            putStrLn $ ".. .. .. ..  with private key: " ++ (show priv_key_filename)
+            putStrLn $ ".. Starting mimic server"
 
             let 
                 http2worker = harCoherentWorker resolve_center
@@ -339,3 +386,22 @@ getComprehensiveCertificate mimic_dir harfilename all_seen_hosts = do
     waitForProcess h2
 
     return ()    
+
+
+urlToHTTPSScheme :: B.ByteString -> B.ByteString
+urlToHTTPSScheme original_url = let 
+    Just (U.URI {
+        U.uriScheme    = _,
+        U.uriPath      = uri_path,
+        U.uriQuery     = uri_query,
+        U.uriAuthority = uri_authority,
+        U.uriFragment  = uri_fragment
+        }) = U.parseURI $ unpack original_url
+  in 
+    pack $ show $ U.URI {
+        U.uriScheme   = "https:",
+        U.uriPath     = uri_path,
+        U.uriQuery    = uri_query,
+        U.uriFragment = uri_fragment,
+        U.uriAuthority = uri_authority
+        }

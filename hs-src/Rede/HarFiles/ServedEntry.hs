@@ -16,31 +16,36 @@ module Rede.HarFiles.ServedEntry(
     ,createResolveCenterFromLazyByteString
     ,resolveCenterAndOriginUrlFromLazyByteString
     ,hashFromResolveCenter
+    ,rcName
+    ,handlesAtResolveCenter
 
     ,ServedEntry  (..)
-    ,ResolveCenter(..)
+    ,ResolveCenter
     ,BadHarFile   (..)
+    ,ResourceHandle()
     ) where 
 
-import           Debug.Trace
 
 import           Control.Exception
 import qualified Control.Lens           as L
 import           Control.Lens           ( (^.), (&), (.~) )
 import           Control.Lens.TH        (makeLenses)
+import           Data.Char
 
 import           Data.Typeable
-import           Data.Maybe             (fromMaybe)
+import           Data.Maybe             (fromMaybe, isJust, fromJust)
 import           Data.Aeson             (decode, eitherDecode)
 import qualified Data.ByteString        as B
 import qualified Data.ByteString.Base64 as B64
 import           Network.URI            (parseURI, uriAuthority, uriRegName)
+import qualified Network.URI            as U
 import qualified Data.ByteString.Lazy   as LB
 import           Data.ByteString.Char8  (unpack, pack)
 -- import           Data.Text(Text)
 import qualified Data.Map.Strict        as M
 import qualified Data.Set               as S
 import qualified Crypto.Hash.MD5        as MD5
+-- import qualified Data.ByteString.Base64 as B64
 
 
 import           Rede.Utils             (lowercaseText)
@@ -48,6 +53,7 @@ import           Rede.MainLoop.Tokens   (
                                             UnpackedNameValueList(..)
                                             , getHeader
                                         )
+
 
 import Rede.HarFiles.JSONDataStructure 
 
@@ -90,6 +96,9 @@ data ResolveCenter = ResolveCenter {
     -- A list with all the hosts we have to emulate, without duplicates
     ,_allSeenHosts :: [B.ByteString]
 
+    -- A unique name that can be used to identify this resolve center... 
+    ,_rcName :: B.ByteString
+
     -- Some other results, like the number of resources that 
     -- can't be served because they are in the wrong HTTP method 
     -- or protocol.
@@ -121,15 +130,34 @@ resolveFromHar resolve_center resource_handle =
     doc_dic = _servedResources resolve_center
 
 
+handlesAtResolveCenter :: ResolveCenter -> [B.ByteString]
+handlesAtResolveCenter resolve_center = map 
+    (resourceHandleToByteString . fst) 
+    (M.toList $ resolve_center ^. servedResources )
+
+
 createResolveCenter :: Har_Outer -> ResolveCenter
 createResolveCenter har_document = 
     ResolveCenter  
         (M.fromList resource_pairs) -- <- Creates a dictionary
         unduplicated_hosts
+        complete_name
   where 
     resource_pairs = extractPairs har_document
     all_seen_hosts = map (L.view ( L._2 . sreHost) ) resource_pairs 
     unduplicated_hosts = (S.toList . S.fromList) all_seen_hosts
+    har_log = har_document ^. harLog
+    first_domain :: B.ByteString
+    first_domain = firstDomainFromHarLog har_log
+    hash_piece = hashFromHarLog har_log
+    complete_name = B.concat [first_domain, "--", 
+        B.map 
+            (\ ch -> case chr $ fromIntegral ch  of 
+                       c | isAlphaNum c && (not $ isSymbol c) -> ch
+                         | otherwise                          -> fromIntegral $ ord '-'
+            ) 
+            (B64.encode $ B.take 4 hash_piece)
+            ]
 
 
 createResolveCenterFromFilePath :: B.ByteString -> IO ResolveCenter
@@ -175,7 +203,7 @@ hostsFromHarFile har_filename = do
 
 extractPairs :: Har_Outer -> [(ResourceHandle, ServedEntry)]
 extractPairs har_document = 
-    map docFromEntry $ filter entryCanBeServed  doc_entries
+    map fromJust $ filter isJust $ map docFromEntry $ filter entryCanBeServed  doc_entries
   where 
     -- Using a lens to fetch the entries from the document. 
     -- The parenthesis are not needed, except as documentation
@@ -190,17 +218,19 @@ entryCanBeServed har_entry = http_method == "GET"
     http_method = har_entry ^. request.method
 
 
-docFromEntry :: Har_Entry -> (ResourceHandle, ServedEntry)
-docFromEntry e = (
-    handleFromMethodAndUrl
-        (req ^. method)
-        the_url
-    , servedEntryFromStatusHeadersAndContents
+docFromEntry :: Har_Entry -> Maybe (ResourceHandle, ServedEntry)
+docFromEntry e = do
+    entry <- servedEntryFromStatusHeadersAndContents
         (resp ^. status)
         (resp ^. respHeaders . L.to harHeadersToUVL)
         content_text
         the_url
-    )
+    return (
+            handleFromMethodAndUrl
+                (req ^. method)
+                the_url
+            , entry 
+        )
   where 
     the_url      = (req ^. reqUrl )
     req          = e ^. request
@@ -218,21 +248,42 @@ harHeadersToUVL h = UnpackedNameValueList $ map
 
 handleFromMethodAndUrl :: HereString -> HereString -> ResourceHandle
 handleFromMethodAndUrl methodx url = 
-    ResourceHandle $ methodx `B.append` url
+    ResourceHandle $ methodx `B.append` schema_neuter_url
+  where 
+    schema_neuter_url = pack $ show complete_url
+    Just (U.URI {- scheme -} _ authority u_path u_query u_frag) = U.parseURI $ unpack url
+    Just (U.URIAuth _ use_host _) = authority
+    complete_url  = U.URI {
+        U.uriScheme     = "snu:"
+        ,U.uriAuthority = Just $ U.URIAuth {
+            U.uriUserInfo = ""
+            ,U.uriRegName = use_host 
+            ,U.uriPort    = ""
+            }
+        ,U.uriPath      = u_path
+        ,U.uriQuery     = u_query 
+        ,U.uriFragment  = u_frag 
+      }
 
 
 servedEntryFromStatusHeadersAndContents :: Int
     -> UnpackedNameValueList 
     -> B.ByteString 
     -> B.ByteString
-    -> ServedEntry
-servedEntryFromStatusHeadersAndContents statusx unvl contents the_url = 
-    heedContentTypeAndDecode preliminar
-  where 
-    Just uri    = parseURI $ unpack (traceShow the_url the_url)
-    Just auth   = uriAuthority uri
-    host_of_url = pack $ uriRegName auth
-    preliminar  = ServedEntry statusx unvl contents host_of_url
+    -> Maybe ServedEntry
+servedEntryFromStatusHeadersAndContents statusx unvl contents the_url = do
+    uri <- parseURI $ unpack the_url
+    auth <- uriAuthority uri 
+    let 
+        host_of_url = pack $ uriRegName auth 
+        preliminar = ServedEntry statusx unvl contents host_of_url
+
+    return $ heedContentTypeAndDecode preliminar
+  -- where 
+  --   maybe_uri    = parseURI $ unpack the_url
+  --   Just auth   = uriAuthority uri
+  --   host_of_url = pack $ uriRegName auth
+  --   preliminar  = ServedEntry statusx unvl contents host_of_url
 
 
 contentsAreBinary :: B.ByteString  -> Bool 

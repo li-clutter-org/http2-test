@@ -480,9 +480,9 @@ workerThread req coherent_worker =
   do
     headers_output <- view headersOutput
     stream_id <- view streamId
-    (headers, pushed_streams, data_and_conclussion) <- liftIO $ coherent_worker req
+    (headers, _, data_and_conclussion) <- liftIO $ coherent_worker req
 
-    liftIO $ putStrLn $ "Num pushed streams: " ++ (show $ length pushed_streams)
+    -- liftIO $ putStrLn $ "Num pushed streams: " ++ (show $ length pushed_streams)
 
     -- Now I send the headers, if that's possible at all
     headers_sent <- liftIO $ newEmptyMVar
@@ -574,7 +574,7 @@ headersOutputThread :: Chan (GlobalStreamId, MVar HeadersSent, Headers)
                        -> ReaderT SessionData IO ()
 headersOutputThread input_chan session_output_mvar = forever $ do 
     (stream_id, headers_ready_mvar, headers) <- liftIO $ readChan input_chan
-    liftIO $ putStrLn $ "Output headers: " ++ (show headers)
+    -- liftIO $ putStrLn $ "Output headers: " ++ (show headers)
 
     -- First encode the headers using the table
     encode_dyn_table_mvar <- view toEncodeHeaders
@@ -641,7 +641,7 @@ headersOutputThread input_chan session_output_mvar = forever $ do
     liftIO $ putMVar session_output_mvar session_output
     -- And say that the headers for this thread are out 
     liftIO $ putMVar headers_ready_mvar HeadersSent
-    liftIO $ putStrLn "Headers were output"
+    -- liftIO $ putStrLn "Headers were output"
   
 
 bytestringChunk :: Int -> B.ByteString -> [B.ByteString]
@@ -663,7 +663,7 @@ dataOutputThread input_chan session_output_mvar = forever $ do
 
     -- And now just simply output it...
     let bs_chunks = bytestringChunk useChunkLength contents
-    putStrLn $ "Chunk lengths: " ++ (show (map B.length bs_chunks))
+    -- putStrLn $ "Chunk lengths: " ++ (show (map B.length bs_chunks))
 
     -- And send the chunks through while locking the output place....
     session_output <- liftIO $ takeMVar session_output_mvar

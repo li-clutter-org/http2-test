@@ -130,6 +130,12 @@ tlsServeWithALPN certificate_filename key_filename interface_name attendants int
                 pchar 
                 (fromIntegral len)
 
+        if connection_ptr == nullPtr 
+          then 
+            throwIO $ ConnectionIOError "Could not create listening end"
+          else 
+            return ()
+
         forever $ do 
             either_wired_ptr <- alloca $ \ wired_ptr_ptr -> 
                 let 
@@ -171,7 +177,7 @@ tlsServeWithALPN certificate_filename key_filename interface_name attendants int
 
                     use_protocol <- getSelectedProtocol wired_ptr
 
-                    putStrLn $ ".. Using protocol: " ++ (show use_protocol)
+                    -- putStrLn $ ".. Using protocol: " ++ (show use_protocol)
 
                     let 
                         maybe_session_attendant = case fromIntegral use_protocol of 
@@ -181,7 +187,12 @@ tlsServeWithALPN certificate_filename key_filename interface_name attendants int
                     case maybe_session_attendant of 
 
                         Just session_attendant -> 
-                            session_attendant pushAction pullAction
+                            catch 
+                                (session_attendant pushAction pullAction)
+                                ((\_ -> do 
+                                    putStrLn " ** Session ended by ConnectionIOError (well handled)"
+                                )::ConnectionIOError -> IO () )
+
 
                         Nothing ->
                             disposeWiredSession wired_ptr
@@ -271,7 +282,12 @@ tlsServeWithALPNAndFinishOnRequest certificate_filename key_filename interface_n
                         case maybe_session_attendant of 
 
                             Just session_attendant -> 
-                                session_attendant pushAction pullAction
+                                catch 
+                                    (session_attendant pushAction pullAction)
+                                    ((\_ -> do 
+                                        putStrLn " ** Session ended by ConnectionIOError (well handled)"
+                                    )::ConnectionIOError -> IO () )
+                                -- session_attendant pushAction pullAction
 
                             Nothing ->
                                 disposeWiredSession wired_ptr
@@ -288,8 +304,7 @@ tlsServeWithALPNAndFinishOnRequest certificate_filename key_filename interface_n
 -- When we are using the eternal version of this function, wake up 
 -- each second .... 
 defaultWaitTime :: CInt
-defaultWaitTime = 1000000
-
+defaultWaitTime = 200000
 -- Okej, more responsiviness needed 
 smallWaitTime :: CInt 
 smallWaitTime = 50000

@@ -161,7 +161,7 @@ inputGatherer pull_action session_input = do
       then 
         liftIO $ throwIO BadPrefixException
       else 
-        liftIO $ putStrLn "Prologue validated"
+        return ()
 
     let 
         source::Source FramerSession B.ByteString
@@ -190,7 +190,7 @@ inputGatherer pull_action session_input = do
 
                     Right (NH2.Frame (NH2.FrameHeader _ _ stream_id) (NH2.WindowUpdateFrame credit) ) -> do 
                         -- Bookkeep the increase on bytes on that stream
-                        liftIO $ putStrLn $ "Extra capacity for stream " ++ (show stream_id)
+                        -- liftIO $ putStrLn $ "Extra capacity for stream " ++ (show stream_id)
                         lift $ addCapacity (NH2.fromStreamIdentifier stream_id) (fromIntegral credit)
                         return ()
 
@@ -399,8 +399,8 @@ flowControlOutput stream_id capacity leftovers commands_chan bytes_chan = do
             no_headers <- view noHeadersInChannel
             liftIO $ takeMVar no_headers
             sendBytes leftovers
-            liftIO $ putStrLn $ "Sent flow-controlled data for " ++ (show stream_id)
-            liftIO $ putStrLn $ "Capacity left " ++ (show (capacity - amount))
+            -- liftIO $ putStrLn $ "Sent flow-controlled data for " ++ (show stream_id)
+            -- liftIO $ putStrLn $ "Capacity left " ++ (show (capacity - amount))
             liftIO $ putMVar no_headers NoHeadersInChannel
             -- and tail-invoke 
             flowControlOutput  stream_id (capacity - amount) "" commands_chan bytes_chan
@@ -410,5 +410,5 @@ flowControlOutput stream_id capacity leftovers commands_chan bytes_chan = do
             command <- liftIO $ readChan commands_chan
             case command of 
                 AddBytes_FCM delta_cap -> do 
-                    liftIO $ putStrLn $ "Flow control delta_cap stream " ++ (show stream_id)
+                    -- liftIO $ putStrLn $ "Flow control delta_cap stream " ++ (show stream_id)
                     flowControlOutput stream_id (capacity + delta_cap) leftovers commands_chan bytes_chan

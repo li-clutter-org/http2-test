@@ -1,5 +1,13 @@
-#include <sys/socket.h>
+
+#define _BSD_SOURCE       1
+#define _XOPEN_SOURCE     1   /* or any value < 500 */
+#define _POSIX_C_SOURCE     1
+
+
+
 #include <sys/types.h>
+#include <signal.h>
+#include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <stdio.h>
@@ -8,6 +16,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <pthread.h>
+#include <bits/sigthread.h>
 #include <sys/time.h>
 #include <sys/types.h>
 
@@ -75,9 +84,10 @@ void free_connection(connection_t* conn)
 #define PORT 1060
 
 // Establish a regular tcp connection
-static int tcpStart (char* hostname, int portno)
+static int tcpStart (char* hostname, int portno, int* errorh)
 {
   int error, handle;
+  *errorh = 0;
   struct hostent *host;
   struct sockaddr_in server;
 
@@ -92,6 +102,7 @@ static int tcpStart (char* hostname, int portno)
     {
       perror ("Socket");
       handle = 0;
+      *errorh = BAD_HAPPENED;
     }
   else
     {
@@ -106,6 +117,7 @@ static int tcpStart (char* hostname, int portno)
         {
           perror ("Bind");
           handle = 0;
+          *errorh = BAD_HAPPENED;
         }
       else 
         {
@@ -114,6 +126,7 @@ static int tcpStart (char* hostname, int portno)
           {
             perror("Listen");
             handle = 0;
+            *errorh = BAD_HAPPENED;
           }
         }
     }
@@ -408,7 +421,12 @@ static connection_t *sslStart (
   c->protocol_list  = (char*) malloc(protocol_list_length);
   strncpy( c->protocol_list, protocol_list, protocol_list_length );
   c->protocol_list_length = protocol_list_length;
-  c->socket = tcpStart (hostname, portno);
+  c->socket = tcpStart (hostname, portno, &result);
+
+  if ( result )
+  {
+    return 0;
+  }
 
   if (c->socket)
   {
@@ -488,7 +506,15 @@ connection_t* make_connection(char* certificate_filename, char* privkey_filename
     char* my_protocol_list, int protocol_list_length
     )
 {
-   return sslStart(
+  const int len = strlen(hostname);
+  if ( len > 0 && hostname[len-1] == '\n' )
+  { 
+     printf("HELLO THERE. I'M A FLIMSY C FUNCTION AND I CAN NOT REMOVE THE END-OF-LINE IN THE PROVIDED HOST NAME WITHOUT A TON OF LINES. I'M GOING TO SEGFAULT NOW. BYE.\n");
+     *( (int*) 0) = 42; // <-- This is the answer
+  }
+
+
+  return sslStart(
     certificate_filename, privkey_filename, hostname, 
     portno, my_protocol_list, protocol_list_length); 
 }
@@ -508,23 +534,43 @@ int wait_for_connection(
 
     // Use select to get "interruptible" accepts 
     fd_set rfds;
-    FD_ZERO(&rfds);
-    FD_SET(c->socket, &rfds);
-    struct timeval tv;
-    tv.tv_sec = microseconds / 1000000;
-    tv.tv_usec = microseconds % 1000000;
-    int retval = select(1, &rfds, NULL, NULL, &tv);
 
-    if ( retval == -1 )
+    int can_go = 0;
+
+    while( ! can_go )
     {
-      perror("select()");
-    } else if (retval > 0)
-    {
-      // We got data, just let it go...
-    } else 
-    {
-      // We didn't get data, finish and terminate
-      return TIMEOUT_REACHED;
+        FD_ZERO(&rfds);
+        FD_SET(c->socket, &rfds);
+        struct timeval tv;
+        tv.tv_sec = microseconds / 1000000;
+        tv.tv_usec = microseconds % 1000000;
+
+
+        int retval = select(FD_SETSIZE, &rfds, NULL, NULL, &tv);
+
+
+        if ( retval == -1 )
+        {
+          if ( errno == EINTR )
+          {
+             // printf(".");
+             can_go = 0;
+          } else {
+             perror("select()");
+             return BAD_HAPPENED;
+          }
+        } else if (retval > 0)
+        {
+          // We got data, just let it go...
+          // printf("letitgo\n");
+          can_go = 1;
+        } else 
+        {
+          // We didn't get data, finish and terminate
+          // printf("timeo\n");
+          return TIMEOUT_REACHED;
+        }
+
     }
 
     wired_session_t* result = (wired_session_t*) malloc(sizeof(wired_session_t) );
@@ -635,7 +681,7 @@ int recv_data(wired_session_t* ws, char* inbuffer, int buffer_size, int* data_re
     }
     if ( received <= 0 )
     {
-        perror("Unhappy error condition, TODO: specify" );
+        ERR_print_errors_fp (stderr);
         return BAD_HAPPENED;
     }
     *data_recvd = received ;

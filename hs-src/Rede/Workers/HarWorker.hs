@@ -2,7 +2,7 @@
 
 module Rede.Workers.HarWorker(
     harCoherentWorker
-    ,mutatingHarCoherentWorker
+    -- ,mutatingHarCoherentWorker
 
     ,HarWorkerServicePocket
     ,HarWorkerSessionPocket
@@ -21,7 +21,7 @@ import qualified Data.Set                     as S
 
 import           Control.Lens                 ((^.))
 import qualified Control.Lens                 as L
-import           Control.Concurrent.MVar
+-- import           Control.Concurrent.MVar
 
 import qualified Network.URI                  as U
 import           Text.Printf
@@ -188,8 +188,8 @@ adaptHeaders status_code (UnpackedNameValueList raw_headers) = let
 harCoherentWorker :: ResolveCenter -> CoherentWorker 
 harCoherentWorker resolve_center (input_headers, _ ) = do 
 
-    liftIO $ putStrLn $ "headers: " ++ (show input_headers)
-    liftIO $ putStrLn $ "Got request to %s" ++(show resource_handle)
+    -- liftIO $ putStrLn $ "headers: " ++ (show input_headers)
+    liftIO $ putStrLn $ ".. ww | Got request to %" ++(show resource_handle)
     let 
         maybe_served_entry  = resolver resource_handle :: Maybe ServedEntry
         resolver = resolveFromHar resolve_center
@@ -203,7 +203,15 @@ harCoherentWorker resolve_center (input_headers, _ ) = do
                 UnpackedNameValueList adapted_headers = adaptHeaders (served_entry ^. sreStatus ) (served_entry ^. sreHeaders)
             in return (adapted_headers , pushed_streams, yield contents)
 
-        Nothing -> return bad404PrincipalStream
+        Nothing -> do 
+
+            -- liftIO $ putStrLn $ " .. ww ee | " ++ (show resource_handle)
+            -- liftIO $ mapM_ 
+            --     (\ existing_handle -> do 
+            --         putStrLn $ " .. ww ee .. | have "  ++ (show existing_handle)
+            --     ) (handlesAtResolveCenter resolve_center)
+            
+            return bad404PrincipalStream
 
 
   where 
@@ -228,51 +236,51 @@ harCoherentWorker resolve_center (input_headers, _ ) = do
     (Just method)   = getHeaderFromFlatList input_headers ":method"
 
 
--- Serves resource from the current resolve center....
-mutatingHarCoherentWorker :: MVar ResolveCenter -> CoherentWorker 
-mutatingHarCoherentWorker resolve_center_mvar (input_headers, _ ) = do 
+-- -- Serves resource from the current resolve center....
+-- mutatingHarCoherentWorker :: MVar ResolveCenter -> CoherentWorker 
+-- mutatingHarCoherentWorker resolve_center_mvar (input_headers, _ ) = do 
 
-    liftIO $ putStrLn $ "headers: " ++ (show input_headers)
-    liftIO $ putStrLn $ "Got request to %s" ++(show resource_handle)
+--     liftIO $ putStrLn $ "headers: " ++ (show input_headers)
+--     liftIO $ putStrLn $ "Got request to %s" ++(show resource_handle)
 
-    resolve_center <- readMVar resolve_center_mvar
+--     resolve_center <- readMVar resolve_center_mvar
 
-    let 
-        maybe_served_entry  = resolver resource_handle :: Maybe ServedEntry
-        resolver = resolveFromHar resolve_center
-    -- Not pushing any streams now.... 
-    let pushed_streams = []
+--     let 
+--         maybe_served_entry  = resolver resource_handle :: Maybe ServedEntry
+--         resolver = resolveFromHar resolve_center
+--     -- Not pushing any streams now.... 
+--     let pushed_streams = []
 
-    case maybe_served_entry of 
+--     case maybe_served_entry of 
 
-        Just served_entry -> let 
-                contents = (served_entry ^. sreContents)
-                UnpackedNameValueList adapted_headers = adaptHeaders (served_entry ^. sreStatus ) (served_entry ^. sreHeaders)
-            in return (adapted_headers , pushed_streams, yield contents)
+--         Just served_entry -> let 
+--                 contents = (served_entry ^. sreContents)
+--                 UnpackedNameValueList adapted_headers = adaptHeaders (served_entry ^. sreStatus ) (served_entry ^. sreHeaders)
+--             in return (adapted_headers , pushed_streams, yield contents)
 
-        Nothing -> return bad404PrincipalStream
+--         Nothing -> return bad404PrincipalStream
 
 
-  where 
-    (Just path)                            = getHeaderFromFlatList input_headers ":path"
-    (Just host)                            = getHeaderFromFlatList input_headers ":authority"
-    Just (U.URI _ _ u_path u_query u_frag) = U.parseURIReference $ unpack path
-    complete_url                           = U.URI {
-        U.uriScheme     = "https:"
-        ,U.uriAuthority = Just $ U.URIAuth {
-            U.uriUserInfo = ""
-            ,U.uriRegName = unpack host 
-            ,U.uriPort    = ""
-            }
-        ,U.uriPath      = u_path
-        ,U.uriQuery     = u_query 
-        ,U.uriFragment  = u_frag 
-      }
+--   where 
+--     (Just path)                            = getHeaderFromFlatList input_headers ":path"
+--     (Just host)                            = getHeaderFromFlatList input_headers ":authority"
+--     Just (U.URI _ _ u_path u_query u_frag) = U.parseURIReference $ unpack path
+--     complete_url                           = U.URI {
+--         U.uriScheme     = "https:"
+--         ,U.uriAuthority = Just $ U.URIAuth {
+--             U.uriUserInfo = ""
+--             ,U.uriRegName = unpack host 
+--             ,U.uriPort    = ""
+--             }
+--         ,U.uriPath      = u_path
+--         ,U.uriQuery     = u_query 
+--         ,U.uriFragment  = u_frag 
+--       }
 
-    -- This string includes the method in front of the schema and everything else...
-    resource_handle     = handleFromMethodAndUrl method $ (pack.show) complete_url
+--     -- This string includes the method in front of the schema and everything else...
+--     resource_handle     = handleFromMethodAndUrl method $ (pack.show) complete_url
     
-    (Just method)   = getHeaderFromFlatList input_headers ":method"
+--     (Just method)   = getHeaderFromFlatList input_headers ":method"
 
 
 bad404PrincipalStream :: PrincipalStream 

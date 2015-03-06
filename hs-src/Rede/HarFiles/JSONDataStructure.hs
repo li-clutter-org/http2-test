@@ -3,17 +3,21 @@ module Rede.HarFiles.JSONDataStructure where
 
 
 import           Control.Applicative
-import           Control.Lens        ( (^.), to )
-import           Control.Lens.TH     (makeLenses)
-import           Text.Printf         (printf)
+import           Control.Lens          (to, (^.))
+import           Control.Lens.TH       (makeLenses)
+import           Text.Printf           (printf)
 
+import           Data.Maybe            (fromJust)
 import           Data.Aeson
-import           Data.Aeson.Types       (Parser)
-import           Data.ByteString        (ByteString)
+import           Data.Aeson.Types      (Parser)
+import           Data.ByteString       (ByteString)
 
-import qualified Data.ByteString.Lazy   as LB
-import           Data.ByteString.Char8  (pack)
+import           Data.ByteString.Char8 (pack, unpack)
+import qualified Data.ByteString.Lazy  as LB
+-- import           Data.Functor.Identity
 
+import           Network.URI
+import qualified Crypto.Hash.MD5        as MD5
 
 
 -- Implementation details ####################################
@@ -144,9 +148,8 @@ instance FromJSON Har_VersionPair where
 instance FromJSON Har_PageTimings where 
 
     parseJSON (Object v)  = Har_PageTimings <$> 
-         v .: "onContentLoad"          <*>
-         -- (pack <$> v .: "comment")     <*>
-         v .: "onLoad"
+         (v .:? "onContentLoad"  .!= (-1) )  <*>
+         (v .:? "onLoad" .!= (-1) )
 
 
 instance FromJSON Har_Header where 
@@ -225,7 +228,37 @@ instance FromJSON  Har_PostResponse where
     parseJSON (Object v) = Har_PostResponse <$>
         v .:  "har"                      <*>
         (pack <$> v .: "originUrl" )    
+
+
+
+-- Get the first url out from a Har Log 
+firstUrlFromHarLog :: Har_Log -> HereString
+firstUrlFromHarLog lg = let 
+    es = head $ lg ^. entries 
+    url = es ^. request . reqUrl
+  in url
         
+
+firstDomainFromHarLog :: Har_Log -> HereString
+firstDomainFromHarLog lg = let 
+    full_url = firstUrlFromHarLog lg 
+    Just parsed_url = parseURI . unpack $ full_url
+    domain = uriRegName . fromJust . uriAuthority $ parsed_url
+  in pack domain
+
+
+
+-- hashFromHarLog :: Har_Log -> HereString
+-- hashFromHarLog lg = 
+--     -- TODO: Learn to use lenses properly
+--     MD5.finalize $ foldl MD5.update MD5.init $ map (\ e -> e ^. request ^. reqUrl ) (lg ^. entries)
+
+
+
+hashFromHarLog :: Har_Log -> HereString
+hashFromHarLog lg = 
+    -- TODO: Learn to use lenses properly
+    MD5.finalize $ foldl MD5.update MD5.init $  [firstUrlFromHarLog lg]
 
 
 ------ Some small functions to try this out 

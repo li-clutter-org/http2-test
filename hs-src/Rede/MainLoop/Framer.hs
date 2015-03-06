@@ -8,7 +8,9 @@ module Rede.MainLoop.Framer(
 
 
 import           Control.Monad.Trans.Class (lift)
-import           Control.Monad.IO.Class    (MonadIO, liftIO)
+import           Control.Monad.IO.Class    (MonadIO
+                                           -- , liftIO
+                                           )
 import qualified Data.ByteString           as B
 import qualified Data.ByteString.Lazy      as LB
 import           Data.Conduit
@@ -65,10 +67,10 @@ readLength the_length gen =
   where 
     readUpTo lo  
       | (B.length lo) >= the_length  = do
-            liftIO $ putStrLn "Full read"
+            -- liftIO $ putStrLn "Full read"
             return $ B.splitAt the_length lo
       | otherwise = do 
-            liftIO $ putStrLn $ "fragment read " ++ (show lo) 
+            -- liftIO $ putStrLn $ "fragment read " ++ (show lo) 
             frag <- gen 
             readUpTo (lo `mappend` frag)
 
