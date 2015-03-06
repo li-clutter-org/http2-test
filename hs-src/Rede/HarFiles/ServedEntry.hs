@@ -9,13 +9,14 @@ module Rede.HarFiles.ServedEntry(
     ,createResolveCenter
     ,servedResources
     ,allSeenHosts
-    ,createResolveCenterFromFilePath
+    -- ,createResolveCenterFromFilePath
     ,resourceHandleToByteString
-    ,hostsFromHarFile
+    -- ,hostsFromHarFile
     ,handleFromMethodAndUrl
-    ,createResolveCenterFromLazyByteString
-    ,resolveCenterAndOriginUrlFromLazyByteString
+    -- ,createResolveCenterFromLazyByteString
+    ,resolveCenterFromLazyByteString
     ,rcName
+    ,rcOriginalUrl
     ,handlesAtResolveCenter
 
     ,ServedEntry  (..)
@@ -33,7 +34,7 @@ import           Data.Char
 
 import           Data.Typeable
 import           Data.Maybe             (fromMaybe, isJust, fromJust)
-import           Data.Aeson             (decode, eitherDecode)
+import           Data.Aeson             (eitherDecode)
 import qualified Data.ByteString        as B
 import qualified Data.ByteString.Base64 as B64
 import           Network.URI            (parseURI, uriAuthority, uriRegName)
@@ -46,7 +47,7 @@ import qualified Data.Set               as S
 -- import qualified Data.ByteString.Base64 as B64
 
 
-import           Rede.Utils             (lowercaseText)
+import           Rede.Utils             (lowercaseText, domainFromUrl)
 import           Rede.MainLoop.Tokens   (
                                             UnpackedNameValueList(..)
                                             , getHeader
@@ -97,6 +98,9 @@ data ResolveCenter = ResolveCenter {
     -- A unique name that can be used to identify this resolve center... 
     ,_rcName :: B.ByteString
 
+    -- The original url 
+    ,_rcOriginalUrl :: B.ByteString
+
     -- Some other results, like the number of resources that 
     -- can't be served because they are in the wrong HTTP method 
     -- or protocol.
@@ -134,20 +138,23 @@ handlesAtResolveCenter resolve_center = map
     (M.toList $ resolve_center ^. servedResources )
 
 
-createResolveCenter :: Har_Outer -> ResolveCenter
+createResolveCenter :: Har_PostResponse -> ResolveCenter
 createResolveCenter har_document = 
     ResolveCenter  
         (M.fromList resource_pairs) -- <- Creates a dictionary
         unduplicated_hosts
         complete_name
+        first_url
   where 
-    resource_pairs = extractPairs har_document
+    har_log = har_document ^. harLogPR
+    resource_pairs = extractPairs har_log
     all_seen_hosts = map (L.view ( L._2 . sreHost) ) resource_pairs 
     unduplicated_hosts = (S.toList . S.fromList) all_seen_hosts
-    har_log = har_document ^. harLog
+    
+    first_url = har_document ^. originUrl 
     first_domain :: B.ByteString
-    first_domain = firstDomainFromHarLog har_log
-    hash_piece = hashFromHarLog har_log
+    first_domain = domainFromUrl first_url
+    hash_piece = hashFromUrl first_url
     complete_name = B.concat [first_domain, "--", 
         B.map 
             (\ ch -> case chr $ fromIntegral ch  of 
@@ -158,54 +165,50 @@ createResolveCenter har_document =
             ]
 
 
-createResolveCenterFromFilePath :: B.ByteString -> IO ResolveCenter
-createResolveCenterFromFilePath filename = do 
-    file_contents <- LB.readFile $ unpack filename
-    case (decode file_contents :: Maybe Har_Outer ) of 
+-- createResolveCenterFromFilePath :: B.ByteString -> IO ResolveCenter
+-- createResolveCenterFromFilePath filename = do 
+--     file_contents <- LB.readFile $ unpack filename
+--     case (decode file_contents :: Maybe Har_Outer ) of 
 
-        Just doc_model -> return $ createResolveCenter doc_model
+--         Just doc_model -> return $ createResolveCenter doc_model
 
-        Nothing -> throw $ BadHarFile  filename
-
-
-createResolveCenterFromLazyByteString :: LB.ByteString -> ResolveCenter
-createResolveCenterFromLazyByteString file_contents = do 
-    case (decode file_contents :: Maybe Har_Outer ) of 
-
-        Just doc_model ->  createResolveCenter doc_model
-
-        Nothing -> throw $ BadHarFile $"InputString"
+--         Nothing -> throw $ BadHarFile  filename
 
 
-resolveCenterAndOriginUrlFromLazyByteString :: LB.ByteString -> (ResolveCenter, B.ByteString)
-resolveCenterAndOriginUrlFromLazyByteString file_contents = do 
+-- createResolveCenterFromLazyByteString :: LB.ByteString -> ResolveCenter
+-- createResolveCenterFromLazyByteString file_contents = do 
+--     case (decode file_contents :: Maybe Har_Outer ) of 
+
+--         Just doc_model ->  createResolveCenter doc_model
+
+--         Nothing -> throw $ BadHarFile $"InputString"
+
+
+resolveCenterFromLazyByteString :: LB.ByteString -> ResolveCenter
+resolveCenterFromLazyByteString file_contents = do 
     case (eitherDecode file_contents :: Either String Har_PostResponse ) of 
 
-        Right (Har_PostResponse har_log oirigin_url) ->  
-        -- Right (Har_PostResponse oirigin_url) ->  
-          let
-            doc_model = Har_Outer har_log
-            in 
-            (createResolveCenter doc_model, oirigin_url)
+        Right har_post_response ->  
+            createResolveCenter har_post_response
 
         Left msg -> throw $ BadHarFile $ pack msg
 
 
 -- Convenience function to extract all the hosts from a .har file. 
 -- Not very efficient.
-hostsFromHarFile :: FilePath -> IO [B.ByteString]
-hostsFromHarFile har_filename = do
-    resolve_center <- createResolveCenterFromFilePath $ pack har_filename
-    return $ resolve_center ^. allSeenHosts
+-- hostsFromHarFile :: FilePath -> IO [B.ByteString]
+-- hostsFromHarFile har_filename = do
+--     resolve_center <- createResolveCenterFromFilePath $ pack har_filename
+--     return $ resolve_center ^. allSeenHosts
 
 
-extractPairs :: Har_Outer -> [(ResourceHandle, ServedEntry)]
-extractPairs har_document = 
+extractPairs :: Har_Log -> [(ResourceHandle, ServedEntry)]
+extractPairs har_log = 
     map fromJust $ filter isJust $ map docFromEntry $ filter entryCanBeServed  doc_entries
   where 
     -- Using a lens to fetch the entries from the document. 
     -- The parenthesis are not needed, except as documentation
-    doc_entries = har_document ^. (harLog . entries)
+    doc_entries =har_log ^. entries
 
 
 -- Right now, we will be filtering out requests which are based on 

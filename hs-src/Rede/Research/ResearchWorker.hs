@@ -5,52 +5,57 @@ module Rede.Research.ResearchWorker(
     ) where 
 
 
-import           Control.Lens                   ((^.))
-import qualified Control.Lens                   as L
+import           Control.Lens                    ((^.))
+import qualified Control.Lens                    as L
 -- import           Control.Exception              (catch)
-import           Control.Concurrent             (forkIO)
+import           Control.Concurrent              (forkIO)
 import           Control.Concurrent.Chan
 import           Control.Concurrent.MVar
-import           Control.Monad.Catch            (catch)
+import           Control.Monad.Catch             (catch)
 
-import qualified Data.ByteString                as B
-import           Data.ByteString.Char8          (pack, unpack)
-import qualified Data.ByteString.Lazy           as LB
+import qualified Data.ByteString                 as B
+import           Data.ByteString.Char8           (pack, unpack)
+import qualified Data.ByteString.Lazy            as LB
 import           Data.Conduit
-import           Data.Foldable                  (foldMap)
-import           Data.Monoid                    (mappend)
-import qualified Data.Monoid                    as M
+import           Data.Foldable                   (foldMap)
+import           Data.Monoid                     (mappend)
+import qualified Data.Monoid                     as M
 -- import qualified Data.ByteString.Lazy           as LB
-import qualified Data.ByteString.Builder        as Bu
+import qualified Data.ByteString.Builder         as Bu
 
 import           Control.Monad.IO.Class
-import           Control.Monad.Trans.Reader     (ReaderT (..), runReaderT)
+import           Control.Monad.Trans.Reader      (ReaderT (..), runReaderT)
 import           System.Directory
 import           System.FilePath
 import           System.IO
 import           System.Process
 
-import qualified Network.URI                    as U
+import qualified Network.URI                     as U
 
 import           System.Log.Logger
-import           Text.Printf                    (printf)
+import           Text.Printf                     (printf)
 
-import           Rede.Workers.ResponseFragments (RequestMethod (..),
-                                                 getMethodFromHeaders,
-                                                 getUrlFromHeaders,
-                                                 simpleResponse)
+import           Rede.Workers.ResponseFragments  (RequestMethod (..),
+                                                  getMethodFromHeaders,
+                                                  getUrlFromHeaders,
+                                                  simpleResponse)
 
-import           Rede.HarFiles.DnsMasq          (dnsMasqFileContentsToIp)
-import           Rede.HarFiles.ServedEntry      (BadHarFile (..), ResolveCenter,
-                                                 allSeenHosts, rcName, resolveCenterAndOriginUrlFromLazyByteString)
-import           Rede.Http2.MakeAttendant       (http2Attendant)
+import           Rede.HarFiles.DnsMasq           (dnsMasqFileContentsToIp)
+-- import           Rede.HarFiles.JSONDataStructure (originUrl)
+import           Rede.HarFiles.ServedEntry       (BadHarFile (..),
+                                                  ResolveCenter, allSeenHosts,
+                                                  rcName, resolveCenterFromLazyByteString,
+                                                  rcOriginalUrl
+                                                  )
+import           Rede.Http2.MakeAttendant        (http2Attendant)
 import           Rede.MainLoop.CoherentWorker
-import           Rede.MainLoop.ConfigHelp       (configDir, getInterfaceName,
-                                                 getMimicPort)
-import           Rede.MainLoop.OpenSSL_TLS      (FinishRequest (..), tlsServeWithALPNAndFinishOnRequest)
-import           Rede.Utils.ConcatConduit       (concatConduit)
-import           Rede.Utils.PrintfArgByteString ()
-import           Rede.Workers.HarWorker         (harCoherentWorker)
+import           Rede.MainLoop.ConfigHelp        (configDir, getInterfaceName,
+                                                  getMimicPort)
+import           Rede.MainLoop.OpenSSL_TLS       (FinishRequest (..), tlsServeWithALPNAndFinishOnRequest)
+import           Rede.Utils.ConcatConduit        (concatConduit)
+import           Rede.Utils.PrintfArgByteString  ()
+import           Rede.Workers.HarWorker          (harCoherentWorker)
+
 
 
 
@@ -147,8 +152,9 @@ researchWorkerComp (input_headers, maybe_source) = do
                 liftIO $ infoM "ResearchWorker" "..  /har/"
                 catch 
                     (do
-                        (resolve_center, test_url, har_file_contents) <- liftIO $ output_computation source
+                        (resolve_center, har_file_contents) <- liftIO $ output_computation source
                         let 
+                            test_url = resolve_center ^. rcOriginalUrl
                             use_text = "Response processed"
                         -- serving_har_chan <- L.view servingHar
 
@@ -183,7 +189,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                 liftIO $ infoM "ResearchWorker" "..  /http2har/"
                 catch 
                     (do
-                        (resolve_center, _, har_contents_lb) <- liftIO $ output_computation source
+                        (resolve_center,  har_contents_lb) <- liftIO $ output_computation source
                         let 
                             use_text = "Response processed"
 
@@ -231,13 +237,13 @@ researchWorkerComp (input_headers, maybe_source) = do
     on_bad_har_file  (BadHarFile _) = 
         return $ simpleResponse 500 "BadHarFile"
 
-    output_computation :: InputDataStream -> IO (ResolveCenter, B.ByteString, LB.ByteString)
+    output_computation :: InputDataStream -> IO (ResolveCenter,  LB.ByteString)
     output_computation source = do 
         full_builder <- source $$ consumer ""
         let
             lb  = Bu.toLazyByteString full_builder
-            (a,b) = resolveCenterAndOriginUrlFromLazyByteString lb
-        return (a, b, lb)
+            rc = resolveCenterFromLazyByteString lb
+        return (rc, lb)
     consumer  b = do 
         maybe_bytes <- await 
         case maybe_bytes of 

@@ -1,16 +1,17 @@
-{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings, TemplateHaskell, DeriveDataTypeable #-}
 module Rede.HarFiles.JSONDataStructure where 
 
 
 import           Control.Applicative
 import           Control.Lens                   (to, (^.))
 import           Control.Lens.TH                (makeLenses)
+import           Control.Exception
 import           Text.Printf                    (printf)
 
 import           Data.Aeson
+import           Data.Typeable
 import           Data.Aeson.Types               (Parser)
 import           Data.ByteString                (ByteString)
-import           Data.Maybe                     (fromJust)
 
 import           Data.ByteString.Char8          (pack, unpack)
 import qualified Data.ByteString.Lazy           as LB
@@ -27,6 +28,15 @@ import           Debug.Trace                    (trace)
 
 
 -- Implementation details ####################################
+
+
+data HarStructureLogicalError = HarStructureLogicalError String 
+    deriving (Show, Typeable)
+
+
+instance Exception HarStructureLogicalError 
+
+
 
 -- String type to be used when de-serializing an 
 -- element from JSON har
@@ -249,17 +259,28 @@ firstDomainFromHarLog :: Har_Log -> HereString
 firstDomainFromHarLog lg = let 
     full_url = firstUrlFromHarLog lg 
     Just parsed_url = parseURI . unpack $ full_url
-    domain = uriRegName . fromJust . uriAuthority $ parsed_url
-  in pack domain
+    maybe_domain = do  -- Maybe monad
+        auth <- uriAuthority $ parsed_url
+        return $ uriRegName auth
+  in case maybe_domain of 
+    Just domain -> pack domain
+    Nothing -> throw (
+        HarStructureLogicalError $ printf "First domain failed to parse, it was: %s" full_url)
 
 
-hashFromHarLog :: Har_Log -> HereString
-hashFromHarLog lg = 
+hashFromHarPostResponse :: Har_PostResponse -> HereString
+hashFromHarPostResponse lg = 
     -- TODO: Learn to use lenses properly
     MD5.finalize $ foldl MD5.update MD5.init $  [trace (printf "url to hash: %s\n" $ unpack url_fragment) url_fragment]
   where 
-    url = firstUrlFromHarLog lg
+    url = lg ^. originUrl
     url_fragment = neutralizeUrl url
+
+
+hashFromUrl :: HereString -> HereString 
+hashFromUrl url = 
+    MD5.finalize $ foldl MD5.update MD5.init $  [neutralizeUrl url]
+
 
 
 

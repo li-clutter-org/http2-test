@@ -11,6 +11,7 @@ module Rede.Utils (
     ,unfoldChannelAndSource
     ,stripString
     ,neutralizeUrl
+    ,domainFromUrl
     ) where 
 
 
@@ -136,3 +137,11 @@ neutralizeUrl url = let
       }
   in 
     pack $ show complete_url
+
+
+domainFromUrl :: B.ByteString -> B.ByteString
+domainFromUrl url = let 
+    Just (U.URI {- scheme -} _ authority _ _ _) = U.parseURI $ unpack url
+    Just (U.URIAuth _ use_host _) = authority
+  in 
+    pack use_host

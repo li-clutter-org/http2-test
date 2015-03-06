@@ -4,4 +4,4 @@
 #sudo setcap 'cap_net_bind_service=+eip' ./cmd1.sh
 #
 source makeenv
-./reh-mimic --action=research --har-file=irrelevant
+./reh-mimic --action=research 
