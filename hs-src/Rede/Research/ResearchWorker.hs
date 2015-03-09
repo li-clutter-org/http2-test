@@ -8,7 +8,7 @@ module Rede.Research.ResearchWorker(
 import           Control.Lens                    ((^.))
 import qualified Control.Lens                    as L
 -- import           Control.Exception              (catch)
-import           Control.Concurrent              (forkIO)
+import           Control.Concurrent              (forkIO, threadDelay)
 import           Control.Concurrent.Chan
 import           Control.Concurrent.MVar
 import           Control.Monad.Catch             (catch)
@@ -144,6 +144,9 @@ researchWorkerComp (input_headers, maybe_source) = do
                 -- StationB
                 liftIO $ infoM "ResearchWorker" "..  /testurl/"
                 url <- liftIO $ readChan next_test_url_chan
+                -- Okej, got the thing, but I' need to be sure that there has been enough time to 
+                -- apply the new network settings in StationB 
+                liftIO $ threadDelay 4000000 -- <-- 4 seconds
                 return $ simpleResponse 200 url
 
             | req_url == "/har/", Just source <- maybe_source -> do
