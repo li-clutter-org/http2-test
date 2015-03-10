@@ -22,10 +22,15 @@ Installation
 
 ## The short version
 
-* After the checkout and while being at the project directory. 
+* After the checkout and while being at the project directory, install the instrumentation 
+  webserver in the following way:
 
         $ cabal sandbox init
         $ cabal install
+
+* [TODO: Write a more detailed instance-setup procedure] Scripts and extensions to be distributed to the station machines:
+
+        $ fab apt-stations
     
 That's it!
 
