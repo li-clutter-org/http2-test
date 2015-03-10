@@ -17,6 +17,12 @@ import os
 import os.path
 import subprocess as sp
 
+
+import daemon
+
+
+
+
 # It may be a good idea to have some flexibility here, later see to that.... (TODO)
 # import argparse
 
@@ -38,6 +44,7 @@ def main():
     while True:
         work(args)
 
+
 def work(args):
     try:
         config_file = sp.check_output(args)
@@ -57,5 +64,8 @@ def work(args):
 
 
 if __name__ == "__main__":
-    main()
+    with daemon.DaemonContext():
+        main()
+
+
 

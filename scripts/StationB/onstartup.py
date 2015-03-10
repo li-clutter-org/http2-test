@@ -16,6 +16,8 @@ def run(cmdstr):
     return p
 
 chrome_process = run("google-chrome")
+# Let's start also a daemon process to update the dns masq
+run("python /home/http2study/StationB/configure_dnsmasq.py")
 time.sleep(5.0)
 s = tool("xwininfo -tree -root")
 mo = re.search(r"\s+(0x[a-f0-9]+) \".*?Google Chrome\"", s)

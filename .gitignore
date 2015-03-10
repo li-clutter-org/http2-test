@@ -19,3 +19,5 @@ spdy-ping
 /mimic-here/config/ca/certindex.txt
 /dump.rdb
 **/.idea
+/scripts/VNC-5.2.3-Linux-x64-ANY.tar.gz
+/scripts/google-chrome-stable_current_amd64.deb

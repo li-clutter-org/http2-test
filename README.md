@@ -28,6 +28,11 @@ Installation
         $ cabal sandbox init
         $ cabal install
 
+* You need a few third-party files for the installation to succeed. They should be: 
+
+  - scripts/VNC-5.2.3-Linux-x64-ANY.tar.gz
+  - scripts/google-chrome-stable\_current\_amd64.deb
+
 * [TODO: Write a more detailed instance-setup procedure] Scripts and extensions to be distributed to the station machines:
 
         $ fab apt-stations
