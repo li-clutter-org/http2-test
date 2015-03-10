@@ -134,14 +134,14 @@ researchWorkerComp (input_headers, maybe_source) = do
         -- the state of this program... 
         Post_RM 
             | req_url == "/nexturl/" -> do 
-                -- Starts harvesting of a resource
+                -- Starts harvesting of a resource... this request is made by StationA
                 liftIO $ infoM "ResearchWorker" "..  /nexturl/"
                 url <- liftIO $ readChan next_harvest_url
                 return $ simpleResponse 200 url 
 
             | req_url == "/testurl/" -> do 
                 -- Sends the next test url to the Chrome extension, this starts processing by 
-                -- StationB
+                -- StationB... the request is started by StationB
                 liftIO $ infoM "ResearchWorker" "..  /testurl/"
                 url <- liftIO $ readChan next_test_url_chan
                 -- Okej, got the thing, but I' need to be sure that there has been enough time to 
