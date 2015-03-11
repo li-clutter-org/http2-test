@@ -6,3 +6,5 @@ export MIMIC_DATA_DIR=$THIS_DIR/mimic-here/
 export LD_LIBRARY_PATH=/opt/openssl-1.0.2/lib:$LD_LIBRARY_PATH
 export PATH=$THIS_DIR/.cabal-sandbox/bin:$PATH
 export PATH=/opt/openssl-1.0.2/bin:$PATH
+# Have a file here in the root with the aws access keys to use.
+source $THIS_DIR/aws_access_keys
