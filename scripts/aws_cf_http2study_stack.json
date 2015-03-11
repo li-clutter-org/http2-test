@@ -1,0 +1,187 @@
+{
+    "AWSTemplateFormatVersion" : "2010-09-09",
+
+    "Description" : "Allocate subnets and templates...",
+
+    "Parameters" : 
+    {
+        "KeyName": {
+          "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instance",
+          "Type": "AWS::EC2::KeyPair::KeyName",
+          "ConstraintDescription" : "must be the name of an existing EC2 KeyPair."
+        }
+    },
+
+  "Resources":
+    {
+        "httpTwoVpc": {
+           "Type" : "AWS::EC2::VPC",
+           "Properties" : {
+              "CidrBlock" : "192.168.112.0/22",
+              "EnableDnsSupport" : true,
+              "EnableDnsHostnames" : false,
+              "InstanceTenancy" : "default",
+              "Tags" : [
+                    {"Key" : "Name", "Value" : "httpTwoVpc"}
+                ]
+           }
+        },
+
+        "vpcPublicRouting": {
+            "Type": "AWS::EC2::RouteTable",
+            "Properties": {
+                "VpcId": {"Ref": "httpTwoVpc"},
+                "Tags": {
+                    "Key": "Name",
+                    "Value": "vpcPublicRouting"
+                }
+            },
+            "DependsOn": ["httpTwoVpc"]
+        },
+
+        "vpcPRRoute1": {
+            "Type": "AWS::EC2::Route",
+            "Properties": {
+                "DestinationCidrBlock": "0.0.0.0/0",
+                "GatewayId": {"Ref": "http2StudyInternetGateway"},
+                "RouteTableId": {"Ref": "vpcPublicRouting"}
+            },
+            "DependsOn": ["http2StudyInternetGateway"]
+        },
+
+        "internalSubnet": {
+            "Type" : "AWS::EC2::Subnet",
+            "Properties" : 
+            {
+                "CidrBlock" : "192.168.114.0/24",
+                "VpcId" : { "Ref" : "httpTwoVpc" },
+                "Tags" : [
+                    {"Key" : "Name", "Value" : "internalSubnet"}
+                ]
+            }
+        },
+
+        "natSubnet": {
+            "Type" : "AWS::EC2::Subnet",
+            "Properties" : 
+            {
+                "CidrBlock" : "192.168.115.0/24",
+                "VpcId" : { "Ref" : "httpTwoVpc" },
+                "Tags" : [
+                    {"Key" : "Name", "Value" : "natSubnet"}
+                ]
+            }
+        },
+
+        "controlSubnet": {
+            "Type" : "AWS::EC2::Subnet",
+            "Properties" : 
+            {
+                "CidrBlock" : "192.168.112.0/24",
+                "VpcId" : { "Ref" : "httpTwoVpc" },
+                "Tags" : [
+                    {"Key" : "Name", "Value" : "controlSubnet"}
+                ]
+            }
+        },
+
+        "harvestInstance": {
+            "Type" : "AWS::EC2::Instance",
+            "Properties" : {
+                "ImageId": "ami-29ebb519",
+                "NetworkInterfaces": [
+                    {
+                        "AssociatePublicIpAddress": true,
+                        "Description": "Control interface",
+                        "DeviceIndex": 0,
+                        "DeleteOnTermination": true,
+                        "GroupSet": [ 
+                            {"Ref":"SSHAccess"}
+                        ],
+                        "SubnetId": {"Ref": "controlSubnet"},
+                        "PrivateIpAddress": "192.168.112.129"
+                    },
+                    {
+                        "AssociatePublicIpAddress": false,
+                        "Description": "Private Side interface",
+                        "DeviceIndex": 1,
+                        "DeleteOnTermination": true,
+                        "GroupSet": [ 
+                            {"Ref":"AllAccess"}
+                        ],
+                        "SubnetId": {"Ref": "controlSubnet"},
+                        "PrivateIpAddress": "192.168.114.129"
+                    }
+                ],
+                "InstanceType": "t2.micro",
+                "KeyName" : { "Ref" : "KeyName" },
+                "Tags" : [
+                    {"Key" : "Name", "Value" : "harvestInstance"}
+                ]
+            },
+            "DependsOn": ["vpcGatewayAttachment"]
+        },
+
+
+        "SSHAccess": {
+           "Type" : "AWS::EC2::SecurityGroup",
+           "Properties" :{
+                "GroupDescription" : "AllowOnlySSHAccess",
+                "VpcId": {
+                    "Ref": "httpTwoVpc"
+                    },
+                "SecurityGroupIngress" :  [ {
+                        "IpProtocol" : "tcp",
+                        "FromPort" : "22",
+                        "ToPort" : "22",
+                        "CidrIp" : "0.0.0.0/0"
+                        } 
+                    ],
+                "Tags":[
+                    {
+                        "Key": "Name",
+                        "Value": "SSHAccess"
+                    }
+                ]
+           }
+        },
+
+        "AllAccess": {
+           "Type" : "AWS::EC2::SecurityGroup",
+           "Properties" :{
+                "GroupDescription" : "AllowOnlySSHAccess",
+                "VpcId": {
+                    "Ref": "httpTwoVpc"
+                    },
+                "SecurityGroupIngress" :  [ {
+                        "IpProtocol" : "tcp",
+                        "FromPort" : "0",
+                        "ToPort" : "65536",
+                        "CidrIp" : "0.0.0.0/0"
+                        } 
+                    ],
+                "Tags":[
+                    {
+                        "Key": "Name",
+                        "Value": "SSHAccess"
+                    }
+                ]
+           }
+        },
+
+        "vpcGatewayAttachment": {
+           "Type" : "AWS::EC2::VPCGatewayAttachment",
+           "Properties" : {
+              "InternetGatewayId" : { "Ref": "http2StudyInternetGateway"},
+              "VpcId" : {"Ref": "httpTwoVpc"}
+           },
+           "DependsOn": ["http2StudyInternetGateway", "httpTwoVpc"]
+        } ,
+
+        "http2StudyInternetGateway": {
+            "Type" : "AWS::EC2::InternetGateway",
+            "Properties" : {
+                "Tags" : [ {"Key" : "Name", "Value" : "http2StudyInternetGateway"}]            }
+        }
+    }
+}     
