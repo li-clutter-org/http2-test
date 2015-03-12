@@ -12,8 +12,7 @@
         }
     },
 
-  "Resources":
-    {
+   "Resources": {
         "httpTwoVpc": {
            "Type" : "AWS::EC2::VPC",
            "Properties" : {
@@ -23,7 +22,7 @@
               "InstanceTenancy" : "default",
               "Tags" : [
                     {"Key" : "Name", "Value" : "httpTwoVpc"}
-                ]
+               ]
            }
         },
 
@@ -31,10 +30,10 @@
             "Type": "AWS::EC2::RouteTable",
             "Properties": {
                 "VpcId": {"Ref": "httpTwoVpc"},
-                "Tags": {
+                "Tags": [{
                     "Key": "Name",
                     "Value": "vpcPublicRouting"
-                }
+                }]
             },
             "DependsOn": ["httpTwoVpc"]
         },
@@ -47,6 +46,14 @@
                 "RouteTableId": {"Ref": "vpcPublicRouting"}
             },
             "DependsOn": ["http2StudyInternetGateway"]
+        },
+
+        "associatePublicsubnetWithRouting": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "RouteTableId": {"Ref": "vpcPublicRouting"},
+                "SubnetId": {"Ref": "controlSubnet"}
+            }
         },
 
         "internalSubnet": {
@@ -91,26 +98,12 @@
                 "ImageId": "ami-29ebb519",
                 "NetworkInterfaces": [
                     {
-                        "AssociatePublicIpAddress": true,
-                        "Description": "Control interface",
-                        "DeviceIndex": 0,
-                        "DeleteOnTermination": true,
-                        "GroupSet": [ 
-                            {"Ref":"SSHAccess"}
-                        ],
-                        "SubnetId": {"Ref": "controlSubnet"},
-                        "PrivateIpAddress": "192.168.112.129"
+                       "NetworkInterfaceId": {"Ref": "hiControlSubnetInterface"},
+                       "DeviceIndex": 0
                     },
                     {
-                        "AssociatePublicIpAddress": false,
-                        "Description": "Private Side interface",
-                        "DeviceIndex": 1,
-                        "DeleteOnTermination": true,
-                        "GroupSet": [ 
-                            {"Ref":"AllAccess"}
-                        ],
-                        "SubnetId": {"Ref": "controlSubnet"},
-                        "PrivateIpAddress": "192.168.114.129"
+                       "NetworkInterfaceId": {"Ref": "hiPrivateInterface"},
+                       "DeviceIndex": 1
                     }
                 ],
                 "InstanceType": "t2.micro",
@@ -122,7 +115,51 @@
             "DependsOn": ["vpcGatewayAttachment"]
         },
 
+        "hiControlSubnetInterface": {
+            "Type": "AWS::EC2::NetworkInterface",
+            "Properties": {
+                "Description": "Control interface",
+                
+                
+                "GroupSet": [ 
+                    {"Ref":"SSHAccess"}
+                ],
+                "SubnetId": {"Ref": "controlSubnet"},
+                "PrivateIpAddress": "192.168.112.129"
+            }
+        },
 
+        "hiPrivateInterface": {
+            "Type": "AWS::EC2::NetworkInterface",
+            "Properties": {
+                "Description": "Private Side interface",
+                
+                
+                "GroupSet": [ 
+                    {"Ref":"AllAccess"}
+                ],
+                "SubnetId": {"Ref": "internalSubnet"},
+                "PrivateIpAddress": "192.168.114.129"
+            }
+        },
+
+        "hiControlAddress" : {
+            "Type" : "AWS::EC2::EIP",
+            "Properties" : {
+                "Domain" : "vpc"
+            },
+            "DependsOn": ["httpTwoVpc"]
+        },
+
+        "hiAssociateControl" : {
+            "Type" : "AWS::EC2::EIPAssociation",
+            "Properties" : {
+                "AllocationId" : { "Fn::GetAtt" : [ "hiControlAddress", "AllocationId" ]},
+                "NetworkInterfaceId" : { "Ref" : "hiPrivateInterface" }
+            }
+        },
+
+       
         "SSHAccess": {
            "Type" : "AWS::EC2::SecurityGroup",
            "Properties" :{
@@ -155,8 +192,8 @@
                     },
                 "SecurityGroupIngress" :  [ {
                         "IpProtocol" : "tcp",
-                        "FromPort" : "0",
-                        "ToPort" : "65536",
+                        "FromPort" : "10",
+                        "ToPort" : "40000",
                         "CidrIp" : "0.0.0.0/0"
                         } 
                     ],
@@ -181,7 +218,8 @@
         "http2StudyInternetGateway": {
             "Type" : "AWS::EC2::InternetGateway",
             "Properties" : {
-                "Tags" : [ {"Key" : "Name", "Value" : "http2StudyInternetGateway"}]            }
+                "Tags" : [ {"Key" : "Name", "Value" : "http2StudyInternetGateway"}]            
+            }
         }
     }
-}     
+}
