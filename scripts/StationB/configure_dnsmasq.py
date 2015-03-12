@@ -28,7 +28,7 @@ import daemon
 
 
 DEFAULT_POLL_ENDPOINT = "https://instr.httpdos.com:1070/dnsmasq/"
-DNSMASQ_CONFIG_PLACE = "/home/http2study/dnsmasq_more.conf"
+DNSMASQ_CONFIG_PLACE = "/home/{user}/dnsmasq_more.conf".format(user=os.environ["USER"])
 AUX_SSL_PATH= "/opt/openssl-1.0.2/"
 
 def curl_arguments(endpoint):

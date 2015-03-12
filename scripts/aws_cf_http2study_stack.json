@@ -155,9 +155,77 @@
             "Type" : "AWS::EC2::EIPAssociation",
             "Properties" : {
                 "AllocationId" : { "Fn::GetAtt" : [ "hiControlAddress", "AllocationId" ]},
-                "NetworkInterfaceId" : { "Ref" : "hiPrivateInterface" }
+                "NetworkInterfaceId" : { "Ref" : "hiControlSubnetInterface" }
             }
         },
+
+        "testInstance": {
+            "Type" : "AWS::EC2::Instance",
+            "Properties" : {
+                "ImageId": "ami-29ebb519",
+                "NetworkInterfaces": [
+                    {
+                       "NetworkInterfaceId": {"Ref": "tiControlSubnetInterface"},
+                       "DeviceIndex": 0
+                    },
+                    {
+                       "NetworkInterfaceId": {"Ref": "tiPrivateInterface"},
+                       "DeviceIndex": 1
+                    }
+                ],
+                "InstanceType": "t2.micro",
+                "KeyName" : { "Ref" : "KeyName" },
+                "Tags" : [
+                    {"Key" : "Name", "Value" : "testInstance"}
+                ]
+            },
+            "DependsOn": ["vpcGatewayAttachment"]
+        },
+
+        "tiControlSubnetInterface": {
+            "Type": "AWS::EC2::NetworkInterface",
+            "Properties": {
+                "Description": "Control interface",
+                
+                
+                "GroupSet": [ 
+                    {"Ref":"SSHAccess"}
+                ],
+                "SubnetId": {"Ref": "controlSubnet"},
+                "PrivateIpAddress": "192.168.112.130"
+            }
+        },
+
+        "tiPrivateInterface": {
+            "Type": "AWS::EC2::NetworkInterface",
+            "Properties": {
+                "Description": "Private Side interface",
+                
+                
+                "GroupSet": [ 
+                    {"Ref":"AllAccess"}
+                ],
+                "SubnetId": {"Ref": "internalSubnet"},
+                "PrivateIpAddress": "192.168.114.130"
+            }
+        },
+
+        "tiControlAddress" : {
+            "Type" : "AWS::EC2::EIP",
+            "Properties" : {
+                "Domain" : "vpc"
+            },
+            "DependsOn": ["httpTwoVpc"]
+        },
+
+        "tiAssociateControl" : {
+            "Type" : "AWS::EC2::EIPAssociation",
+            "Properties" : {
+                "AllocationId" : { "Fn::GetAtt" : [ "tiControlAddress", "AllocationId" ]},
+                "NetworkInterfaceId" : { "Ref" : "tiControlSubnetInterface" }
+            }
+        },
+
 
        
         "SSHAccess": {

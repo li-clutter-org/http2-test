@@ -1,8 +1,6 @@
 #!/bin/sh
-# DESKTOP_SESSION=xfce
-# export DESKTOP_SESSION
-# startxfce4
 xfwm4 --replace --daemon --display=$DISPLAY
 sleep 4
-python /home/http2study/onstartup.py
+# This one should be setup before... setup is per-station...
+python $HOME/onstartup.py
 vncserver-virtual -kill $DISPLAY
