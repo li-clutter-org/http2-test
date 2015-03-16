@@ -141,7 +141,7 @@ researchWorkerComp (input_headers, maybe_source) = do
 
             | req_url == "/testurl/" -> do 
                 -- Sends the next test url to the Chrome extension, this starts processing by 
-                -- StationB... the request is started by StationB
+                -- StationB... the request is started by StationB and we send the url in the response...
                 liftIO $ infoM "ResearchWorker" "..  /testurl/"
                 url <- liftIO $ readChan next_test_url_chan
                 -- Okej, got the thing, but I' need to be sure that there has been enough time to 
