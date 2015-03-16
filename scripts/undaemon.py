@@ -10,6 +10,7 @@ import shlex
 import sys
 import signal
 import random
+import time
 
 
 UNDAEMON_CGROUP_PATH = "/sys/fs/cgroup/undaemon"
@@ -73,13 +74,13 @@ class Undaemon(object):
             with open(tasks_fname, "a") as out:
                 print(child_pid, file=out)
 
-
     def _set_signal_handlers(self):
         signal.signal(signal.SIGUSR1, self._usr1_handler)
         signal.signal(signal.SIGALRM, self._alarm_handler)
         signal.signal(signal.SIGTERM, self._kill_all)
 
     def _usr1_handler(self, sgn, frame):
+        time.sleep(0.5)
         self._ready_to_finish = True
         os.rmdir(self._cgroup_dir)
         # Ensure that the process wakes up at lease once more
@@ -99,13 +100,22 @@ class Undaemon(object):
             signal.pause()
         # At due moment, just exit
 
-    def _kill_all(self):
+    def _kill_all(self, *args):
         # Very bloodily kill all processes in the cgroup
+        cgroup_dir = self._cgroup_dir
         tasks_fname = os.path.join(cgroup_dir, "tasks")
         with open(tasks_fname, "r") as inp:
             for line in inp:
                 task_id = int(line)
                 os.kill(task_id, signal.SIGTERM)
+        # Wait one second, maybe two ...
+        sleep(2.0)
+        # And go again...
+        with open(tasks_fname, "r") as inp:
+            for line in inp:
+                task_id = int(line)
+                os.kill(task_id, signal.SIGKILL)
+
 
 def main():
     argv = sys.argv
