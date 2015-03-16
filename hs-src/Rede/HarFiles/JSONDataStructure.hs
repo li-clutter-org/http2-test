@@ -14,16 +14,17 @@ import           Data.Aeson.Types               (Parser)
 import           Data.ByteString                (ByteString)
 
 import           Data.ByteString.Char8          (pack, unpack)
+-- import qualified Data.ByteString                as B
 import qualified Data.ByteString.Lazy           as LB
+
 -- import           Data.Functor.Identity
 
-import qualified Crypto.Hash.MD5                as MD5
 import           Network.URI
 
-import           Rede.Utils                     (neutralizeUrl)
+-- import           Rede.Utils                     (neutralizeUrl)
 import           Rede.Utils.PrintfArgByteString ()
 
-import           Debug.Trace                    (trace)
+-- import           Debug.Trace                    (trace)
 
 
 
@@ -266,22 +267,6 @@ firstDomainFromHarLog lg = let
     Just domain -> pack domain
     Nothing -> throw (
         HarStructureLogicalError $ printf "First domain failed to parse, it was: %s" full_url)
-
-
-hashFromHarPostResponse :: Har_PostResponse -> HereString
-hashFromHarPostResponse lg = 
-    -- TODO: Learn to use lenses properly
-    MD5.finalize $ foldl MD5.update MD5.init $  [trace (printf "url to hash: %s\n" $ unpack url_fragment) url_fragment]
-  where 
-    url = lg ^. originUrl
-    url_fragment = neutralizeUrl url
-
-
-hashFromUrl :: HereString -> HereString 
-hashFromUrl url = 
-    MD5.finalize $ foldl MD5.update MD5.init $  [neutralizeUrl url]
-
-
 
 
 ------ Some small functions to try this out 

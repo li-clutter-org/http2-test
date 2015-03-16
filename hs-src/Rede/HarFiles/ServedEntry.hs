@@ -30,7 +30,7 @@ import           Control.Exception
 import qualified Control.Lens           as L
 import           Control.Lens           ( (^.), (&), (.~) )
 import           Control.Lens.TH        (makeLenses)
-import           Data.Char
+-- import           Data.Char
 
 import           Data.Typeable
 import           Data.Maybe             (fromMaybe, isJust, fromJust)
@@ -47,7 +47,7 @@ import qualified Data.Set               as S
 -- import qualified Data.ByteString.Base64 as B64
 
 
-import           Rede.Utils             (lowercaseText, domainFromUrl)
+import           Rede.Utils             (lowercaseText, hashFromUrl)
 import           Rede.MainLoop.Tokens   (
                                             UnpackedNameValueList(..)
                                             , getHeader
@@ -138,12 +138,14 @@ handlesAtResolveCenter resolve_center = map
     (M.toList $ resolve_center ^. servedResources )
 
 
+-- The function that builds a resolve center. This is the only 
+-- place where such resolve centers can be created. Other functions use this one. 
 createResolveCenter :: Har_PostResponse -> ResolveCenter
 createResolveCenter har_document = 
     ResolveCenter  
         (M.fromList resource_pairs) -- <- Creates a dictionary
         unduplicated_hosts
-        complete_name
+        hash_piece
         first_url
   where 
     har_log = har_document ^. harLogPR
@@ -152,17 +154,8 @@ createResolveCenter har_document =
     unduplicated_hosts = (S.toList . S.fromList) all_seen_hosts
     
     first_url = har_document ^. originUrl 
-    first_domain :: B.ByteString
-    first_domain = domainFromUrl first_url
     hash_piece = hashFromUrl first_url
-    complete_name = B.concat [first_domain, "--", 
-        B.map 
-            (\ ch -> case chr $ fromIntegral ch  of 
-                       c | isAlphaNum c && (not $ isSymbol c) -> ch
-                         | otherwise                          -> fromIntegral $ ord '-'
-            ) 
-            (B64.encode $ B.take 4 hash_piece)
-            ]
+
 
 
 -- createResolveCenterFromFilePath :: B.ByteString -> IO ResolveCenter
