@@ -20,7 +20,7 @@ def run(cmdstr):
     return p
 
 chrome_process = run("google-chrome --disable-gpu")
-time.sleep(5.0)
+time.sleep(8.0)
 s = tool("xwininfo -tree -root")
 mo = re.search(r"\s+(0x[a-f0-9]+) \".*?Google Chrome\"", s)
 if mo is None:

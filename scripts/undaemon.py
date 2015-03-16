@@ -77,6 +77,7 @@ class Undaemon(object):
     def _set_signal_handlers(self):
         signal.signal(signal.SIGUSR1, self._usr1_handler)
         signal.signal(signal.SIGALRM, self._alarm_handler)
+        signal.signal(signal.SIGTERM, self._kill_all)
 
     def _usr1_handler(self, sgn, frame):
         self._ready_to_finish = True
@@ -98,7 +99,13 @@ class Undaemon(object):
             signal.pause()
         # At due moment, just exit
 
-
+    def _kill_all(self):
+        # Very bloodily kill all processes in the cgroup
+        tasks_fname = os.path.join(cgroup_dir, "tasks")
+        with open(tasks_fname, "r") as inp:
+            for line in inp:
+                task_id = int(line)
+                os.kill(task_id, signal.SIGTERM)
 
 def main():
     argv = sys.argv

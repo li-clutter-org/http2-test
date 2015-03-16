@@ -19,7 +19,7 @@ def run(cmdstr):
 chrome_process = run("google-chrome --disable-gpu")
 # Let's start also a daemon process to update the dns masq
 run("python /home/{user}/StationB/configure_dnsmasq.py".format(user=os.environ["USER"]))
-time.sleep(5.0)
+time.sleep(8.0)
 s = tool("xwininfo -tree -root")
 mo = re.search(r"\s+(0x[a-f0-9]+) \".*?Google Chrome\"", s)
 if mo is None:
