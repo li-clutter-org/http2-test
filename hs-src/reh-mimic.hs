@@ -7,13 +7,14 @@
 -- import qualified Data.ByteString.Builder    as Bu
 -- import           Data.ByteString.Char8      (pack)
 -- import qualified Data.ByteString.Lazy       as BL
--- import           Data.Foldable              (foldMap)
+import           Data.Foldable              (find)
 import           Data.Monoid
 import           Text.Printf                (printf)
 
 -- import           System.Directory
 -- import           System.FilePath
 import           System.IO
+import           System.Environment        (getEnvironment)
 -- import           System.Process
 
 import           Options.Applicative
@@ -23,6 +24,7 @@ import           System.Log.Logger
 import           System.Log.Handler        (setFormatter)
 import           System.Log.Handler.Simple
 import           System.Log.Formatter      (simpleLogFormatter)
+import           System.Log.Handler.Syslog (openlog, Facility(..), Option(..) )
 
 -- Imports from other parts of the program
 
@@ -52,13 +54,22 @@ programParser = Program <$> (
         strOption
              ( long "action"
                 <> metavar "ACTION"
-                <> help    "What's the program going to do: output-hosts, serve or research url" )
-    ) 
+                <> help    "What's the program going to do: only \"research\" is supported now." )
+        )    
 
 
 main :: IO ()
 main = do
-    configureLogging
+    env_vars <- getEnvironment
+    case find (\ (name, _) -> name == "MIMIC_CONSOLE_LOGGER") env_vars of 
+
+        Nothing                                         -> configureLoggingToSyslog 
+
+        Just (_, x) | not $ (length x) == 0 || x == "0" -> configureLoggingToConsole
+
+                    | otherwise                         -> configureLoggingToSyslog
+
+
     mimic_dir <- mimicDataDir
     infoM "RehMimic" $ printf "Mimic dir: \"%s\"" mimic_dir
     prg   <-  execParser opts_metadata
@@ -72,13 +83,17 @@ main = do
     opts_metadata = info 
         ( helper <*> programParser )
         ( fullDesc 
-            <>  progDesc "Mimics web servers from .har file"
+            <>  progDesc 
+                ( "Mimics web servers. Use environmnet variables MIMIC_DATA_DIR to point to where the scratch directory" ++
+                  "of the server is. Use the variable MIMIC_CONSOLE_LOGGER with value 1 to log messages to console; otherwise " ++
+                  "they are going to syslog. " )
+
             <>  header   "reh-mimic"
             )
 
 
-configureLogging :: IO ()
-configureLogging = do 
+configureLoggingToConsole :: IO ()
+configureLoggingToConsole = do 
     s <- streamHandler stderr DEBUG  >>= 
         \lh -> return $ setFormatter lh (simpleLogFormatter "[$time : $loggername : $prio] $msg")
     updateGlobalLogger rootLoggerName removeHandler
@@ -88,7 +103,30 @@ configureLogging = do
         )
     updateGlobalLogger "OpenSSL" (
         setHandlers [s] .  -- Remember that composition works in reverse...
+        setLevel INFO  
+        )
+    updateGlobalLogger "HarWorker" (
+        setHandlers [s] .  -- Remember that composition works in reverse...
         setLevel DEBUG  
+        )
+    updateGlobalLogger "ResearchWorker" (
+        setHandlers [s] .  -- Remember that composition works in reverse...
+        setLevel DEBUG  
+        )
+
+
+configureLoggingToSyslog :: IO ()
+configureLoggingToSyslog = do 
+    s <- openlog "RehMimic" [PID] DAEMON INFO >>= 
+        \lh -> return $ setFormatter lh (simpleLogFormatter "[$time : $loggername : $prio] $msg")
+    updateGlobalLogger rootLoggerName removeHandler
+    updateGlobalLogger "HTTP2.Session" (
+        setHandlers [s] .  -- Remember that composition works in reverse...
+        setLevel ERROR  
+        )
+    updateGlobalLogger "OpenSSL" (
+        setHandlers [s] .  -- Remember that composition works in reverse...
+        setLevel INFO  
         )
     updateGlobalLogger "HarWorker" (
         setHandlers [s] .  -- Remember that composition works in reverse...
