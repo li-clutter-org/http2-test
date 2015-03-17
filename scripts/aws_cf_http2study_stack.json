@@ -246,6 +246,12 @@
                         "FromPort" : "5800",
                         "ToPort" : "6000",
                         "CidrIp" : "0.0.0.0/0"
+                        },
+                        {
+                        "IpProtocol" : "tcp",
+                        "FromPort" : "1025",
+                        "ToPort" : "1200",
+                        "CidrIp" : "0.0.0.0/0"
                         }
                     ],
                 "Tags":[
