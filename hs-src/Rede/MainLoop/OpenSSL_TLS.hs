@@ -58,6 +58,7 @@ data Wired_t
 type Connection_Ptr = Ptr Connection_t 
 type Wired_Ptr = Ptr Wired_t
 
+
 -- Actually, this makes a listener for new connections
 -- connection_t* make_connection(char* certificate_filename, char* privkey_filename, char* hostname, int portno, 
 --     char* protocol_list, int protocol_list_len)
@@ -155,7 +156,6 @@ tlsServeWithALPN certificate_filename key_filename interface_name attendants int
                                     | re == badHappened  -> return $ Left "A wait for connection failed"
                         r 
                 in tryOnce
-                
 
             case either_wired_ptr of 
 
@@ -213,7 +213,7 @@ tlsServeWithALPN certificate_filename key_filename interface_name attendants int
 
                         Nothing ->
                             return ()
-                       
+
 
 tlsServeWithALPNAndFinishOnRequest :: FilePath 
                  -> FilePath 
@@ -270,7 +270,6 @@ tlsServeWithALPNAndFinishOnRequest certificate_filename key_filename interface_n
 
                         -- // .. //
                         recursion
-
 
                     Right_I wired_ptr -> do 
                         already_closed_mvar <- newMVar False

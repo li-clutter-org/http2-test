@@ -7,29 +7,34 @@
 -- import qualified Data.ByteString.Builder    as Bu
 -- import           Data.ByteString.Char8      (pack)
 -- import qualified Data.ByteString.Lazy       as BL
-import           Data.Foldable              (find)
+import           Data.Foldable             (find)
 import           Data.Monoid
-import           Text.Printf                (printf)
+import           Text.Printf               (printf)
 
 -- import           System.Directory
 -- import           System.FilePath
-import           System.IO
+import           Control.Exception         (catch)
+--
+--
 import           System.Environment        (getEnvironment)
+import           System.IO
 -- import           System.Process
 
 import           Options.Applicative
 
 -- Logging utilities
-import           System.Log.Logger
+import           System.Log.Formatter      (simpleLogFormatter)
 import           System.Log.Handler        (setFormatter)
 import           System.Log.Handler.Simple
-import           System.Log.Formatter      (simpleLogFormatter)
-import           System.Log.Handler.Syslog (openlog, Facility(..), Option(..) )
+import           System.Log.Handler.Syslog (Facility (..), Option (..), openlog)
+import           System.Log.Logger
 
 -- Imports from other parts of the program
 
-import           Rede.MainLoop.ConfigHelp   (mimicDataDir)
-import           Rede.Research.Main         (research)
+import           Rede.MainLoop.ConfigHelp  (mimicDataDir)
+import           Rede.Research.Main        (research)
+import           Rede.MainLoop.OpenSSL_TLS (ConnectionIOError(..))
+
 
 
 -- What is the program going to do?
@@ -73,10 +78,15 @@ main = do
     mimic_dir <- mimicDataDir
     infoM "RehMimic" $ printf "Mimic dir: \"%s\"" mimic_dir
     prg   <-  execParser opts_metadata
-    case Main.action prg of 
 
-        ResearchUrl_PA       -> do 
-            research mimic_dir
+    catch 
+        (case Main.action prg of 
+
+            ResearchUrl_PA       -> do 
+                research mimic_dir
+        )
+        (\ (ConnectionIOError msg) -> errorM "HTTP2.Session" ("ConnectionIOError: " ++ msg)
+        )
 
 
   where 
