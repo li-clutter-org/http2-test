@@ -14,6 +14,7 @@ import           Control.Concurrent.MVar
 import           Control.Monad.Catch             (catch)
 
 import qualified Data.ByteString                 as B
+import           Data.ByteString.Builder         (toLazyByteString )
 import           Data.ByteString.Char8           (pack, unpack)
 import qualified Data.ByteString.Lazy            as LB
 import           Data.Conduit
@@ -135,8 +136,8 @@ researchWorkerComp (input_headers, maybe_source) = do
         Post_RM 
             | req_url == "/nexturl/" -> do 
                 -- Starts harvesting of a resource... this request is made by StationA
-                liftIO $ infoM "ResearchWorker" "..  /nexturl/"
                 url <- liftIO $ readChan next_harvest_url
+                liftIO $ infoM "ResearchWorker" .  show $ "..  /nexturl/" `mappend` "(" `mappend` req_url `mappend` ")"
                 return $ simpleResponse 200 url 
 
             | req_url == "/testurl/" -> do 
