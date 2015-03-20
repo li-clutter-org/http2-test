@@ -106,7 +106,7 @@
                        "DeviceIndex": 1
                     }
                 ],
-                "InstanceType": "t2.micro",
+                "InstanceType": "t2.medium",
                 "KeyName" : { "Ref" : "KeyName" },
                 "Tags" : [
                     {"Key" : "Name", "Value" : "harvestInstance"}
@@ -173,7 +173,7 @@
                        "DeviceIndex": 1
                     }
                 ],
-                "InstanceType": "t2.micro",
+                "InstanceType": "t2.medium",
                 "KeyName" : { "Ref" : "KeyName" },
                 "Tags" : [
                     {"Key" : "Name", "Value" : "testInstance"}
@@ -316,6 +316,18 @@
                         "IpProtocol" : "tcp",
                         "FromPort" : "1025",
                         "ToPort" : "1200",
+                        "CidrIp" : "0.0.0.0/0"
+                        },
+                        {
+                        "IpProtocol" : "tcp",
+                        "FromPort" : "80",
+                        "ToPort" : "80",
+                        "CidrIp" : "0.0.0.0/0"
+                        },
+                        {
+                        "IpProtocol" : "tcp",
+                        "FromPort" : "443",
+                        "ToPort" : "443",
                         "CidrIp" : "0.0.0.0/0"
                         }
                     ],
