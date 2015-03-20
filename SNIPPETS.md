@@ -20,6 +20,6 @@ Redeploy the extension at StationA:
 
 How to queue a url:
 
-    $ curl -k --data-binary "http://instr.httpdos.com:8000/verysimple.html" -X POST --http2 https://instr.httpdos.com:1070/setnexturl/
+    $ curl -k --data-binary "http://www.yahoo.com/" -X POST --http2 https://instr.httpdos.com:1070/setnexturl/
 
 Curl version 7.40 or greater is needed.
