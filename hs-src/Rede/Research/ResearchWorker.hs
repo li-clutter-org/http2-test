@@ -5,7 +5,7 @@ module Rede.Research.ResearchWorker(
     ) where 
 
 
-import           Control.Lens                    ((^.))
+import           Control.Lens                    ((^.), (%~), (.~))
 import qualified Control.Lens                    as L
 -- import           Control.Exception              (catch)
 import           Control.Concurrent              (forkIO, threadDelay)
@@ -14,15 +14,16 @@ import           Control.Concurrent.MVar
 import           Control.Monad.Catch             (catch)
 
 import qualified Data.ByteString                 as B
-import           Data.ByteString.Builder         (toLazyByteString )
+import qualified Data.ByteString.Builder         as Bu
 import           Data.ByteString.Char8           (pack, unpack)
+import qualified Data.ByteString.Lazy.Char8      as Lch
 import qualified Data.ByteString.Lazy            as LB
+import qualified Data.HashTable.IO               as H
 import           Data.Conduit
 import           Data.Foldable                   (foldMap)
 import           Data.Monoid                     (mappend)
 import qualified Data.Monoid                     as M
 -- import qualified Data.ByteString.Lazy           as LB
-import qualified Data.ByteString.Builder         as Bu
 
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Reader      (ReaderT (..), runReaderT)
@@ -55,10 +56,30 @@ import           Rede.MainLoop.ConfigHelp        (configDir, getInterfaceName,
 import           Rede.MainLoop.OpenSSL_TLS       (FinishRequest (..), tlsServeWithALPNAndFinishOnRequest)
 import           Rede.Utils.ConcatConduit        (concatConduit)
 import           Rede.Utils.PrintfArgByteString  ()
+import           Rede.Utils                      (hashFromUrl)
+import           Rede.Utils.Alarm                
 import           Rede.Workers.HarWorker          (harCoherentWorker)
 
 
 
+type HashTable k v = H.CuckooHashTable k v
+
+
+data CurrentAnalysisStage = 
+    AnalysisRequested_CAS
+    |SentToHarvester_CAS
+    |SentToTest_CAS
+    |SystemCancelled_CAS
+    |Done_CAS
+
+
+data UrlState = UrlState {
+    _completeUrl     :: B.ByteString
+    ,_analysisStage  :: CurrentAnalysisStage
+    ,_currentAlarm   :: Alarm ()
+    }
+
+L.makeLenses ''UrlState
 
 
 data ServiceState = ServiceState {
@@ -79,6 +100,9 @@ data ServiceState = ServiceState {
 
     -- The IP address that StationB needs to connect
     , _useAddressForStationB :: B.ByteString
+
+    -- The state of each URL 
+    , _urlState :: HashTable B.ByteString UrlState
 
     -- This one we use in the opposite sense: we write here...
     -- ,_servingHar    :: Chan (ResolveCenter, OriginUrl )
@@ -101,6 +125,7 @@ runResearchWorker url_chan resolve_center_chan finish_request_chan research_dir 
     liftIO $ infoM "ResearchWorker" "Starting research worker"
     next_test_url_chan <- newChan 
     next_dns_masq_file <- newChan
+    new_url_state <- H.new
 
     let     
         state = ServiceState {
@@ -111,19 +136,21 @@ runResearchWorker url_chan resolve_center_chan finish_request_chan research_dir 
             ,_finishRequestChan = finish_request_chan
             ,_researchDir = research_dir
             ,_useAddressForStationB = use_address_for_station_b
+            ,_urlState = new_url_state
             }
     return $ \request -> runReaderT (researchWorkerComp request) state
 
 
 researchWorkerComp :: Request -> ServiceStateMonad PrincipalStream
 researchWorkerComp (input_headers, maybe_source) = do 
-    next_harvest_url    <- L.view nextHarvestUrl
-    next_dnsmasq_chan   <- L.view nextDNSMasqFile
-    next_test_url_chan  <- L.view nextTestUrl
-    resolve_center_chan <- L.view resolveCenterChan 
-    finish_chan         <- L.view finishRequestChan 
-    base_research_dir   <- L.view researchDir
-    use_address_for_station_b <- L.view useAddressForStationB
+    next_harvest_url              <- L.view nextHarvestUrl
+    next_dnsmasq_chan             <- L.view nextDNSMasqFile
+    next_test_url_chan            <- L.view nextTestUrl
+    resolve_center_chan           <- L.view resolveCenterChan 
+    finish_chan                   <- L.view finishRequestChan 
+    base_research_dir             <- L.view researchDir
+    use_address_for_station_b     <- L.view useAddressForStationB
+    url_state_hash                <- L.view urlState
 
     let 
         method = getMethodFromHeaders input_headers
@@ -136,21 +163,46 @@ researchWorkerComp (input_headers, maybe_source) = do
         Post_RM 
             | req_url == "/nexturl/" -> do 
                 -- Starts harvesting of a resource... this request is made by StationA
+                liftIO $ infoM "ResearchWorker" ".. /nexturl/ asked "
                 url <- liftIO $ readChan next_harvest_url
-                liftIO $ infoM "ResearchWorker" .  show $ "..  /nexturl/" `mappend` "(" `mappend` req_url `mappend` ")"
+                liftIO $ infoM "ResearchWorker" .  builderToString $ "..  /nexturl/" `mappend` " answer " `mappend` (Bu.byteString url) `mappend` " "
+
+                -- Mark it as sent...
+                modifyUrlState (hashFromUrl url) $ \ old_state -> do 
+                    -- Set an alarm here also...this alarm should be disabled when a .har file comes....
+                    liftIO $ cancelAlarm $ old_state ^. currentAlarm
+                    let 
+                        a1 = analysisStage .~ SentToHarvester_CAS $ old_state
+                    alarm <- liftIO $ newAlarm 15000000 $ do 
+                        errorM "ResearchWorker" . builderToString $ " failed harvesting " `mappend` (Bu.byteString req_url) `mappend` " (timeout) "
+                    let
+                        a2 = currentAlarm .~ alarm $ a1
+                    return a2 
+                
+
                 return $ simpleResponse 200 url 
 
             | req_url == "/testurl/" -> do 
                 -- Sends the next test url to the Chrome extension, this starts processing by 
                 -- StationB... the request is started by StationB and we send the url in the response...
-                liftIO $ infoM "ResearchWorker" "..  /testurl/"
+                liftIO $ infoM "ResearchWorker" "..  /testurl/ was asked"
                 url <- liftIO $ readChan next_test_url_chan
                 -- Okej, got the thing, but I' need to be sure that there has been enough time to 
                 -- apply the new network settings in StationB 
                 liftIO $ threadDelay 4000000 -- <-- 4 seconds
+                liftIO $ infoM "ResearchWorker" . builderToString $ "..  /testurl/ answered with " `mappend` (Bu.byteString url)
+                modifyUrlState (hashFromUrl url) $ \ old_state -> do 
+                    -- This alarm should be disabled by the http2har file
+                    liftIO $ cancelAlarm $ old_state ^. currentAlarm
+                    let 
+                        a1 = analysisStage .~ SentToTest_CAS $ old_state
+                    alarm <- liftIO $ newAlarm 15000000 $ do 
+                        errorM "ResearchWorker" . builderToString $ " failed testing " `mappend` (Bu.byteString url)
+                    return $ currentAlarm .~ alarm $ a1
                 return $ simpleResponse 200 url
 
             | req_url == "/har/", Just source <- maybe_source -> do
+
                 -- Receives a .har object from the harvest station ("StationA"), and 
                 -- makes all the arrangements for it to be tested using HTTP 2
                 liftIO $ infoM "ResearchWorker" "..  /har/"
@@ -160,7 +212,14 @@ researchWorkerComp (input_headers, maybe_source) = do
                         let 
                             test_url = resolve_center ^. rcOriginalUrl
                             use_text = "Response processed"
-                        -- serving_har_chan <- L.view servingHar
+
+                        -- Okey, cancel the alarm first 
+                        modifyUrlState  (hashFromUrl test_url) $ \ old_state -> do
+                            liftIO $ cancelAlarm $ old_state ^. currentAlarm
+                            alarm <- liftIO $ newAlarm 15000000 $ do 
+                                errorM "ResearchWorker" . builderToString $ " failed forwarding " `mappend` (Bu.byteString test_url)
+                            return $ currentAlarm .~ alarm $ old_state
+                        
 
                         -- Create the contents to go in the dnsmasq file, and queue them 
                         let 
@@ -195,12 +254,19 @@ researchWorkerComp (input_headers, maybe_source) = do
                     (do
                         (resolve_center,  har_contents_lb) <- liftIO $ output_computation source
                         let 
+                            test_url = resolve_center ^. rcOriginalUrl
                             use_text = "Response processed"
 
                         let 
                             scratch_folder = base_research_dir </> (unpack (resolve_center ^. rcName ) )
                             har_filename = scratch_folder </> "test_http2.har"
                         liftIO $ LB.writeFile har_filename har_contents_lb
+
+
+                        -- Okey, cancel the alarm  
+                        modifyUrlState  (hashFromUrl test_url) $ \ old_state -> do
+                            liftIO $ cancelAlarm $ old_state ^. currentAlarm
+                            return old_state
 
                         -- And finish the business
                         liftIO $ writeChan finish_chan FinishRequest
@@ -221,13 +287,18 @@ researchWorkerComp (input_headers, maybe_source) = do
 
             | req_url == "/setnexturl/", Just source <- maybe_source -> do 
                 -- Receives a url to investigate from the user front-end, or from curl
-                liftIO $ infoM "ResearchWorker" ".. /setnexturl/"
-                post_contents <- liftIO $ source $$ concatConduit
-                -- Wishful thinking: post_contents is just the url to analyze...
-                liftIO $ writeChan next_harvest_url post_contents
-                liftIO $ putStrLn $ "... " ++ (unpack post_contents)
+                url_to_analyze <- liftIO $ source $$ concatConduit
+                alarm <- liftIO $ newAlarm 15000000 $ do 
+                    warningM "ResearchWorker" . builderToString $ "Job for url " `mappend` (Bu.byteString url_to_analyze) `mappend` " still waiting... "
+                let 
+                    job_descriptor = hashFromUrl url_to_analyze
+                    new_url_state = UrlState url_to_analyze AnalysisRequested_CAS alarm
+                liftIO $ H.insert 
+                    url_state_hash job_descriptor new_url_state 
+                liftIO $ infoM "ResearchWorker" . builderToString $ ".. /setnexturl/ asked " `mappend` (Bu.byteString url_to_analyze)
+                liftIO $ writeChan next_harvest_url url_to_analyze
 
-                return $ simpleResponse 200 "url queued\n"
+                return $ simpleResponse 200 job_descriptor
 
             | otherwise     -> do 
                 return $ simpleResponse 500 "Can't handle url and method"
@@ -418,3 +489,21 @@ urlToHTTPSScheme original_url = let
         U.uriFragment = uri_fragment,
         U.uriAuthority = uri_authority
         }
+
+
+builderToString :: Bu.Builder -> String 
+builderToString =  Lch.unpack . Bu.toLazyByteString
+
+
+modifyUrlState :: B.ByteString -> (UrlState -> ServiceStateMonad UrlState) -> ServiceStateMonad ()
+modifyUrlState key mutator = do 
+    h  <- L.view urlState
+    vv <- liftIO $ H.lookup h key
+    case vv  of 
+        Just v -> do 
+            new_value <- mutator v 
+            liftIO $ H.insert h key new_value
+
+        Nothing -> do
+            liftIO $ warningM "ResearchWorker" $  builderToString $ "Trying to modify state of non-seen url job " `mappend` (Bu.byteString key)
+
