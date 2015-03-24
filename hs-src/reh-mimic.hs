@@ -135,14 +135,14 @@ configureLoggingToSyslog = do
         setLevel ERROR  
         )
     updateGlobalLogger "OpenSSL" (
-        setHandlers [s] .  -- Remember that composition works in reverse...
+        setHandlers [s] .
         setLevel INFO  
         )
     updateGlobalLogger "HarWorker" (
-        setHandlers [s] .  -- Remember that composition works in reverse...
+        setHandlers [s] .
         setLevel DEBUG  
         )
     updateGlobalLogger "ResearchWorker" (
-        setHandlers [s] .  -- Remember that composition works in reverse...
+        setHandlers [s] .
         setLevel DEBUG  
         )
