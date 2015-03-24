@@ -56,10 +56,9 @@ import           Rede.MainLoop.ConfigHelp        (configDir, getInterfaceName,
 import           Rede.MainLoop.OpenSSL_TLS       (FinishRequest (..), tlsServeWithALPNAndFinishOnRequest)
 import           Rede.Utils.ConcatConduit        (concatConduit)
 import           Rede.Utils.PrintfArgByteString  ()
-import           Rede.Utils                      (hashFromUrl)
+import           Rede.Utils                      (hashSafeFromUrl, SafeUrl, unSafeUrl)
 import           Rede.Utils.Alarm                
 import           Rede.Workers.HarWorker          (harCoherentWorker)
-
 
 
 type HashTable k v = H.CuckooHashTable k v
@@ -73,11 +72,19 @@ data CurrentAnalysisStage =
     |Done_CAS
 
 
+-- Time to wait before unleashing an alarm... 
+timeForAlarm :: Int 
+timeForAlarm = 40000000
+
+
+-- This state structure follows a given URL analysis. 
+-- You can find a dictionary of these in the structure below...
 data UrlState = UrlState {
     _completeUrl     :: B.ByteString
     ,_analysisStage  :: CurrentAnalysisStage
     ,_currentAlarm   :: Alarm ()
     }
+
 
 L.makeLenses ''UrlState
 
@@ -102,7 +109,7 @@ data ServiceState = ServiceState {
     , _useAddressForStationB :: B.ByteString
 
     -- The state of each URL 
-    , _urlState :: HashTable B.ByteString UrlState
+    , _urlState :: HashTable SafeUrl UrlState
 
     -- This one we use in the opposite sense: we write here...
     -- ,_servingHar    :: Chan (ResolveCenter, OriginUrl )
@@ -168,12 +175,12 @@ researchWorkerComp (input_headers, maybe_source) = do
                 liftIO $ infoM "ResearchWorker" .  builderToString $ "..  /nexturl/" `mappend` " answer " `mappend` (Bu.byteString url) `mappend` " "
 
                 -- Mark it as sent...
-                modifyUrlState (hashFromUrl url) $ \ old_state -> do 
+                modifyUrlState (hashSafeFromUrl url) $ \ old_state -> do 
                     -- Set an alarm here also...this alarm should be disabled when a .har file comes....
                     liftIO $ cancelAlarm $ old_state ^. currentAlarm
                     let 
                         a1 = analysisStage .~ SentToHarvester_CAS $ old_state
-                    alarm <- liftIO $ newAlarm 15000000 $ do 
+                    alarm <- liftIO $ newAlarm timeForAlarm $ do 
                         errorM "ResearchWorker" . builderToString $ " failed harvesting " `mappend` (Bu.byteString req_url) `mappend` " (timeout) "
                     let
                         a2 = currentAlarm .~ alarm $ a1
@@ -191,7 +198,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                 -- apply the new network settings in StationB 
                 liftIO $ threadDelay 4000000 -- <-- 4 seconds
                 liftIO $ infoM "ResearchWorker" . builderToString $ "..  /testurl/ answered with " `mappend` (Bu.byteString url)
-                modifyUrlState (hashFromUrl url) $ \ old_state -> do 
+                modifyUrlState (hashSafeFromUrl url) $ \ old_state -> do 
                     -- This alarm should be disabled by the http2har file
                     liftIO $ cancelAlarm $ old_state ^. currentAlarm
                     let 
@@ -214,7 +221,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                             use_text = "Response processed"
 
                         -- Okey, cancel the alarm first 
-                        modifyUrlState  (hashFromUrl test_url) $ \ old_state -> do
+                        modifyUrlState  (hashSafeFromUrl test_url) $ \ old_state -> do
                             liftIO $ cancelAlarm $ old_state ^. currentAlarm
                             alarm <- liftIO $ newAlarm 15000000 $ do 
                                 errorM "ResearchWorker" . builderToString $ " failed forwarding " `mappend` (Bu.byteString test_url)
@@ -264,7 +271,7 @@ researchWorkerComp (input_headers, maybe_source) = do
 
 
                         -- Okey, cancel the alarm  
-                        modifyUrlState  (hashFromUrl test_url) $ \ old_state -> do
+                        modifyUrlState  (hashSafeFromUrl test_url) $ \ old_state -> do
                             liftIO $ cancelAlarm $ old_state ^. currentAlarm
                             return old_state
 
@@ -291,14 +298,14 @@ researchWorkerComp (input_headers, maybe_source) = do
                 alarm <- liftIO $ newAlarm 15000000 $ do 
                     warningM "ResearchWorker" . builderToString $ "Job for url " `mappend` (Bu.byteString url_to_analyze) `mappend` " still waiting... "
                 let 
-                    job_descriptor = hashFromUrl url_to_analyze
+                    job_descriptor = hashSafeFromUrl url_to_analyze
                     new_url_state = UrlState url_to_analyze AnalysisRequested_CAS alarm
                 liftIO $ H.insert 
                     url_state_hash job_descriptor new_url_state 
                 liftIO $ infoM "ResearchWorker" . builderToString $ ".. /setnexturl/ asked " `mappend` (Bu.byteString url_to_analyze)
                 liftIO $ writeChan next_harvest_url url_to_analyze
 
-                return $ simpleResponse 200 job_descriptor
+                return $ simpleResponse 200 (unSafeUrl job_descriptor)
 
             | otherwise     -> do 
                 return $ simpleResponse 500 "Can't handle url and method"
@@ -495,7 +502,7 @@ builderToString :: Bu.Builder -> String
 builderToString =  Lch.unpack . Bu.toLazyByteString
 
 
-modifyUrlState :: B.ByteString -> (UrlState -> ServiceStateMonad UrlState) -> ServiceStateMonad ()
+modifyUrlState :: SafeUrl -> (UrlState -> ServiceStateMonad UrlState) -> ServiceStateMonad ()
 modifyUrlState key mutator = do 
     h  <- L.view urlState
     vv <- liftIO $ H.lookup h key
@@ -505,5 +512,5 @@ modifyUrlState key mutator = do
             liftIO $ H.insert h key new_value
 
         Nothing -> do
-            liftIO $ warningM "ResearchWorker" $  builderToString $ "Trying to modify state of non-seen url job " `mappend` (Bu.byteString key)
+            liftIO $ warningM "ResearchWorker" $  builderToString $ "Trying to modify state of non-seen url job " `mappend` (Bu.byteString . unSafeUrl $ key)
 

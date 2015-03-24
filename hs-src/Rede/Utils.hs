@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving #-}
 module Rede.Utils (
     strToInt
     ,Word24
@@ -14,6 +14,10 @@ module Rede.Utils (
     ,neutralizeUrl
     ,domainFromUrl
     ,hashFromUrl
+    ,hashSafeFromUrl
+    ,unSafeUrl
+
+    ,SafeUrl
     ) where 
 
 
@@ -27,12 +31,14 @@ import           Data.Bits
 import qualified Data.ByteString           as B
 import qualified Data.ByteString.Base16    as B16
 import           Data.ByteString.Char8     (pack, unpack)
+import           Data.Hashable             (Hashable)
 import           Data.Conduit
 import qualified Data.Text                 as T
 import           Data.Text.Encoding
 import qualified Network.URI               as U
 import qualified System.Clock              as SC
 import           Text.Printf               (printf)
+-- import qualified Text.Show.ByteString      as S(Show(..))
 
 
 
@@ -42,6 +48,11 @@ strToInt = fromIntegral . toInteger . (read::String->Integer)
 
 newtype Word24 = Word24 Int
     deriving (Show)
+
+
+-- Newtype to protect url usage
+newtype SafeUrl = SafeUrl { unSafeUrl :: B.ByteString } deriving (Eq, Show, Hashable)
+
 
 
 word24ToInt :: Word24 -> Int 
@@ -160,3 +171,7 @@ urlHashSalt = "Adfafwwf"
 hashFromUrl :: B.ByteString -> B.ByteString 
 hashFromUrl url = 
     B.take 10 . B16.encode . MD5.finalize $ foldl MD5.update MD5.init $  [urlHashSalt, neutralizeUrl url]
+
+
+hashSafeFromUrl :: B.ByteString -> SafeUrl 
+hashSafeFromUrl = SafeUrl . hashFromUrl
