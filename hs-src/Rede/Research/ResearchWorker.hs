@@ -5,7 +5,11 @@ module Rede.Research.ResearchWorker(
     ) where 
 
 
-import           Control.Lens                    ((^.), (%~), (.~))
+import           Control.Lens                    (
+                                                 (^.)
+                                                 -- , (%~)
+                                                 , (.~)
+                                                 )
 import qualified Control.Lens                    as L
 -- import           Control.Exception              (catch)
 import           Control.Concurrent              (forkIO, threadDelay)
@@ -23,6 +27,7 @@ import           Data.Conduit
 import           Data.Foldable                   (foldMap)
 import           Data.Monoid                     (mappend)
 import qualified Data.Monoid                     as M
+import qualified Data.Aeson                      as Da(decode)
 -- import qualified Data.ByteString.Lazy           as LB
 
 import           Control.Monad.IO.Class
@@ -59,6 +64,7 @@ import           Rede.Utils.PrintfArgByteString  ()
 import           Rede.Utils                      (hashSafeFromUrl, SafeUrl, unSafeUrl)
 import           Rede.Utils.Alarm                
 import           Rede.Workers.HarWorker          (harCoherentWorker)
+import           Rede.Research.JSONMessages      (SetNextUrl(..))
 
 
 type HashTable k v = H.CuckooHashTable k v
@@ -114,6 +120,7 @@ data ServiceState = ServiceState {
     -- This one we use in the opposite sense: we write here...
     -- ,_servingHar    :: Chan (ResolveCenter, OriginUrl )
     }
+
 
 L.makeLenses ''ServiceState
 
@@ -294,7 +301,11 @@ researchWorkerComp (input_headers, maybe_source) = do
 
             | req_url == "/setnexturl/", Just source <- maybe_source -> do 
                 -- Receives a url to investigate from the user front-end, or from curl
-                url_to_analyze <- liftIO $ source $$ concatConduit
+                url_or_json_to_analyze <- liftIO $ source $$ concatConduit
+                let 
+                    url_to_analyze = case Da.decode . LB.fromStrict $ url_or_json_to_analyze of 
+                        Just (SetNextUrl x)  -> x 
+                        Nothing              -> url_or_json_to_analyze
                 alarm <- liftIO $ newAlarm 15000000 $ do 
                     warningM "ResearchWorker" . builderToString $ "Job for url " `mappend` (Bu.byteString url_to_analyze) `mappend` " still waiting... "
                 let 
