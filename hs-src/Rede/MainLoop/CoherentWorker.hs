@@ -1,9 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FunctionalDependencies, FlexibleInstances  #-} 
--- | A CoherentWorker is one that doesn't need to compute everything at once...
---   This one is simpler than the SPDY one, because it enforces certain order....
-
+-- | A CoherentWorker is one that doesn't need to return everything at once...
 
 
 module Rede.MainLoop.CoherentWorker(
