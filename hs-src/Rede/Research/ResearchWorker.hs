@@ -74,8 +74,8 @@ data CurrentAnalysisStage =
     AnalysisRequested_CAS
     |SentToHarvester_CAS
     |SentToTest_CAS
-    |SystemCancelled_CAS
-    |Done_CAS
+    -- |SystemCancelled_CAS
+    -- |Done_CAS
 
 
 -- Time to wait before unleashing an alarm... 
