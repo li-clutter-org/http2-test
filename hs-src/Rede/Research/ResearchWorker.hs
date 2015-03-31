@@ -27,7 +27,7 @@ import           Data.Conduit
 import           Data.Foldable                   (foldMap)
 import           Data.Monoid                     (mappend)
 import qualified Data.Monoid                     as M
-import qualified Data.Aeson                      as Da(decode)
+import qualified Data.Aeson                      as Da(decode, encode)
 -- import qualified Data.ByteString.Lazy           as LB
 
 import           Control.Monad.IO.Class
@@ -64,7 +64,7 @@ import           Rede.Utils.PrintfArgByteString  ()
 import           Rede.Utils                      (hashSafeFromUrl, SafeUrl, unSafeUrl)
 import           Rede.Utils.Alarm                
 import           Rede.Workers.HarWorker          (harCoherentWorker)
-import           Rede.Research.JSONMessages      (SetNextUrl(..))
+import           Rede.Research.JSONMessages      (SetNextUrl(..), DnsMasqConfig(..))
 
 
 type HashTable k v = H.CuckooHashTable k v
@@ -103,7 +103,7 @@ data ServiceState = ServiceState {
     ,_nextTestUrl :: Chan B.ByteString
 
     -- Files to be handed out to DNSMasq
-    , _nextDNSMasqFile :: Chan B.ByteString
+    , _nextDNSMasqFile :: Chan DnsMasqConfig
 
     , _resolveCenterChan :: Chan ResolveCenter
 
@@ -203,7 +203,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                 url <- liftIO $ readChan next_test_url_chan
                 -- Okej, got the thing, but I' need to be sure that there has been enough time to 
                 -- apply the new network settings in StationB 
-                liftIO $ threadDelay 4000000 -- <-- 4 seconds
+                liftIO $ threadDelay 400000 -- <-- 4 seconds
                 liftIO $ infoM "ResearchWorker" . builderToString $ "..  /testurl/ answered with " `mappend` (Bu.byteString url)
                 modifyUrlState (hashSafeFromUrl url) $ \ old_state -> do 
                     -- This alarm should be disabled by the http2har file
@@ -226,9 +226,10 @@ researchWorkerComp (input_headers, maybe_source) = do
                         let 
                             test_url = resolve_center ^. rcOriginalUrl
                             use_text = "Response processed"
+                            analysis_id = hashSafeFromUrl test_url
 
                         -- Okey, cancel the alarm first 
-                        modifyUrlState  (hashSafeFromUrl test_url) $ \ old_state -> do
+                        modifyUrlState analysis_id $ \ old_state -> do
                             liftIO $ cancelAlarm $ old_state ^. currentAlarm
                             alarm <- liftIO $ newAlarm 15000000 $ do 
                                 errorM "ResearchWorker" . builderToString $ " failed forwarding " `mappend` (Bu.byteString test_url)
@@ -240,7 +241,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                             all_seen_hosts = resolve_center ^. allSeenHosts
                             dnsmasq_contents = dnsMasqFileContentsToIp use_address_for_station_b all_seen_hosts 
 
-                        liftIO $ writeChan next_dnsmasq_chan dnsmasq_contents
+                        liftIO $ writeChan next_dnsmasq_chan $ DnsMasqConfig analysis_id dnsmasq_contents
 
                         -- We also need to queue the url somewhere to be used by StationB
                         liftIO $ writeChan next_test_url_chan $ urlToHTTPSScheme test_url
@@ -297,7 +298,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                 dnsmasq_contents <- liftIO $ readChan next_dnsmasq_chan
                 liftIO $ infoM "ResearchWorker" ".. /dnsmasq/ answer"
                 
-                return $ simpleResponse 200 dnsmasq_contents
+                return $ simpleResponse 200 $ LB.toStrict $ Da.encode dnsmasq_contents
 
             | req_url == "/setnexturl/", Just source <- maybe_source -> do 
                 -- Receives a url to investigate from the user front-end, or from curl

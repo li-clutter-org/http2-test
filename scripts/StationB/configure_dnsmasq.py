@@ -28,6 +28,7 @@ import daemon
 
 
 DEFAULT_POLL_ENDPOINT = "https://instr.httpdos.com:1070/dnsmasq/"
+NOTIFY_UPDATE_COMPLETE_ENDPOINT = "https://instr.httpdos.com:1070/dnsmasqupdated/"
 DNSMASQ_CONFIG_PLACE = "/home/{user}/dnsmasq_more.conf".format(user=os.environ["USER"])
 AUX_SSL_PATH= "/opt/openssl-1.0.2/"
 
@@ -39,15 +40,17 @@ def curl_arguments(endpoint):
 
 
 def main():
-    args = curl_arguments(DEFAULT_POLL_ENDPOINT)
+    
     os.environ["PATH"] = os.path.join(AUX_SSL_PATH, "bin/") + ":" + os.environ["PATH"]
     while True:
-        work(args)
+        work()
 
 
-def work(args):
+def work():
+    args_get = curl_arguments(DEFAULT_POLL_ENDPOINT)
+    args_update_completed = curl_arguments(NOTIFY_UPDATE_COMPLETE_ENDPOINT)
     try:
-        config_file = sp.check_output(args)
+        config_file = sp.check_output(args_get)
     except sp.CalledProcessError as e:
         print(" .... Err in curl, returncode: ", e.returncode)
         # Sleep a little bit
@@ -61,6 +64,8 @@ def work(args):
             print(".newconfig written to file")
             # Now restart dnsmasq... here is why I need elevated privileges....
             sp.check_call(shlex.split("/etc/init.d/dnsmasq restart"))
+            # And issue a new call to the Haskell server to let it know 
+            # that the new dnsmasq setting has taken effect
 
 
 if __name__ == "__main__":
