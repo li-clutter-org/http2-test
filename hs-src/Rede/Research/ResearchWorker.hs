@@ -15,7 +15,8 @@ import qualified Control.Lens                    as L
 import           Control.Concurrent              (forkIO, threadDelay)
 import           Control.Concurrent.Chan
 import           Control.Concurrent.MVar
-import           Control.Monad.Catch             (catch)
+import           Control.Monad.Catch             (catch,throwM, Exception)
+import qualified Control.Exception               as E
 
 import qualified Data.ByteString                 as B
 import qualified Data.ByteString.Builder         as Bu
@@ -61,7 +62,7 @@ import           Rede.MainLoop.ConfigHelp        (configDir, getInterfaceName,
 import           Rede.MainLoop.OpenSSL_TLS       (FinishRequest (..), tlsServeWithALPNAndFinishOnRequest)
 import           Rede.Utils.ConcatConduit        (concatConduit)
 import           Rede.Utils.PrintfArgByteString  ()
-import           Rede.Utils                      (hashSafeFromUrl, SafeUrl, unSafeUrl)
+import           Rede.Utils                      (hashSafeFromUrl, SafeUrl, unSafeUrl, safeUrlFromByteStringWhichIsAlreadyAHashedUrl)
 import           Rede.Utils.Alarm                
 import           Rede.Workers.HarWorker          (harCoherentWorker)
 import           Rede.Research.JSONMessages      (SetNextUrl(..), DnsMasqConfig(..))
@@ -102,6 +103,10 @@ data ServiceState = ServiceState {
     -- To be passed on to StationB
     ,_nextTestUrl :: Chan B.ByteString
 
+    -- To be passed from the har files receiver (from StationA)
+    -- to the DNSMasq checker...Contains urls
+    ,_nextTestUrlToCheck :: Chan B.ByteString
+
     -- Files to be handed out to DNSMasq
     , _nextDNSMasqFile :: Chan DnsMasqConfig
 
@@ -137,20 +142,23 @@ runResearchWorker ::
     -> IO CoherentWorker
 runResearchWorker url_chan resolve_center_chan finish_request_chan research_dir use_address_for_station_b = do 
     liftIO $ infoM "ResearchWorker" "Starting research worker"
-    next_test_url_chan <- newChan 
+    next_test_url_chan <- newChan          -- <-- Goes from the dnsmasq response handler 
+    next_test_url_to_check_chan <- newChan -- <-- Goes to the dnsmasq response handler
     next_dns_masq_file <- newChan
     new_url_state <- H.new
 
+
     let     
         state = ServiceState {
-             _nextHarvestUrl = url_chan
-            ,_nextTestUrl    = next_test_url_chan
-            ,_nextDNSMasqFile = next_dns_masq_file
-            ,_resolveCenterChan = resolve_center_chan
-            ,_finishRequestChan = finish_request_chan
-            ,_researchDir = research_dir
+             _nextHarvestUrl        = url_chan
+            ,_nextTestUrl           = next_test_url_chan
+            ,_nextTestUrlToCheck    = next_test_url_to_check_chan
+            ,_nextDNSMasqFile       = next_dns_masq_file
+            ,_resolveCenterChan     = resolve_center_chan
+            ,_finishRequestChan     = finish_request_chan
+            ,_researchDir           = research_dir
             ,_useAddressForStationB = use_address_for_station_b
-            ,_urlState = new_url_state
+            ,_urlState              = new_url_state
             }
     return $ \request -> runReaderT (researchWorkerComp request) state
 
@@ -160,6 +168,7 @@ researchWorkerComp (input_headers, maybe_source) = do
     next_harvest_url              <- L.view nextHarvestUrl
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
     next_test_url_chan            <- L.view nextTestUrl
+    next_test_url_to_check_chan   <- L.view nextTestUrlToCheck
     resolve_center_chan           <- L.view resolveCenterChan 
     finish_chan                   <- L.view finishRequestChan 
     base_research_dir             <- L.view researchDir
@@ -241,10 +250,10 @@ researchWorkerComp (input_headers, maybe_source) = do
                             all_seen_hosts = resolve_center ^. allSeenHosts
                             dnsmasq_contents = dnsMasqFileContentsToIp use_address_for_station_b all_seen_hosts 
 
-                        liftIO $ writeChan next_dnsmasq_chan $ DnsMasqConfig analysis_id dnsmasq_contents
+                        liftIO $ writeChan next_dnsmasq_chan $! DnsMasqConfig analysis_id dnsmasq_contents
 
-                        -- We also need to queue the url somewhere to be used by StationB
-                        liftIO $ writeChan next_test_url_chan $ urlToHTTPSScheme test_url
+                        -- We also need to queue the url somewhere to be checked by the dnsmasqupdated entrypoint
+                        liftIO $ writeChan next_test_url_to_check_chan $ urlToHTTPSScheme test_url
 
                         -- And the resolve center to be used by the serving side
                         liftIO $ writeChan resolve_center_chan resolve_center
@@ -290,15 +299,40 @@ researchWorkerComp (input_headers, maybe_source) = do
                     )
                     on_bad_har_file
 
-            | req_url == "/dnsmasq/" -> do 
-                -- Sends a DNSMASQ file to the test station ("StationB")
-                liftIO $ infoM "ResearchWorker" ".. /dnsmasq/ asked"
-                -- Serve the DNS masq file corresponding to the last .har file 
-                -- received.
-                dnsmasq_contents <- liftIO $ readChan next_dnsmasq_chan
-                liftIO $ infoM "ResearchWorker" ".. /dnsmasq/ answer"
-                
-                return $ simpleResponse 200 $ LB.toStrict $ Da.encode dnsmasq_contents
+            | req_url == "/dnsmasq/" , Just source <- maybe_source  -> do 
+                catch 
+                    (do 
+                        received_version <- liftIO $ waitRequestBody source
+                        liftIO $ infoM "ResearchWorker" $ " .. updatednsmasq VERSION= " ++ (show received_version)
+                        -- Sends a DNSMASQ file to the test station ("StationB")
+                        liftIO $ infoM "ResearchWorker" ".. /dnsmasq/ asked"
+                        -- Serve the DNS masq file corresponding to the last .har file 
+                        -- received.
+                        dnsmasq_contents <- liftIO $ readChan next_dnsmasq_chan
+                        liftIO $ infoM "ResearchWorker" ".. /dnsmasq/ answers"
+                        liftIO $ infoM "ResearchWorker" $ "Sending " ++ (show dnsmasq_contents)
+                        return $ simpleResponse 200 $ LB.toStrict $ Da.encode dnsmasq_contents
+                    )
+                    on_general_error
+
+            | req_url == "/dnsmasqupdated/",  Just source <- maybe_source -> do 
+                -- Received  advice that everything is ready to proceed
+                received_id <- liftIO $ waitRequestBody source
+                test_url <- liftIO $ readChan next_test_url_to_check_chan  
+                liftIO $ infoM "ResearchWorker" $ "Dnsmasqupdated received " ++ (show received_id)
+                liftIO $ infoM "ResearchWorker" $ "and test_url has hash " ++ (show (hashSafeFromUrl test_url) )
+                -- Now compare that these two have the same id .... 
+                liftIO $ if (safeUrlFromByteStringWhichIsAlreadyAHashedUrl received_id) == (hashSafeFromUrl test_url) 
+                  then 
+                    infoM "ResearchWorker" $ "Dnsmasqupdated matched urls (for " ++ (show test_url) ++ " )"
+                  else 
+                    -- This is a very bad thing
+                    errorM "ResearchWorker" $ "Dnsmasqupdated could not match urls (for " ++ (show test_url) ++ " )"
+
+                -- Write the url to the queue so that /testurl/ can return when seeing this value 
+                liftIO $ writeChan next_test_url_chan $ urlToHTTPSScheme test_url
+
+                return $ simpleResponse 200 $ "ok"
 
             | req_url == "/setnexturl/", Just source <- maybe_source -> do 
                 -- Receives a url to investigate from the user front-end, or from curl
@@ -331,6 +365,11 @@ researchWorkerComp (input_headers, maybe_source) = do
     on_bad_har_file  (BadHarFile _) = 
         return $ simpleResponse 500 "BadHarFile"
 
+    on_general_error :: E.SomeException -> ServiceStateMonad PrincipalStream
+    on_general_error e = do
+        liftIO $ errorM "ResearchWorker" (show e)
+        throwM e
+
     output_computation :: InputDataStream -> IO (ResolveCenter,  LB.ByteString)
     output_computation source = do 
         full_builder <- source $$ consumer ""
@@ -349,6 +388,7 @@ researchWorkerComp (input_headers, maybe_source) = do
             Nothing -> do
                 -- liftIO $ putStrLn "Finishing"
                 return b
+
 
 
 -- And here for when we need to fork a server to load the .har file from 

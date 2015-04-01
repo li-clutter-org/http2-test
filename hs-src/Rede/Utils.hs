@@ -16,6 +16,7 @@ module Rede.Utils (
     ,hashFromUrl
     ,hashSafeFromUrl
     ,unSafeUrl
+    ,safeUrlFromByteStringWhichIsAlreadyAHashedUrl
 
     ,SafeUrl
     ) where 
@@ -175,3 +176,6 @@ hashFromUrl url =
 
 hashSafeFromUrl :: B.ByteString -> SafeUrl 
 hashSafeFromUrl = SafeUrl . hashFromUrl
+
+safeUrlFromByteStringWhichIsAlreadyAHashedUrl :: B.ByteString -> SafeUrl
+safeUrlFromByteStringWhichIsAlreadyAHashedUrl c = SafeUrl c

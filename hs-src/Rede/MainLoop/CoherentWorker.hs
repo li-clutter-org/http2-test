@@ -6,6 +6,7 @@
 
 module Rede.MainLoop.CoherentWorker(
     getHeaderFromFlatList
+    , waitRequestBody
 
     , Headers
     , Request
@@ -19,9 +20,13 @@ module Rede.MainLoop.CoherentWorker(
     ) where 
 
 
-import Data.Conduit
-import qualified Data.ByteString as B
-import Data.Foldable(find)
+import qualified Data.ByteString         as B
+import qualified Data.ByteString.Builder as Bu
+import qualified Data.ByteString.Lazy    as LB
+import           Data.Conduit
+import           Data.Foldable           (find)
+import qualified Data.Monoid             as M
+
 
 
 type Headers = [(B.ByteString, B.ByteString)]
@@ -59,4 +64,30 @@ getHeaderFromFlatList unvl bs =
         Just (_, found_value)  -> Just found_value 
 
         Nothing                -> Nothing  
+
+
+-- | Consumes the request body and returns it.... this can be 
+--   happily done in the threadlets of Haskell without any further
+--   brain-burning.....
+waitRequestBody :: InputDataStream -> IO B.ByteString
+waitRequestBody source = 
+  let
+    consumer  b = do 
+        maybe_bytes <- await 
+        case maybe_bytes of 
+
+            Just bytes -> do
+                -- liftIO $ putStrLn $ "Got bytes " ++ (show $ B.length bytes)
+                consumer $ b `M.mappend` (Bu.byteString bytes)
+
+            Nothing -> do
+                -- liftIO $ putStrLn "Finishing"
+                return b
+  in do 
+    full_builder <- (source $$ consumer "") :: IO Bu.Builder
+    return $ (LB.toStrict . Bu.toLazyByteString) full_builder
+    
+
+
+
 

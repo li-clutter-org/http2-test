@@ -26,8 +26,6 @@ def run(cmdstr):
     return p
 
 chrome_process = run("google-chrome --disable-gpu")
-# Let's start also a daemon process to update the dns masq
-run("python /home/{user}/StationB/configure_dnsmasq.py".format(user=os.environ["USER"]))
 
 while True:
 	time.sleep(4.0)

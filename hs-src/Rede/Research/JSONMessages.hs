@@ -37,7 +37,8 @@ instance FromJSON SetNextUrl where
 
 -- This is a controlled message to be sure that dnsmasq set 
 -- the correct DNS file for the current item in the pipeline.
-data DnsMasqConfig = DnsMasqConfig SafeUrl B.ByteString
+data DnsMasqConfig = DnsMasqConfig !SafeUrl !B.ByteString
+    deriving (Show, Eq)
 
 instance ToJSON DnsMasqConfig where 
 	toJSON (DnsMasqConfig safe_url file_contents) = object [
