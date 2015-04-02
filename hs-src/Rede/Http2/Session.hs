@@ -16,12 +16,11 @@ module Rede.Http2.Session(
 
 -- System grade utilities
 import           Control.Monad                           (forever)
-import           Control.Concurrent                      (forkIO)
+import           Control.Concurrent                      (forkIO, ThreadId)
 import           Control.Concurrent.Chan
 import           Control.Monad.IO.Class                  (liftIO)
--- import           Control.Monad.Trans.Class               (lift)
--- import           Control.Monad.Trans.Writer
 import           Control.Monad.Trans.Reader
+import           Control.Exception                       (throwTo)
 
 -- import           Text.Printf                             (printf)
 import           Data.Conduit
@@ -32,19 +31,12 @@ import qualified Data.IntSet                             as NS
 import qualified Data.HashTable.IO          as H
 
 import           Control.Lens
--- import           Blaze.ByteString.Builder.ByteString (fromByteString)
--- import qualified Blaze.ByteString.Builder            as Bu
-
 
 -- No framing layer here... let's use Kazu's Yamamoto library
 import qualified Network.HTTP2            as NH2
 import qualified Network.HPACK            as HP
 
 -- Logging utilities
--- import           System.Log.Formatter
--- import           System.Log.Handler         (setFormatter)
--- import           System.Log.Handler.Simple
--- import           System.Log.Handler.Syslog
 import           System.Log.Logger
 
 -- Imports from other parts of the program
@@ -177,6 +169,12 @@ data SessionData = SessionData {
 
     -- Data input mechanism corresponding to some threads
     ,_stream2PostInputMechanism  :: HashTable Int PostInputMechanism 
+
+    -- Worker thread register. This is a dictionary from stream id to 
+    -- the ThreadId of the thread with the worker thread. I use this to 
+    -- raise asynchronous exceptions in the worker thread if the stream 
+    -- is cancelled by the client
+    ,_stream2WorkerThread        :: HashTable Int ThreadId
     }
 
 
@@ -186,30 +184,31 @@ makeLenses ''SessionData
 --                                v- {headers table size comes here!!}
 http2Session :: CoherentWorker -> SessionStartData -> IO Session
 http2Session coherent_worker _ =   do 
-    session_input   <- newChan
-    session_output  <- newChan
-    session_output_mvar <- newMVar session_output
+    session_input             <- newChan
+    session_output            <- newChan
+    session_output_mvar       <- newMVar session_output
 
 
     -- For incremental construction of headers...
-    stream_request_headers <- H.new :: IO Stream2HeaderBlockFragment
+    stream_request_headers    <- H.new :: IO Stream2HeaderBlockFragment
 
     -- Warning: we should find a way of coping with different table sizes.
-    decode_headers_table <- HP.newDynamicTableForDecoding 4096
+    decode_headers_table      <- HP.newDynamicTableForDecoding 4096
     decode_headers_table_mvar <- newMVar decode_headers_table
 
-    encode_headers_table <- HP.newDynamicTableForEncoding 4096
+    encode_headers_table      <- HP.newDynamicTableForEncoding 4096
     encode_headers_table_mvar <- newMVar encode_headers_table
 
     -- These ones need independent threads taking care of sending stuff
     -- their way... 
-    headers_output <- newChan :: IO (Chan (GlobalStreamId, MVar HeadersSent, Headers))
-    data_output <- newChan :: IO (Chan (GlobalStreamId,B.ByteString))
+    headers_output            <- newChan :: IO (Chan (GlobalStreamId, MVar HeadersSent, Headers))
+    data_output               <- newChan :: IO (Chan (GlobalStreamId,B.ByteString))
 
     stream2postinputmechanism <- H.new 
+    stream2workerthread       <- H.new
 
     -- What about stream cancellation?
-    cancelled_streams_mvar <- newMVar $ NS.empty :: IO (MVar NS.IntSet)
+    cancelled_streams_mvar    <- newMVar $ NS.empty :: IO (MVar NS.IntSet)
 
     let for_worker_thread = WorkerThreadEnvironment {
         _streamId = error "NotInitialized"  
@@ -228,6 +227,7 @@ http2Session coherent_worker _ =   do
         ,_coherentWorker             = coherent_worker
         ,_streamsCancelled           = cancelled_streams_mvar
         ,_stream2PostInputMechanism  = stream2postinputmechanism
+        ,_stream2WorkerThread        = stream2workerthread
         }
 
     -- Create an input thread that decodes frames...
@@ -264,6 +264,7 @@ sessionInputThread  = do
     coherent_worker           <- view coherentWorker
 
     for_worker_thread_uns     <- view forWorkerThread
+    stream2workerthread       <- view stream2WorkerThread
 
     input                     <- liftIO $ readChan session_input
 
@@ -305,9 +306,11 @@ sessionInputThread  = do
 
                 -- I'm clear to start the worker, in its own thread
                 -- !!
-                liftIO . forkIO $ runReaderT 
-                    (workerThread (header_list, post_data_source) coherent_worker)
-                    for_worker_thread 
+                liftIO $ do 
+                    thread_id <- forkIO $ runReaderT 
+                        (workerThread (header_list, post_data_source) coherent_worker)
+                        for_worker_thread 
+                    H.insert stream2workerthread stream_id thread_id
 
                 return ()
             else 
@@ -318,11 +321,21 @@ sessionInputThread  = do
             continue 
 
         Right frame@(NH2.Frame _ (NH2.RSTStreamFrame error_code_id)) -> do
-            liftIO $ infoM "HTTP2.Session" $ "Stream reset: " ++ (show error_code_id)
-            cancelled_streams <- liftIO $ readMVar cancelled_streams_mvar
             let stream_id = streamIdFromFrame frame
-            liftIO $ infoM "HTTP2.Session" $ "Cancelled stream was: " ++ (show stream_id)
-            liftIO $ putMVar cancelled_streams_mvar $ NS.insert  stream_id cancelled_streams
+            liftIO $ do 
+                infoM "HTTP2.Session" $ "Stream reset: " ++ (show error_code_id)
+                cancelled_streams <- takeMVar cancelled_streams_mvar
+                infoM "HTTP2.Session" $ "Cancelled stream was: " ++ (show stream_id)
+                putMVar cancelled_streams_mvar $ NS.insert  stream_id cancelled_streams
+                maybe_thread_id <- H.lookup stream2workerthread stream_id
+                case maybe_thread_id  of 
+                    Nothing -> 
+                        errorM "HTTP2.Session" $ "Attention: could not find stream " ++ (show stream_id) ++ ("in threads register")
+
+                    Just thread_id -> do
+                        infoM "http2Session" $ "About to cancel thread " ++ (show thread_id)
+                        throwTo thread_id StreamCancelledException
+                        infoM "HTTP2.Session" $ "Stream successfully interrupted"
 
             continue 
 
@@ -492,7 +505,7 @@ workerThread :: Request -> CoherentWorker -> WorkerMonad ()
 workerThread req coherent_worker =
   do
     headers_output <- view headersOutput
-    stream_id <- view streamId
+    stream_id      <- view streamId
     (headers, _, data_and_conclussion) <- liftIO $ coherent_worker req
 
     -- liftIO $ putStrLn $ "Num pushed streams: " ++ (show $ length pushed_streams)

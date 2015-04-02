@@ -4,12 +4,11 @@ module Rede.Http2.MakeAttendant (
     ) where
 
 
-import Rede.MainLoop.CoherentWorker
-import           Rede.MainLoop.PushPullType   (PullAction,
-                                               PushAction,
-                                               CloseAction
-                                               )
-import Rede.Http2.Framer  (wrapSession)
+import           Rede.Http2.Framer            (wrapSession)
+import           Rede.MainLoop.CoherentWorker
+import           Rede.MainLoop.PushPullType   (CloseAction, PullAction,
+                                               PushAction)
+
 
 
 http2Attendant :: CoherentWorker -> PushAction -> PullAction -> CloseAction ->  IO ()

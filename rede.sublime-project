@@ -15,7 +15,8 @@
 				"**/.idea",
 				".cabal-sandbox",
 				"demo-site/http2",
-				"demo-site/mathjax23"
+				"demo-site/mathjax23",
+				"**/http2_loadimpact"
 			],
 			"follow_symlinks": true,
 			"path": "."

@@ -8,6 +8,7 @@ module Rede.Workers.HarWorker(
 
 
 import           Control.Monad.IO.Class
+import           Control.Concurrent           (threadDelay)
 
 import qualified Data.ByteString              as B
 import           Data.ByteString.Char8        (pack, unpack)
@@ -39,14 +40,21 @@ import           Rede.Workers.VeryBasic       (bad404ResponseData,
                                                bad404ResponseHeaders)
 
 
+-- TODO: We need a better way to taylor an additional delay.
+-- This number represents an artificial latency.
+additionalDelay :: Int
+additionalDelay = 200000
+
+
 adaptHeaders :: Int -> UnpackedNameValueList -> UnpackedNameValueList 
 adaptHeaders status_code (UnpackedNameValueList raw_headers) = let
     -- Let's remove some headers....
     -- Connection, Host, Keep-Alive, Proxy-Connection, Transfer-Encoding, Accept-Ranges
     no_oniuxus_headers = [ (x,y) | (x,y) <- raw_headers, x `S.notMember` headers_to_remove]
+    server_is_reh_headers = ("server", "ReHv0.1Inserted") : no_oniuxus_headers
 
     -- Add 'status' header
-    with_status  = (":status", pack $ show status_code):no_oniuxus_headers
+    with_status  = (":status", pack $ show status_code):server_is_reh_headers
     with_version = (":version", "HTTP/1.1"):with_status
 
     headers_to_send = [ (lowercaseText x, y) | (x,y) <- with_version ]
@@ -59,6 +67,8 @@ adaptHeaders status_code (UnpackedNameValueList raw_headers) = let
         "keep-alive",
         "content-encoding",  -- <-- gzip compression goes here
         "date",
+        "server",
+        "Server",
         "proxy-connection",
         "transfer-encoding",
         "accept-ranges"] :: S.Set B.ByteString
@@ -84,7 +94,9 @@ harCoherentWorker resolve_center (input_headers, _ ) = do
         Just served_entry -> let 
                 contents = (served_entry ^. sreContents)
                 UnpackedNameValueList adapted_headers = adaptHeaders (served_entry ^. sreStatus ) (served_entry ^. sreHeaders)
-            in return (adapted_headers , pushed_streams, yield contents)
+            in do 
+                liftIO $ threadDelay additionalDelay
+                return (adapted_headers , pushed_streams, yield contents)
 
         Nothing -> do 
             liftIO $ errorM "HarWorker" $ "  .. resource " ++ (show resource_handle) ++ " not found."

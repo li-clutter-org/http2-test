@@ -287,7 +287,8 @@ contentsAreBinary content_type =
     binary_content_types 
   where 
     binary_content_types = S.fromList [
-        "image/png"
+        "image/png",
+        "image/jpg"
         ]
 
 

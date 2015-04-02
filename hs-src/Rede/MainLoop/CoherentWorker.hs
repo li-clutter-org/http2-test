@@ -1,6 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE FunctionalDependencies, FlexibleInstances  #-} 
+{-# LANGUAGE FunctionalDependencies, FlexibleInstances, DeriveDataTypeable  #-} 
 -- | A CoherentWorker is one that doesn't need to return everything at once...
 
 
@@ -17,6 +17,7 @@ module Rede.MainLoop.CoherentWorker(
     , PushedStream
     , DataAndConclussion
     , InputDataStream
+    , StreamCancelledException(..)
     ) where 
 
 
@@ -27,6 +28,8 @@ import           Data.Conduit
 import           Data.Foldable           (find)
 import qualified Data.Monoid             as M
 
+import           Control.Exception
+import           Data.Typeable
 
 
 type Headers = [(B.ByteString, B.ByteString)]
@@ -36,6 +39,13 @@ type InputDataStream = Source IO B.ByteString
 -- A request is a set of headers and a request body....
 -- which will normally be empty
 type Request = (Headers, Maybe InputDataStream)
+
+-- This will be raised inside a Coherent worker when the underlying 
+-- stream is cancelled. 
+data StreamCancelledException = StreamCancelledException
+    deriving (Show, Typeable)
+
+instance Exception StreamCancelledException
 
 type FinalizationHeaders = Headers
 
