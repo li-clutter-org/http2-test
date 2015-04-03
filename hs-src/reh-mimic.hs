@@ -135,3 +135,7 @@ setLoggerLevels s = do
         setHandlers [s] .  -- Remember that composition works in reverse...
         setLevel DEBUG  
         )
+    updateGlobalLogger "HTTP2.Framer" (
+        setHandlers [s] . 
+        setLevel INFO
+        )

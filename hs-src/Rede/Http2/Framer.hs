@@ -4,9 +4,10 @@
              DeriveDataTypeable, TemplateHaskell #-}
 module Rede.Http2.Framer (
     wrapSession,
-
     -- Not needed anywhere, but supress the warning about unneeded symbol
-    closeAction
+    closeAction,
+
+    FrameDecodingException(..)
     ) where 
 
 
@@ -19,10 +20,14 @@ import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Reader 
 import qualified Control.Lens                 as L
 import           Control.Lens                 (view)
+
+import           System.Log.Logger
+
 import           Data.Binary                  (decode)
 import qualified Data.ByteString              as B
 import qualified Data.ByteString.Lazy         as LB
 import           Data.Conduit
+import qualified Data.Conduit                 as C
 import           Data.Typeable                (Typeable)
 import           Data.Foldable                (find)
 
@@ -34,6 +39,7 @@ import qualified Data.HashTable.IO            as H
 import           Rede.Http2.Session
 import           Rede.MainLoop.CoherentWorker (CoherentWorker)
 import qualified Rede.MainLoop.Framer         as F
+import           Rede.MainLoop.OpenSSL_TLS    (ConnectionIOError)
 import           Rede.MainLoop.PushPullType   (Attendant, PullAction,
                                                PushAction, CloseAction)
 import           Rede.Utils                   (Word24, word24ToInt)
@@ -48,7 +54,10 @@ data BadPrefixException = BadPrefixException
 
 instance Exception BadPrefixException
 
+data FrameDecodingException = FrameDecodingException
+    deriving (Show, Typeable)
 
+instance  Exception FrameDecodingException where
 
 -- Let's do flow control here here .... 
 
@@ -177,19 +186,32 @@ inputGatherer pull_action session_input = do
         return ()
 
     let 
+
         source::Source FramerSession B.ByteString
         source = transPipe liftIO $ F.readNextChunk http2FrameLength remaining pull_action
-    ( source $$ consume)
+
+        source2::Source FramerSession (Either SessionInputCommand B.ByteString)
+        source2 = mapOutput (\ bytes -> Right bytes ) source 
+
+        source3 :: Source FramerSession (Either SessionInputCommand B.ByteString)
+        source3 = catchC source2 onConnectionError 
+
+        onConnectionError :: ConnectionIOError -> Source FramerSession (Either SessionInputCommand B.ByteString)
+        onConnectionError _ = 
+            C.yield (Left CancelSession_SIC)
+    
+    ( source3 $$ consume)
+    
   where 
 
-    consume :: Sink B.ByteString FramerSession ()
+    consume :: Sink (Either SessionInputCommand B.ByteString) FramerSession ()
     consume = do 
         maybe_bytes <- await 
         -- Deserialize
 
         case maybe_bytes of 
 
-            Just bytes -> do
+            Just (Right bytes) -> do
                 let 
                     error_or_frame = NH2.decodeFrame some_settings bytes
                     -- TODO: See how we can change these....
@@ -198,8 +220,8 @@ inputGatherer pull_action session_input = do
                 case error_or_frame of 
 
                     Left some_error -> do 
-                        liftIO $ putStrLn $ "Got an error: " ++ (show some_error)
-
+                        liftIO $ errorM "HTTP2.Framer" $ "HTTP/2 frame decoding error: " ++ (show some_error)
+                        liftIO $ throwIO FrameDecodingException
 
                     Right (NH2.Frame (NH2.FrameHeader _ _ stream_id) (NH2.WindowUpdateFrame credit) ) -> do 
                         -- Bookkeep the increase on bytes on that stream
@@ -234,11 +256,11 @@ inputGatherer pull_action session_input = do
                                 return ()
 
                         -- And send the frame down to the session
-                        liftIO $ sendFrametoSession session_input frame
+                        liftIO $ sendFrameToSession session_input frame
 
 
                     Right a_frame   -> do 
-                        liftIO $ sendFrametoSession session_input a_frame
+                        liftIO $ sendFrameToSession session_input a_frame
 
                 -- tail recursion: go again...
                 consume 
@@ -246,6 +268,12 @@ inputGatherer pull_action session_input = do
             Nothing    -> 
                 -- We may as well exit this thread
                return ()
+
+            Just (Left command) -> do 
+                liftIO $ sendCommandToSession session_input command 
+                -- Not sure about this, but ...
+                -- consume
+
 
 
 outputGatherer :: SessionOutput -> FramerSession ()

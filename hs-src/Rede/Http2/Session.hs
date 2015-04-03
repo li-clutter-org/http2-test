@@ -5,10 +5,12 @@
 module Rede.Http2.Session(
     http2Session
     ,getFrameFromSession
-    ,sendFrametoSession
+    ,sendFrameToSession
+    ,sendCommandToSession
 
     ,CoherentSession
-    ,SessionInput 
+    ,SessionInput(..)
+    ,SessionInputCommand(..)
     ,SessionOutput 
     ,SessionStartData(..)
     ) where
@@ -88,9 +90,11 @@ type Session = (SessionInput, SessionOutput)
 -- From outside, one can only write to this one ... the newtype is to enforce 
 --    this.
 newtype SessionInput = SessionInput ( Chan (Either SessionInputCommand InputFrame) )
-sendFrametoSession :: SessionInput  -> InputFrame -> IO ()
-sendFrametoSession (SessionInput chan) frame = writeChan chan $ Right frame
+sendFrameToSession :: SessionInput  -> InputFrame -> IO ()
+sendFrameToSession (SessionInput chan) frame = writeChan chan $ Right frame
 
+sendCommandToSession :: SessionInput  -> SessionInputCommand -> IO ()
+sendCommandToSession (SessionInput chan) command = writeChan chan $ Left command
 
 -- From outside, one can only read from this one 
 newtype SessionOutput = SessionOutput ( Chan (Either SessionOutputCommand OutputFrame) )
@@ -272,9 +276,23 @@ sessionInputThread  = do
 
     case input of 
 
-        Left _ -> do 
-            -- Actually, I haven't even defined a type for these tokens....
-            error "Received control token but don't know what to do with it..."
+        Left CancelSession_SIC -> do 
+            -- Good place to tear down worker threads... Let the rest of the finalization
+            -- to somebody else....
+            liftIO $ do 
+                infoM "HTTP2.Session" $ "Session abort" 
+                cancelled_streams <- takeMVar cancelled_streams_mvar
+                infoM "HTTP2.Session" $ "Cancelled stream was: " ++ (show stream_id)
+                putMVar cancelled_streams_mvar $ NS.insert  stream_id cancelled_streams
+                maybe_thread_id <- H.lookup stream2workerthread stream_id
+                case maybe_thread_id  of 
+                    Nothing -> 
+                        errorM "HTTP2.Session" $ "Attention: could not find stream " ++ (show stream_id) ++ ("in threads register")
+
+                    Just thread_id -> do
+                        throwTo thread_id StreamCancelledException
+                        infoM "HTTP2.Session" $ "Stream successfully interrupted"
+            return ()
 
         Right frame | Just (stream_id, bytes) <- frameIsHeaderOfStream frame -> do 
             -- Just append the frames to streamRequestHeaders
@@ -333,7 +351,6 @@ sessionInputThread  = do
                         errorM "HTTP2.Session" $ "Attention: could not find stream " ++ (show stream_id) ++ ("in threads register")
 
                     Just thread_id -> do
-                        infoM "http2Session" $ "About to cancel thread " ++ (show thread_id)
                         throwTo thread_id StreamCancelledException
                         infoM "HTTP2.Session" $ "Stream successfully interrupted"
 
