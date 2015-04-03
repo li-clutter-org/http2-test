@@ -280,18 +280,14 @@ sessionInputThread  = do
             -- Good place to tear down worker threads... Let the rest of the finalization
             -- to somebody else....
             liftIO $ do 
-                infoM "HTTP2.Session" $ "Session abort" 
-                cancelled_streams <- takeMVar cancelled_streams_mvar
-                infoM "HTTP2.Session" $ "Cancelled stream was: " ++ (show stream_id)
-                putMVar cancelled_streams_mvar $ NS.insert  stream_id cancelled_streams
-                maybe_thread_id <- H.lookup stream2workerthread stream_id
-                case maybe_thread_id  of 
-                    Nothing -> 
-                        errorM "HTTP2.Session" $ "Attention: could not find stream " ++ (show stream_id) ++ ("in threads register")
-
-                    Just thread_id -> do
+                H.mapM_
+                    (\ (_, thread_id) -> do
                         throwTo thread_id StreamCancelledException
                         infoM "HTTP2.Session" $ "Stream successfully interrupted"
+                    )
+                    stream2workerthread
+
+            -- We do not continue here, but instead let it finish
             return ()
 
         Right frame | Just (stream_id, bytes) <- frameIsHeaderOfStream frame -> do 
