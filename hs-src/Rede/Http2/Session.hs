@@ -11,7 +11,7 @@ module Rede.Http2.Session(
     ,CoherentSession
     ,SessionInput(..)
     ,SessionInputCommand(..)
-    ,SessionOutput 
+    ,SessionOutput(..) 
     ,SessionStartData(..)
     ) where
 
