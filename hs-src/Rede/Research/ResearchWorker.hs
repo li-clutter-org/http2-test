@@ -634,17 +634,21 @@ modifyUrlState key mutator = do
 
 markState :: SafeUrl -> CurrentAnalysisStage -> FilePath -> IO ()
 markState safe_url current_analysis_stage research_dir = do 
-    eraseStatusFiles safe_url research_dir
     let 
         url_hash = unSafeUrl safe_url
+        scratch_dir = research_dir </> (unpack url_hash)
+    createDirectoryIfMissing True scratch_dir
+    eraseStatusFiles safe_url research_dir
+    let 
         percent:: Int
         (status_fname, percent) = case current_analysis_stage of 
-            AnalysisRequested_CAS -> ("status.processing", 5)
-            SentToHarvester_CAS   -> ("status.processing", 20)
-            SentToTest_CAS ->        ("status.processing", 55)
-            SystemCancelled_CAS ->   ("status.failed", 0)
-            Done_CAS -> ("status.done", 100)
-        file_location = research_dir </> (show url_hash) </> status_fname 
+            AnalysisRequested_CAS      -> ("status.processing", 5)
+            SentToHarvester_CAS        -> ("status.processing", 20)
+            ReceivedFromHarvester_CAS  -> ("status.processing", 35)
+            SentToTest_CAS             -> ("status.processing", 55)
+            SystemCancelled_CAS        -> ("status.failed", 0)
+            Done_CAS                   -> ("status.done", 100)
+        file_location = scratch_dir  </> status_fname 
     (withFile file_location WriteMode $ \ handle -> hPutStr handle (show percent))
 
 
@@ -655,7 +659,7 @@ eraseStatusFiles safe_url research_dir = do
     mapM_ (
         \ end_name -> do 
             let 
-                complete_name = research_dir </> (show url_hash) </> end_name
+                complete_name = research_dir </> (unpack url_hash) </> end_name
             removeIfExists complete_name
         )
         fileNames
