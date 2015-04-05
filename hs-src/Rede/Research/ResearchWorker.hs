@@ -36,6 +36,7 @@ import           Control.Monad.Trans.Reader      (ReaderT (..), runReaderT)
 import           System.Directory
 import           System.FilePath
 import           System.IO
+import           System.IO.Error                 (isDoesNotExistError)
 import           System.Process
 
 import qualified Network.URI                     as U
@@ -62,7 +63,7 @@ import           Rede.MainLoop.ConfigHelp        (configDir, getInterfaceName,
 import           Rede.MainLoop.OpenSSL_TLS       (FinishRequest (..), tlsServeWithALPNAndFinishOnRequest)
 import           Rede.Utils.ConcatConduit        (concatConduit)
 import           Rede.Utils.PrintfArgByteString  ()
-import           Rede.Utils                      (hashSafeFromUrl, SafeUrl, unSafeUrl, safeUrlFromByteStringWhichIsAlreadyAHashedUrl)
+import           Rede.Utils                      (hashSafeFromUrl, unSafeUrl, SafeUrl, unSafeUrl, safeUrlFromByteStringWhichIsAlreadyAHashedUrl)
 import           Rede.Utils.Alarm                
 import           Rede.Utils.JustOneMakesSense
 import           Rede.Workers.HarWorker          (harCoherentWorker)
@@ -77,8 +78,8 @@ data CurrentAnalysisStage =
     AnalysisRequested_CAS
     |SentToHarvester_CAS
     |SentToTest_CAS
-    -- |SystemCancelled_CAS
-    -- |Done_CAS
+    |SystemCancelled_CAS
+    |Done_CAS
 
 
 -- Time to wait before unleashing an alarm... 
@@ -116,6 +117,8 @@ data ServiceState = ServiceState {
 
     , _finishRequestChan :: Chan FinishRequest
 
+    -- The "Research dir" is the "hars" subdirectory of the mimic
+    -- scratch directory. 
     , _researchDir :: FilePath 
 
     -- The IP address that StationB needs to connect
@@ -140,7 +143,7 @@ runResearchWorker ::
     Chan B.ByteString 
     -> Chan ResolveCenter 
     -> Chan FinishRequest 
-    -> FilePath
+    -> FilePath                -- Research dir
     -> B.ByteString
     -> IO CoherentWorker
 runResearchWorker url_chan resolve_center_chan finish_request_chan research_dir use_address_for_station_b = do 
@@ -604,4 +607,52 @@ modifyUrlState key mutator = do
 
         Nothing -> do
             liftIO $ warningM "ResearchWorker" $  builderToString $ "Trying to modify state of non-seen url job " `mappend` (Bu.byteString . unSafeUrl $ key)
+
+
+markState :: SafeUrl -> CurrentAnalysisStage -> ServiceStateMonad ()
+markState safe_url current_analysis_stage = do 
+    research_dir <- L.view researchDir
+    eraseStatusFiles safe_url
+    let 
+        url_hash = unSafeUrl safe_url
+        (status_fname, percent) = case current_analysis_stage of 
+            AnalysisRequested_CAS -> ("status.processing", 5)
+            SentToHarvester_CAS   -> ("status.processing", 20)
+            SentToTest_CAS ->        ("status.processing", 55)
+            SystemCancelled_CAS ->   ("status.failed", 0)
+            Done_CAS -> ("status.done", 100)
+        file_location = research_dir </> (show url_hash) </> status_fname 
+    liftIO (withFile file_location WriteMode $ \ handle -> hPutStr handle (show percent))
+
+
+eraseStatusFiles :: SafeUrl -> ServiceStateMonad ()
+eraseStatusFiles safe_url = do 
+    research_dir <- L.view researchDir
+    let 
+        url_hash = unSafeUrl safe_url
+    liftIO $ mapM_ (
+        \ end_name -> do 
+            let 
+                complete_name = research_dir </> (show url_hash) 
+            removeIfExists complete_name
+        )
+        fileNames
+
+
+fileNames :: [ FilePath ]
+fileNames = [
+    "status.processing",
+    "status.processing",
+    "status.processing",
+    "status.failed"
+  ]  
+
+
+removeIfExists :: FilePath -> IO ()
+removeIfExists fileName = removeFile fileName `catch` handleExists
+  where handleExists e
+          | isDoesNotExistError e = return ()
+          | otherwise = E.throwIO e
+
+
 
