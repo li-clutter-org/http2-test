@@ -287,21 +287,22 @@ researchWorkerComp (input_headers, maybe_source) = do
                             all_seen_hosts = resolve_center ^. allSeenHosts
                             dnsmasq_contents = dnsMasqFileContentsToIp use_address_for_station_b all_seen_hosts 
 
-                        liftIO $ writeChan next_dnsmasq_chan $! DnsMasqConfig analysis_id dnsmasq_contents
+                        liftIO $ do
+                            writeChan next_dnsmasq_chan $! DnsMasqConfig analysis_id dnsmasq_contents
 
-                        -- We also need to queue the url somewhere to be checked by the dnsmasqupdated entrypoint
-                        liftIO $ writeChan next_test_url_to_check_chan $ urlToHTTPSScheme test_url
+                            -- We also need to queue the url somewhere to be checked by the dnsmasqupdated entrypoint
+                            writeChan next_test_url_to_check_chan $ urlToHTTPSScheme test_url
 
-                        -- And the resolve center to be used by the serving side
-                        liftIO $ writeChan resolve_center_chan resolve_center
+                            -- And the resolve center to be used by the serving side
+                            writeChan resolve_center_chan resolve_center
 
-                        -- We can also use this opportunity to create a folder for this research 
-                        -- project 
-                        let 
-                            scratch_folder = (base_research_dir) </> (resolve_center ^. rcName . L.to unpack)
-                            har_filename = scratch_folder </> "harvested.har"
-                        liftIO $ createDirectoryIfMissing True scratch_folder
-                        liftIO $ LB.writeFile har_filename har_file_contents
+                            -- We can also use this opportunity to create a folder for this research 
+                            -- project 
+                            let 
+                                scratch_folder = (base_research_dir) </> (resolve_center ^. rcName . L.to unpack)
+                                har_filename = scratch_folder </> "harvested.har"
+                            createDirectoryIfMissing True scratch_folder
+                            LB.writeFile har_filename har_file_contents
 
                         return $ simpleResponse 200 use_text
                     )
@@ -354,20 +355,22 @@ researchWorkerComp (input_headers, maybe_source) = do
 
             | req_url == "/dnsmasqupdated/",  Just source <- maybe_source -> do 
                 -- Received  advice that everything is ready to proceed
-                received_id <- liftIO $ waitRequestBody source
-                test_url <- liftIO $ readChan next_test_url_to_check_chan  
-                liftIO $ infoM "ResearchWorker" $ "Dnsmasqupdated received " ++ (show received_id)
-                liftIO $ infoM "ResearchWorker" $ "and test_url has hash " ++ (show (hashSafeFromUrl test_url) )
-                -- Now compare that these two have the same id .... 
-                liftIO $ if (safeUrlFromByteStringWhichIsAlreadyAHashedUrl received_id) == (hashSafeFromUrl test_url) 
-                  then 
-                    infoM "ResearchWorker" $ "Dnsmasqupdated matched urls (for " ++ (show test_url) ++ " )"
-                  else 
-                    -- This is a very bad thing
-                    errorM "ResearchWorker" $ "Dnsmasqupdated could not match urls (for " ++ (show test_url) ++ " )"
+                liftIO $ do 
+                    received_id <- waitRequestBody source
+                    test_url <- readChan next_test_url_to_check_chan  
 
-                -- Write the url to the queue so that /testurl/ can return when seeing this value 
-                liftIO $ writeChan next_test_url_chan $ urlToHTTPSScheme test_url
+                    infoM "ResearchWorker" $ "Dnsmasqupdated received " ++ (show received_id)
+                    infoM "ResearchWorker" $ "and test_url has hash " ++ (show (hashSafeFromUrl test_url) )
+                    -- Now compare that these two have the same id .... 
+                    if (safeUrlFromByteStringWhichIsAlreadyAHashedUrl received_id) == (hashSafeFromUrl test_url) 
+                      then 
+                        infoM "ResearchWorker" $ "Dnsmasqupdated matched urls (for " ++ (show test_url) ++ " )"
+                      else 
+                        -- This is a very bad thing
+                        errorM "ResearchWorker" $ "Dnsmasqupdated could not match urls (for " ++ (show test_url) ++ " )"
+
+                    -- Write the url to the queue so that /testurl/ can return when seeing this value 
+                    writeChan next_test_url_chan $ urlToHTTPSScheme test_url
 
                 return $ simpleResponse 200 $ "ok"
 
@@ -653,6 +656,3 @@ removeIfExists fileName = removeFile fileName `catch` handleExists
   where handleExists e
           | isDoesNotExistError e = return ()
           | otherwise = E.throwIO e
-
-
-
