@@ -11,6 +11,9 @@ Be sure to configure AWS cli by following the instructions here:
    http://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html#cli-quick-configuration
 
 using the keys provided and the region us-west-2 .
+
+OBS: awscli may run better with python 2, and these tools are generally useful so 
+you may want to install them outside the virtualenv and with the System's Python.
 """
 
 import json
@@ -55,4 +58,4 @@ def findout_instance_ips():
 
 
 if __name__ == "__main__":
-    print(findout_instance_ips())
+    print(json.dumps(findout_instance_ips()))
