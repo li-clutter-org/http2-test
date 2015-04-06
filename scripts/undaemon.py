@@ -21,11 +21,16 @@ class Undaemon(object):
     WARNING: Since we can process only a set of signals, this class is not re-entrant...!!!
     """
 
-    def __init__(self, cmd, user=None):
+    def __init__(self, 
+        cmd, 
+        user=None,
+        undaemon_cgroup_path = UNDAEMON_CGROUP_PATH
+        ):
         self._cmd = cmd
         self._ready_to_finish = False
         self._cgroup_dir = None
         self._user = user
+        self._undaemon_cgroup_path = undaemon_cgroup_path
 
 
     @staticmethod
@@ -35,16 +40,16 @@ class Undaemon(object):
 
     @staticmethod
     def _create_undaemon_fs_if_not_exists():
-        if os.path.exists(UNDAEMON_CGROUP_PATH):
+        if os.path.exists(self._undaemon_cgroup_path):
             return
         else:
-            os.mkdir(UNDAEMON_CGROUP_PATH)
-            sp.check_call(shlex.split("mount -t cgroup undaemon -ocpu {0}".format(UNDAEMON_CGROUP_PATH)))
+            os.mkdir(self._undaemon_cgroup_path)
+            sp.check_call(shlex.split("mount -t cgroup undaemon -ocpu {0}".format(self._undaemon_cgroup_path)))
             # Further setup the cgroup
-            notify_on_release_flags = os.path.join(UNDAEMON_CGROUP_PATH, "notify_on_release")
+            notify_on_release_flags = os.path.join(self._undaemon_cgroup_path, "notify_on_release")
             with open(notify_on_release_flags, "w") as out:
                 print("1", file=out)
-            release_agent_fname = os.path.join(UNDAEMON_CGROUP_PATH, "release_agent")
+            release_agent_fname = os.path.join(self._undaemon_cgroup_path, "release_agent")
             this_filename = os.path.abspath(__file__)
             with open(release_agent_fname, "w") as out:
                 print(this_filename, file=out)
