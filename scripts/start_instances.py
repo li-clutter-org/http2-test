@@ -1,7 +1,6 @@
 # #!env python
 """
-Freeze the browser-bearing instances (the ones that we denote as StationA and 
-StationB). 
+Starts all the instances
 
 Check the comment at file "findout_instance_ips.py": the requirements for AWS cli tools 
 also apply here.

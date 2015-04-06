@@ -83,6 +83,13 @@ data CurrentAnalysisStage =
     |Done_CAS
 
 
+data KillTheBrowser = KillTheBrowser
+
+
+resetToken :: B.ByteString
+resetToken = "KDDFQ"
+
+
 -- Time to wait before unleashing an alarm... 
 timeForAlarm :: Int 
 timeForAlarm = 40000000
@@ -102,35 +109,43 @@ L.makeLenses ''UrlState
 
 data ServiceState = ServiceState {
     -- Put one here, let it run through the pipeline...
-    _nextHarvestUrl :: Chan B.ByteString
+    _nextHarvestUrl          :: Chan B.ByteString
 
     -- To be passed on to StationB
-    ,_nextTestUrl :: Chan B.ByteString
+    ,_nextTestUrl            :: Chan B.ByteString
 
     -- To be passed from the har files receiver (from StationA)
     -- to the DNSMasq checker...Contains urls
-    ,_nextTestUrlToCheck :: Chan B.ByteString
+    ,_nextTestUrlToCheck     :: Chan B.ByteString
 
     -- Files to be handed out to DNSMasq
-    , _nextDNSMasqFile :: Chan DnsMasqConfig
+    , _nextDNSMasqFile       :: Chan DnsMasqConfig
 
-    , _resolveCenterChan :: Chan ResolveCenter
+    , _resolveCenterChan     :: Chan ResolveCenter
 
-    , _finishRequestChan :: Chan FinishRequest
+    , _finishRequestChan     :: Chan FinishRequest
+
+    -- Goes between the browser resetter and the next url call. 
+    -- This is to avoid uncertainty with Chrome
+    , _toBrowserResetterChan :: Chan B.ByteString
+
+    -- Order sent to the browser resetter of anyquilating the current
+    -- Chrome instance
+    , _killTheBrowserChan    :: Chan B.ByteString
 
     -- The "Research dir" is the "hars" subdirectory of the mimic
     -- scratch directory. 
-    , _researchDir :: FilePath 
+    , _researchDir           :: FilePath 
 
     -- The IP address that StationB needs to connect
     , _useAddressForStationB :: B.ByteString
 
     -- The state of each URL 
-    , _urlState :: HashTable SafeUrl UrlState
+    , _urlState              :: HashTable SafeUrl UrlState
 
-    , _nextUrlAsked :: JustOneMakesSense
+    , _nextUrlAsked          :: JustOneMakesSense
 
-    , _testUrlAsked :: JustOneMakesSense 
+    , _testUrlAsked          :: JustOneMakesSense 
     }
 
 
@@ -148,11 +163,16 @@ runResearchWorker ::
     -> B.ByteString
     -> IO CoherentWorker
 runResearchWorker url_chan resolve_center_chan finish_request_chan research_dir use_address_for_station_b = do 
+
     liftIO $ infoM "ResearchWorker" "Starting research worker"
-    next_test_url_chan <- newChan          -- <-- Goes from the dnsmasq response handler 
-    next_test_url_to_check_chan <- newChan -- <-- Goes to the dnsmasq response handler
-    next_dns_masq_file <- newChan
-    new_url_state <- H.new
+
+    next_test_url_chan               <- newChan          -- <-- Goes from the dnsmasq response handler 
+    next_test_url_to_check_chan      <- newChan -- <-- Goes to the dnsmasq response handler
+    next_dns_masq_file               <- newChan
+    to_browser_resetter              <- newChan
+    kill_the_browser                 <- newChan
+
+    new_url_state  <- H.new
     next_url_asked <- newJOMSAtZero
     test_url_asked <- newJOMSAtZero
 
