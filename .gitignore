@@ -11,6 +11,7 @@ spdy-ping
 /mimic/
 /tests/
 /kel-data-dir/www
+/http2_loadimpact
 /makeenvsensible
 /httptwodd
 /cabal.sandbox.config
