@@ -1,15 +1,18 @@
+#!/usr/bin/env python2
 """
 Resets the browser during each task. 
 """
 
+from .undaemon import Undaemon
 
-DEFAULT_POLL_ENDPOINT           = "https://instr.httpdos.com:1070/dnsmasq/"
-NOTIFY_UPDATE_COMPLETE_ENDPOINT = "https://instr.httpdos.com:1070/dnsmasqupdated/"
+DEFAULT_POLL_ENDPOINT           = "https://instr.httpdos.com:1070/browser/"
+NOTIFY_UPDATE_COMPLETE_ENDPOINT = "https://instr.httpdos.com:1070/browserupdated/"
 DNSMASQ_CONFIG_PLACE            = "/home/{user}/dnsmasq_more.conf".format(user=os.environ["USER"])
 AUX_SSL_PATH                    = "/opt/openssl-1.0.2/"
 LD_LIBRARY_PATH                 ="/opt/openssl-1.0.2/lib"
-TOKEN                           = "KDDFQ"
-CHROME_CGROUP                   = "/sys/fs/cgroup/undaemon"
+START_TOKEN                     = "KDDFQ"
+END_TOKEN                       = "EAJ"
+CHROME_CGROUP                   = "/sys/fs/cgroup/chrome"
 
 
 def curl_arguments(endpoint, data_binary=""):
@@ -26,6 +29,29 @@ def main():
         work()
 
 
+def on_browser_should_finish(undaemon_instance):
+    args_get = curl_arguments(
+        NOTIFY_UPDATE_COMPLETE_ENDPOINT, 
+        data_binary=MY_VERSION)
+    while True:
+        try:
+            print("Executing: ", " ".join(args_get))
+            token = sp.check_output(args_get)
+        except sp.CalledProcessError as e:
+            print(" .... Err in curl, returncode: ", e.returncode, file=sys.stderr)
+            # Sleep a little bit
+            time.sleep(3.0)
+        else:
+            # Got a token?
+            if token == END_TOKEN
+                undaemon._kill_all()
+                break;
+            else:
+                print("TOKEN IS WRONG")
+                print(os.environ["PATH"])
+                time.sleep(3.0)
+
+
 def work():
     args_get = curl_arguments(DEFAULT_POLL_ENDPOINT, data_binary=MY_VERSION)
     try:
@@ -37,9 +63,16 @@ def work():
         time.sleep(3.0)
     else:
         # Got a token?
-        if token == TOKEN
-            reset_completed_args = curl_arguments(NOTIFY_UPDATE_COMPLETE_ENDPOINT, data_binary=analysis_id)
-           # Let's do the reset first....
+        if token == START_TOKEN:
+            chrome_process = chrome_run()
+            # Run a thread to watch for the reset
+            # signal
+            watch = threading.Thread(target = 
+                partial(on_browser_should_finish, chrome_process)
+            )
+
+            # And now just wait for the watcher before doing anything...
+            watch.join()
         else:
             print("TOKEN IS WRONG")
             print(os.environ["PATH"])
@@ -58,8 +91,16 @@ def run(cmdstr):
     p = subprocess.Popen(pieces)
     return p
 
-def chrome_activities():
-    chrome_process = run("google-chrome --disable-gpu")
+
+def chrome_run():
+    chrome_process = Undaemon(
+        shlex.split("google-chrome --disable-gpu"),
+        user=1000,
+        undaemon_cgroup_path = CHROME_CGROUP
+        )
+    undaemon_thread = threading.Thread(
+        target=chrome_process.undaemon )
+    undaemon_thread.start()
     while True:
         time.sleep(4.0)
         s = tool("xwininfo -tree -root")
@@ -88,7 +129,7 @@ def chrome_activities():
     # Get chrome as full-screen, so to make taking screenshots easier.
     tool("xdotool key --window {0} \"F11\"".format(winid))
     logger.info("Waiting for Chrome process to exit")
-    chrome_process.wait()
+    return chrome_process
 
 
 

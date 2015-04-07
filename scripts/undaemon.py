@@ -74,6 +74,7 @@ class Undaemon(object):
             os.setuid(self._user)
             os.execvp(cmd[0], cmd)
         else:
+            self._root_pid = child_pid
             # I'm still the parent, add the child to the tasks on the process
             tasks_fname = os.path.join(cgroup_dir, "tasks")
             with open(tasks_fname, "a") as out:
