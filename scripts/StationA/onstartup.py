@@ -3,7 +3,7 @@
 from __future__ import print_function
 
 import shlex
-import subprocess
+import subprocess as sp
 import re
 import sys
 import time
@@ -44,44 +44,11 @@ logging.config.dictConfig(LOGGING)
 
 logger = logging.getLogger("onstartup")
 
-#google-chrome
-def tool(cmdstr):
-    pieces = shlex.split(cmdstr)
-    o = subprocess.check_output(pieces)
-    return o 
+def main():
+    logger.info("onstartup, invoking browser resetter")
+    sp.check_call([
+        "/home/ubuntu/browser_resetter.py"
+        ])
 
-def run(cmdstr):
-    pieces = shlex.split(cmdstr)
-    p = subprocess.Popen(pieces)
-    return p
-
-chrome_process = run("google-chrome --disable-gpu")
-while True:
-	time.sleep(4.0)
-	s = tool("xwininfo -tree -root")
-	mo = re.search(r"\s+(0x[a-f0-9]+) \".*?Google Chrome\"", s)
-	if mo is None:
-		logger.warning("Couldn't find Google chrome windows,  maybe re-trying ")
-		if chrome_process.returncode is not None:
-			logger.error("Chrome exited with code %d", chrome_process.returncode)
-			exit(1) 
-	else:
-		break
-winid = mo.group(1)
-logger.info("Win id: %s", winid)
-tool("xdotool windowsize --sync {0} 100% 100%".format(winid))
-tool("xdotool click --window {0} 1".format(winid))
-time.sleep(0.5)
-
-# Let's press this key combination a few times to be sure that it works....
-tool("xdotool key --window {0} \"ctrl+shift+i\"".format(winid))
-time.sleep(3.5)
-tool("xdotool key --window {0} \"ctrl+shift+i\"".format(winid))
-time.sleep(3.5)
-tool("xdotool key --window {0} \"ctrl+shift+i\"".format(winid))
-time.sleep(3.5)
-
-# Get chrome as full-screen, so to make taking screenshots easier.
-tool("xdotool key --window {0} \"F11\"".format(winid))
-logger.info("Waiting for Chrome process to exit")
-chrome_process.wait()
+if __name__ == '__main__':
+    main()

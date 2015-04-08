@@ -12,7 +12,7 @@ import           Control.Lens                    (
                                                  )
 import qualified Control.Lens                    as L
 -- import           Control.Exception              (catch)
-import           Control.Concurrent              (forkIO, myThreadId)
+import           Control.Concurrent              (forkIO, myThreadId, threadDelay)
 import           Control.Concurrent.Chan
 import           Control.Concurrent.MVar
 import           Control.Monad.Catch             (catch,throwM)
@@ -123,19 +123,29 @@ data ServiceState = ServiceState {
 
     , _resolveCenterChan     :: Chan ResolveCenter
 
-    , _finishRequestChan     :: Chan FinishRequest
+    , _finishRequestChan        :: Chan FinishRequest
 
     -- Goes between the browser resetter and the next url call. 
-    -- This is to avoid uncertainty with Chrome
-    , _toBrowserResetterChan :: Chan B.ByteString
+    -- We pass the url to load through here just to be sure....
+    -- This is to avoid uncertainty with Chrome.
+    -- The logic for "starts" is that we write to it when we want
+    -- the browser started, then we read from it to start it, and 
+    -- then put the url in the next step.
+    , _startHarvesterBrowserChan:: Chan B.ByteString
 
     -- Order sent to the browser resetter of anyquilating the current
-    -- Chrome instance
-    , _killTheBrowserChan    :: Chan B.ByteString
+    -- Chrome instance. We write to this one as soon as we want to kill
+    -- the browser, and then read from it when we are ready to go to the 
+    -- next step.
+    , _killHarvesterBrowserChan :: Chan B.ByteString
+
+    , _startTesterBrowserChan   :: Chan B.ByteString
+    
+    , _killTesterBrowserChan    :: Chan B.ByteString
 
     -- The "Research dir" is the "hars" subdirectory of the mimic
     -- scratch directory. 
-    , _researchDir           :: FilePath 
+    , _researchDir              :: FilePath 
 
     -- The IP address that StationB needs to connect
     , _useAddressForStationB :: B.ByteString
@@ -169,8 +179,12 @@ runResearchWorker url_chan resolve_center_chan finish_request_chan research_dir 
     next_test_url_chan               <- newChan          -- <-- Goes from the dnsmasq response handler 
     next_test_url_to_check_chan      <- newChan -- <-- Goes to the dnsmasq response handler
     next_dns_masq_file               <- newChan
-    to_browser_resetter              <- newChan
-    kill_the_browser                 <- newChan
+
+    start_harvester_browser          <- newChan
+    kill_harvester_browser           <- newChan
+
+    start_tester_browser          <- newChan
+    kill_tester_browser           <- newChan
 
     new_url_state  <- H.new
     next_url_asked <- newJOMSAtZero
@@ -179,17 +193,22 @@ runResearchWorker url_chan resolve_center_chan finish_request_chan research_dir 
 
     let     
         state = ServiceState {
-             _nextHarvestUrl        = url_chan
-            ,_nextTestUrl           = next_test_url_chan
-            ,_nextTestUrlToCheck    = next_test_url_to_check_chan
-            ,_nextDNSMasqFile       = next_dns_masq_file
-            ,_resolveCenterChan     = resolve_center_chan
-            ,_finishRequestChan     = finish_request_chan
-            ,_researchDir           = research_dir
-            ,_useAddressForStationB = use_address_for_station_b
-            ,_urlState              = new_url_state
-            ,_nextUrlAsked          = next_url_asked
-            ,_testUrlAsked          = test_url_asked
+             _nextHarvestUrl              = url_chan
+            ,_nextTestUrl                 = next_test_url_chan
+            ,_nextTestUrlToCheck          = next_test_url_to_check_chan
+            ,_nextDNSMasqFile             = next_dns_masq_file
+            ,_resolveCenterChan           = resolve_center_chan
+            ,_finishRequestChan           = finish_request_chan
+            ,_researchDir                 = research_dir
+            ,_useAddressForStationB       = use_address_for_station_b
+            ,_urlState                    = new_url_state
+            ,_nextUrlAsked                = next_url_asked
+            ,_testUrlAsked                = test_url_asked
+
+            ,_startHarvesterBrowserChan   = start_harvester_browser
+            ,_killHarvesterBrowserChan    = kill_harvester_browser
+            ,_startTesterBrowserChan      = start_tester_browser
+            ,_killTesterBrowserChan       = kill_tester_browser
             }
     return $ \request -> runReaderT (researchWorkerComp request) state
 
@@ -207,6 +226,11 @@ researchWorkerComp (input_headers, maybe_source) = do
     url_state_hash                <- L.view urlState
     test_url_asked                <- L.view testUrlAsked
     next_url_asked                <- L.view nextUrlAsked
+
+    start_harvester_browser       <- L.view startHarvesterBrowserChan   
+    kill_harvester_browser        <- L.view killHarvesterBrowserChan    
+    start_tester_browser          <- L.view startTesterBrowserChan      
+    kill_tester_browser           <- L.view killTesterBrowserChan       
 
     let 
         method = getMethodFromHeaders input_headers
@@ -323,7 +347,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                             writeChan next_dnsmasq_chan $! DnsMasqConfig analysis_id dnsmasq_contents
 
                             -- We also need to queue the url somewhere to be checked by the dnsmasqupdated entrypoint
-                            writeChan next_test_url_to_check_chan $ urlToHTTPSScheme test_url
+                            writeChan kill_harvester_browser $ urlToHTTPSScheme test_url
 
                             -- And the resolve center to be used by the serving side
                             writeChan resolve_center_chan resolve_center
@@ -339,6 +363,24 @@ researchWorkerComp (input_headers, maybe_source) = do
                         return $ simpleResponse 200 use_text
                     )
                     on_bad_har_file
+
+            | req_url == "/startbrowser/StationA" -> do 
+                -- This token has no meaning 
+                let startToken = "KDDFQ"
+
+                -- Ensure start
+                url <- liftIO $ readChan start_harvester_browser
+
+                return $ simpleResponse 200 startToken 
+
+            | req_url == "/killbrowser/StationA" -> do 
+                -- StationA refers to the harvester....
+                let endToken = "EAJ"
+                liftIO $ do 
+                    myThreadId >>= threadDelay 1000000
+                    url <- readChan kill_harvester_browser
+
+                return $ simpleResponse 200 endToken
 
             | req_url == "/http2har/", Just source <- maybe_source -> do
                 -- Receives a .har object from the harvest station ("StationA"), and 
@@ -430,7 +472,12 @@ researchWorkerComp (input_headers, maybe_source) = do
                         url_state_hash job_descriptor new_url_state 
                     infoM "ResearchWorker" . builderToString $ 
                         ".. /setnexturl/ asked " `mappend` (Bu.byteString url_to_analyze)
+
+
                     writeChan next_harvest_url url_to_analyze
+
+                    writeChan start_harvester_browser url_to_analyze
+
                     markState job_descriptor AnalysisRequested_CAS base_research_dir
 
                 return $ simpleResponse 200 (unSafeUrl job_descriptor)

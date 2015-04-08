@@ -3,10 +3,18 @@
 Resets the browser during each task. 
 """
 
-from .undaemon import Undaemon
+from __future__ import print_function
 
-DEFAULT_POLL_ENDPOINT           = "https://instr.httpdos.com:1070/browser/"
-NOTIFY_UPDATE_COMPLETE_ENDPOINT = "https://instr.httpdos.com:1070/browserupdated/"
+from undaemon import Undaemon
+
+import logging.config
+import os
+import time
+import subprocess as sp
+from logging.handlers import SysLogHandler
+
+DEFAULT_POLL_ENDPOINT           = "https://instr.httpdos.com:1070/startbrowser/"
+NOTIFY_UPDATE_COMPLETE_ENDPOINT = "https://instr.httpdos.com:1070/killbrowser/"
 DNSMASQ_CONFIG_PLACE            = "/home/{user}/dnsmasq_more.conf".format(user=os.environ["USER"])
 AUX_SSL_PATH                    = "/opt/openssl-1.0.2/"
 LD_LIBRARY_PATH                 ="/opt/openssl-1.0.2/lib"
@@ -15,9 +23,53 @@ END_TOKEN                       = "EAJ"
 CHROME_CGROUP                   = "/sys/fs/cgroup/chrome"
 
 
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s'
+        },
+        'simple': {
+            'format': '%(levelname)s %(message)s'
+        },
+    },
+    'handlers': {
+        'syslog':{
+            'level':'DEBUG',
+            'class':'logging.handlers.SysLogHandler',
+            'formatter': 'simple',
+            'facility': SysLogHandler.LOG_LOCAL2,
+        }
+    },
+    'loggers': {
+        'browser_resetter': {
+            'handlers':['syslog'],
+            'propagate': True,
+            'level':'INFO',
+        }
+    },
+}
+
+logging.config.dictConfig(LOGGING)
+
+logger = logging.getLogger("browser_resetter")
+
+
+station_name = open("/home/ubuntu/Station").read()
+
+
 def curl_arguments(endpoint, data_binary=""):
+    # This function is a bit different because we don't need actual data, 
+    # but we do need a status....
     return [
-        "curl", "-sS", "-k", "--data-binary", '{0}'.format(repr(data_binary.encode('ascii'))), # I don't think any data needs to be submitted
+        "curl", 
+        "-s", 
+        "-o", "/dev/null",
+        "-w", "%{http_code}",
+        "--data-binary", '{0}'.format(repr(data_binary.encode('ascii'))),
+         # I don't think any data needs to be submitted
         "-X", "POST", "--http2", endpoint
     ]
 
@@ -31,39 +83,41 @@ def main():
 
 def on_browser_should_finish(undaemon_instance):
     args_get = curl_arguments(
-        NOTIFY_UPDATE_COMPLETE_ENDPOINT, 
-        data_binary=MY_VERSION)
+        NOTIFY_UPDATE_COMPLETE_ENDPOINT+station_name, 
+        data_binary=END_TOKEN ) # <-- does nothing, really
     while True:
         try:
             print("Executing: ", " ".join(args_get))
-            token = sp.check_output(args_get)
+            status_code = sp.check_output(args_get)
         except sp.CalledProcessError as e:
             print(" .... Err in curl, returncode: ", e.returncode, file=sys.stderr)
             # Sleep a little bit
             time.sleep(3.0)
         else:
             # Got a token?
-            if token == END_TOKEN
+            if 200 in status_code :
                 undaemon._kill_all()
                 break;
             else:
-                print("TOKEN IS WRONG")
+                print("Bad answer")
                 print(os.environ["PATH"])
                 time.sleep(3.0)
 
 
 def work():
-    args_get = curl_arguments(DEFAULT_POLL_ENDPOINT, data_binary=MY_VERSION)
+    args_get = curl_arguments(
+        DEFAULT_POLL_ENDPOINT+station_name, 
+        data_binary=START_TOKEN  ) # Also does nothing
     try:
         print("Executing: ", " ".join(args_get))
-        token = sp.check_output(args_get)
+        status_code = sp.check_output(args_get)
     except sp.CalledProcessError as e:
         print(" .... Err in curl, returncode: ", e.returncode, file=sys.stderr)
         # Sleep a little bit
         time.sleep(3.0)
     else:
         # Got a token?
-        if token == START_TOKEN:
+        if "200" in status_code:
             chrome_process = chrome_run()
             # Run a thread to watch for the reset
             # signal
@@ -130,9 +184,6 @@ def chrome_run():
     tool("xdotool key --window {0} \"F11\"".format(winid))
     logger.info("Waiting for Chrome process to exit")
     return chrome_process
-
-
-
 
 
 if __name__ == "__main__":

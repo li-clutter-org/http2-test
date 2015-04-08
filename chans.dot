@@ -1,0 +1,55 @@
+digraph chans {
+
+    har[label="/har/"];
+    nexturl[label="/nexturl/"];
+    http2har[label="/http2har/"];
+    dnsmasq[label="/dnsmasq/"];
+    setnexturl[label="/setnexturl/"];
+    dnsmasqupdated[label="/dnsmasqupdated/"];
+    testurl[label="/testurl/"];
+    startbrowserStationA[label="/startbrowser/StationA"];
+    killbrowserStationA[label="/killbrowser/StationA"];
+
+    startbrowserStationB[label="/startbrowser/StationB"];
+    killbrowserStationB[label="/killbrowser/StationB"];
+
+    spawnHarServer[label="|spawnHarServer|"];
+    dnsdaemon[label="+dnsdaemon+"];
+    browserA[label="+browserA+"];
+    browserB[label="+browserB+"];
+    
+    har -> dnsmasq [label="next_dns_masq_chan"];
+    har -> killbrowserStationA [label="kill_harvester_browser"];
+    killbrowserStationA -> browserA [style="dotted"];
+    har -> spawnHarServer [label="resolve_center_chan"];
+
+    dnsmasq -> dnsdaemon [style="dashed"];
+
+    dnsdaemon -> dnsmasqupdated [style="dashed"];
+
+    dnsmasqupdated -> startbrowserStationB [label="start_tester_browser"];
+    startbrowserStationB -> browserB [style="dotted"];
+    browserB -> testurl [style="dotted"];
+    testurl -> browserB [style="dashed"];
+    browserB -> http2har[style="dashed"];
+
+    http2har -> killbrowserStationB [label="kill_tester_browser"];
+    killbrowserStationB -> browserB [style="dotted"];
+
+
+    browserA -> nexturl [style="dotted"];
+    nexturl -> browserA [style="dashed"];
+    browserA -> har [style="dashed"];
+
+    startbrowserStationA -> browserA [ style="dotted"];
+
+    startbrowserStationA -> dnsmasqupdated [label="next_test_url_to_check_chan"];
+
+    http2har -> spawnHarServer [label="finish_chan"];
+
+    dnsmasqupdated ->  testurl [label="next_test_url_chan"];
+
+    setnexturl -> startbrowserStationA [label="start_harvester_browser"];
+    setnexturl -> nexturl [label="next_harvest_url"];
+
+}

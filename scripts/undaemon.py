@@ -32,15 +32,13 @@ class Undaemon(object):
         self._user = user
         self._undaemon_cgroup_path = undaemon_cgroup_path
 
-
     @staticmethod
     def _random_name(length=10):
         name = ''.join(random.choice('abcdefghijklmnopqrstuvwxyz0123456789') for i in range(length))
         return name
 
-    @staticmethod
-    def _create_undaemon_fs_if_not_exists():
-        if os.path.exists(self._undaemon_cgroup_path):
+    def _create_undaemon_fs_if_not_exists( self ):
+        if os.path.exists( self._undaemon_cgroup_path ):
             return
         else:
             os.mkdir(self._undaemon_cgroup_path)
@@ -53,7 +51,6 @@ class Undaemon(object):
             this_filename = os.path.abspath(__file__)
             with open(release_agent_fname, "w") as out:
                 print(this_filename, file=out)
-
 
     def _undameon_core(
             self,
@@ -115,13 +112,12 @@ class Undaemon(object):
                 task_id = int(line)
                 os.kill(task_id, signal.SIGTERM)
         # Wait one second, maybe two ...
-        sleep(2.0)
+        time.sleep(2.0)
         # And go again...
         with open(tasks_fname, "r") as inp:
             for line in inp:
                 task_id = int(line)
                 os.kill(task_id, signal.SIGKILL)
-
 
 def main():
     argv = sys.argv
