@@ -83,13 +83,6 @@ data CurrentAnalysisStage =
     |Done_CAS
 
 
-data KillTheBrowser = KillTheBrowser
-
-
-resetToken :: B.ByteString
-resetToken = "KDDFQ"
-
-
 -- Time to wait before unleashing an alarm... 
 timeForAlarm :: Int 
 timeForAlarm = 40000000
@@ -143,6 +136,10 @@ data ServiceState = ServiceState {
     
     , _killTesterBrowserChan    :: Chan B.ByteString
 
+    , _testerReadyChan           :: Chan B.ByteString
+
+    , _harvesterReadyChan        :: Chan B.ByteString
+
     -- The "Research dir" is the "hars" subdirectory of the mimic
     -- scratch directory. 
     , _researchDir              :: FilePath 
@@ -186,6 +183,9 @@ runResearchWorker url_chan resolve_center_chan finish_request_chan research_dir 
     start_tester_browser          <- newChan
     kill_tester_browser           <- newChan
 
+    harvester_ready               <- newChan 
+    tester_ready                  <- newChan 
+
     new_url_state  <- H.new
     next_url_asked <- newJOMSAtZero
     test_url_asked <- newJOMSAtZero
@@ -209,6 +209,9 @@ runResearchWorker url_chan resolve_center_chan finish_request_chan research_dir 
             ,_killHarvesterBrowserChan    = kill_harvester_browser
             ,_startTesterBrowserChan      = start_tester_browser
             ,_killTesterBrowserChan       = kill_tester_browser
+
+            ,_testerReadyChan             = tester_ready
+            ,_harvesterReadyChan          = harvester_ready
             }
     return $ \request -> runReaderT (researchWorkerComp request) state
 
@@ -230,7 +233,9 @@ researchWorkerComp (input_headers, maybe_source) = do
     start_harvester_browser       <- L.view startHarvesterBrowserChan   
     kill_harvester_browser        <- L.view killHarvesterBrowserChan    
     start_tester_browser          <- L.view startTesterBrowserChan      
-    kill_tester_browser           <- L.view killTesterBrowserChan       
+    kill_tester_browser           <- L.view killTesterBrowserChan     
+    tester_ready                  <- L.view testerReadyChan 
+    harvester_ready               <- L.view harvesterReadyChan  
 
     let 
         method = getMethodFromHeaders input_headers
@@ -252,7 +257,12 @@ researchWorkerComp (input_headers, maybe_source) = do
 
                             url <- 
                                 catch
-                                    (liftIO $ readChan next_harvest_url)
+                                    (liftIO $ do 
+                                        -- First we wait for a notification about the browser being ready
+                                        readChan harvester_ready
+                                        -- And then we give out the next url to scan...
+                                        readChan next_harvest_url
+                                    )
                                     on_url_wait_interrupted
                             liftIO $ infoM "ResearchWorker" .  builderToString $ "..  /nexturl/" `mappend` " answer " `mappend` (Bu.byteString url) `mappend` " "
                             let 
@@ -268,6 +278,8 @@ researchWorkerComp (input_headers, maybe_source) = do
                                 alarm <- liftIO $ newAlarm timeForAlarm $ do 
                                     markState url_hash SystemCancelled_CAS base_research_dir
                                     errorM "ResearchWorker" . builderToString $ " failed harvesting " `mappend` (Bu.byteString req_url) `mappend` " (timeout) "
+                                    writeChan kill_harvester_browser ""
+                                    errorM "ResearchWorker" " ... harvester browser asked killed "
                                 let
                                     a2 = currentAlarm .~ alarm $ a1
                                 return a2 
@@ -281,7 +293,19 @@ researchWorkerComp (input_headers, maybe_source) = do
                             return $ simpleResponse 501 "Asked too many times"
                     )
                        
+            | req_url == "/browserready/StationA" -> do 
+                -- Check when we can proceed
+                liftIO $ do 
+                    infoM "ResearchWorker" ".. /browserready/StationA/"
+                    writeChan harvester_ready ""
+                return $ simpleResponse 200 "Ok"
 
+            | req_url == "/browserready/StationB" -> do 
+                -- Check when we can proceed
+                liftIO $ do 
+                    infoM "ResearchWorker" ".. /browserready/StationB/"
+                    writeChan tester_ready ""
+                return $ simpleResponse 200 "Ok"
 
             | req_url == "/testurl/" -> doJOMS test_url_asked (
                     -- Normal flow
@@ -289,7 +313,9 @@ researchWorkerComp (input_headers, maybe_source) = do
                         -- Sends the next test url to the Chrome extension, this starts processing by 
                         -- StationB... the request is started by StationB and we send the url in the response...
                         (url_hash, url) <- liftIO $ do
-
+                            -- Wait for readiness indication in the browser
+                            readChan tester_ready
+                            -- And then snatch the url.... 
                             url <- readChan next_test_url_chan
                             infoM "ResearchWorker" . builderToString $ "..  /testurl/ answered with " `mappend` (Bu.byteString url)
                             let 
@@ -305,6 +331,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                                 a1 = analysisStage .~ SentToTest_CAS $ old_state
                             alarm <- liftIO $ newAlarm 15000000 $ do 
                                 errorM "ResearchWorker" . builderToString $ " failed testing " `mappend` (Bu.byteString url)
+                                --writeChan kill_tester_browser ""
                             return $ currentAlarm .~ alarm $ a1
                         return $ simpleResponse 200 url
                 ) (
@@ -369,7 +396,9 @@ researchWorkerComp (input_headers, maybe_source) = do
                 let startToken = "KDDFQ"
 
                 -- Ensure start
-                url <- liftIO $ readChan start_harvester_browser
+                liftIO $ do
+                    infoM "ResearchWorker" " .. /startbrowser/StationA"
+                    readChan start_harvester_browser
 
                 return $ simpleResponse 200 startToken 
 
@@ -377,10 +406,36 @@ researchWorkerComp (input_headers, maybe_source) = do
                 -- StationA refers to the harvester....
                 let endToken = "EAJ"
                 liftIO $ do 
-                    myThreadId >>= threadDelay 1000000
-                    url <- readChan kill_harvester_browser
+                    -- Let's wait a second before killing the process....
+                    infoM "ResearchWorker" " .. /killbrowser/StationA"
+                    threadDelay 1000000
+                    -- There is an url being returned from here, but we don't need it... 
+                    readChan kill_harvester_browser
+                    infoM "ResearchWorker" " .. StationA browser cleared for killing"
 
                 return $ simpleResponse 200 endToken
+
+            | req_url == "/startbrowser/StationB" -> do 
+                let startToken = "KDDFQ"
+                liftIO $ do 
+                    infoM "ResearchWorker" " .. /startbrowser/StationB"
+                    -- Ensure start... next read returns url, but I'm not 
+                    -- very interested on it....
+                    liftIO $ readChan start_tester_browser
+
+                return $ simpleResponse 200 startToken 
+
+            | req_url == "/killbrowser/StationB" -> do 
+                let endToken = "EAJ"
+                liftIO $ do 
+                    -- Let's wait a second before killing the process....
+                    infoM "ResearchWorker" " .. /killbrowser/StationB"
+                    threadDelay 1000000
+                    -- There is an url being returned from here, but we don't need it... 
+                    readChan kill_tester_browser
+
+                return $ simpleResponse 200 endToken
+
 
             | req_url == "/http2har/", Just source <- maybe_source -> do
                 -- Receives a .har object from the harvest station ("StationA"), and 
@@ -405,7 +460,9 @@ researchWorkerComp (input_headers, maybe_source) = do
                             return old_state
 
                         -- And finish the business
-                        liftIO $ writeChan finish_chan FinishRequest
+                        liftIO $ do
+                            writeChan finish_chan FinishRequest
+                            writeChan kill_tester_browser test_url
 
                         -- Mark the state 
                         liftIO $ markState url_hash Done_CAS base_research_dir
@@ -434,6 +491,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                 -- Received  advice that everything is ready to proceed
                 liftIO $ do 
                     received_id <- waitRequestBody source
+
                     test_url <- readChan next_test_url_to_check_chan  
 
                     infoM "ResearchWorker" $ "Dnsmasqupdated received " ++ (show received_id)
@@ -447,7 +505,12 @@ researchWorkerComp (input_headers, maybe_source) = do
                         errorM "ResearchWorker" $ "Dnsmasqupdated could not match urls (for " ++ (show test_url) ++ " )"
 
                     -- Write the url to the queue so that /testurl/ can return when seeing this value 
-                    writeChan next_test_url_chan $ urlToHTTPSScheme test_url
+                    let 
+                        https_url = urlToHTTPSScheme test_url
+
+                    writeChan next_test_url_chan https_url
+
+                    writeChan start_tester_browser https_url
 
                 return $ simpleResponse 200 $ "ok"
 
@@ -477,6 +540,8 @@ researchWorkerComp (input_headers, maybe_source) = do
                     writeChan next_harvest_url url_to_analyze
 
                     writeChan start_harvester_browser url_to_analyze
+
+                    writeChan next_test_url_to_check_chan  url_to_analyze
 
                     markState job_descriptor AnalysisRequested_CAS base_research_dir
 

@@ -10,11 +10,19 @@ from undaemon import Undaemon
 import logging.config
 import os
 import time
+import sys
 import subprocess as sp
+import subprocess
+import re
+import shlex
+import threading
+from functools import partial
 from logging.handlers import SysLogHandler
+
 
 DEFAULT_POLL_ENDPOINT           = "https://instr.httpdos.com:1070/startbrowser/"
 NOTIFY_UPDATE_COMPLETE_ENDPOINT = "https://instr.httpdos.com:1070/killbrowser/"
+NOTIFY_READY                    = "https://instr.httpdos.com:1070/browserready/"
 DNSMASQ_CONFIG_PLACE            = "/home/{user}/dnsmasq_more.conf".format(user=os.environ["USER"])
 AUX_SSL_PATH                    = "/opt/openssl-1.0.2/"
 LD_LIBRARY_PATH                 ="/opt/openssl-1.0.2/lib"
@@ -22,6 +30,10 @@ START_TOKEN                     = "KDDFQ"
 END_TOKEN                       = "EAJ"
 CHROME_CGROUP                   = "/sys/fs/cgroup/chrome"
 
+
+exec_env = os.environ.copy()
+exec_env["PATH"] = AUX_SSL_PATH + "/bin:" +  exec_env["PATH"]
+exec_env["LD_LIBRARY_PATH"] = LD_LIBRARY_PATH
 
 
 LOGGING = {
@@ -95,9 +107,10 @@ def on_browser_should_finish(undaemon_instance):
             time.sleep(3.0)
         else:
             # Got a token?
-            if 200 in status_code :
-                undaemon._kill_all()
-                break;
+            if "200" in status_code :
+                undaemon_instance._kill_all()
+                print("KILL ALL RETURNED+")
+                break
             else:
                 print("Bad answer")
                 print(os.environ["PATH"])
@@ -119,11 +132,16 @@ def work():
         # Got a token?
         if "200" in status_code:
             chrome_process = chrome_run()
+            args_ready = curl_arguments(NOTIFY_READY+station_name, data_binary=START_TOKEN)
+            # The daemon needs to know when the browser is ready to deliver the url, otherwise
+            # the url can be delivered to early ..... 
+            sp.check_call(args_ready)
             # Run a thread to watch for the reset
             # signal
             watch = threading.Thread(target = 
                 partial(on_browser_should_finish, chrome_process)
             )
+            watch.start()
 
             # And now just wait for the watcher before doing anything...
             watch.join()
@@ -146,43 +164,61 @@ def run(cmdstr):
     return p
 
 
+def restore_chrome_profile():
+    # Most likely you will need to create this directory by hand 
+    try:
+        subprocess.check_call(shlex.split("rm -rf /home/ubuntu/.config"))
+        subprocess.check_call( 
+            shlex.split("rsync -avz /home/ubuntu/pristine-config/ /home/ubuntu/.config")
+        )
+    except subprocess.CalledProcessError:
+        print("Didn't work Chrome restore profile")
+
+
 def chrome_run():
+    restore_chrome_profile()
     chrome_process = Undaemon(
         shlex.split("google-chrome --disable-gpu"),
         user=1000,
         undaemon_cgroup_path = CHROME_CGROUP
         )
     undaemon_thread = threading.Thread(
-        target=chrome_process.undaemon )
+        target= partial(chrome_process.undaemon, set_signal_handlers = False),
+         )
     undaemon_thread.start()
+    times_tried = 0
     while True:
-        time.sleep(4.0)
+        time.sleep(1.0)
         s = tool("xwininfo -tree -root")
         mo = re.search(r"\s+(0x[a-f0-9]+) \".*?Google Chrome\"", s)
         if mo is None:
             logger.warning("Couldn't find Google chrome windows,  maybe re-trying ")
-            if chrome_process.returncode is not None:
-                logger.error("Chrome exited with code %d", chrome_process.returncode)
-                exit(1) 
+            if times_tried > 8:
+                logger.error("Exiting chrome script because chrome windows didn't open")
+                sys.exit(1) 
+            else:
+                times_tried += 1
         else:
+            logger.info("Found Chrome windows")
             break
     winid = mo.group(1)
     logger.info("Win id: %s", winid)
     tool("xdotool windowsize --sync {0} 100% 100%".format(winid))
     tool("xdotool click --window {0} 1".format(winid))
-    time.sleep(0.5)
+    time.sleep(1.5)
 
     # Let's press this key combination a few times to be sure that it works....
-    tool("xdotool key --window {0} \"ctrl+shift+i\"".format(winid))
-    time.sleep(3.5)
-    tool("xdotool key --window {0} \"ctrl+shift+i\"".format(winid))
-    time.sleep(3.5)
-    tool("xdotool key --window {0} \"ctrl+shift+i\"".format(winid))
-    time.sleep(3.5)
+    tool("xdotool key --window {0} \"ctrl+shift+i\"".format(winid)) # Show
+    time.sleep(2.5)
+    tool("xdotool key --window {0} \"ctrl+shift+i\"".format(winid)) # Hide 
+    time.sleep(1.5)
+    tool("xdotool key --window {0} \"ctrl+shift+i\"".format(winid)) # Show again
+    time.sleep(1.5)
 
     # Get chrome as full-screen, so to make taking screenshots easier.
     tool("xdotool key --window {0} \"F11\"".format(winid))
     logger.info("Waiting for Chrome process to exit")
+
     return chrome_process
 
 

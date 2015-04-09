@@ -46,9 +46,20 @@ logger = logging.getLogger("onstartup")
 
 def main():
     logger.info("onstartup, invoking browser resetter")
-    sp.check_call([
-        "/home/ubuntu/browser_resetter.py"
-        ])
+    # sp.check_call(["xterm"])
+    while True:
+        p  = sp.Popen([
+                "/home/ubuntu/browser_resetter/browser_resetter"
+                ])
+        p.wait()
+        if p.returncode == -10:
+            # Can't get that executable work well, this is a muddy workaround.
+            # cgroups and setuid more likely will make it fail....
+            pass 
+        else:
+            print("Exit onstartup.py because of weird return status (%d)" % p.returncode )
+            break;
+
 
 if __name__ == '__main__':
     main()

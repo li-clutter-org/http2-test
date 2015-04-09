@@ -3,6 +3,7 @@
 from __future__ import print_function
 
 import subprocess as sp
+import subprocess
 import os
 import os.path
 import argparse
@@ -92,9 +93,11 @@ class Undaemon(object):
     def _alarm_handler(self, sgn, frame):
         pass
 
-    def undameon(self):
+    def undaemon(self, set_signal_handlers = True):
         # ATTENTION: Since we can process only a set of signals, this class is not re-entrant...
-        self._set_signal_handlers()
+        if set_signal_handlers :
+            # This is optional, b ecause 
+            self._set_signal_handlers()
         self._create_undaemon_fs_if_not_exists()
         cgroup_name = str(os.getpid())
         self._undameon_core("undaemon", cgroup_name)
@@ -110,14 +113,20 @@ class Undaemon(object):
         with open(tasks_fname, "r") as inp:
             for line in inp:
                 task_id = int(line)
-                os.kill(task_id, signal.SIGTERM)
+                try:
+                    os.kill(task_id, signal.SIGTERM)
+                except OSError:
+                    pass 
         # Wait one second, maybe two ...
         time.sleep(2.0)
         # And go again...
         with open(tasks_fname, "r") as inp:
             for line in inp:
                 task_id = int(line)
-                os.kill(task_id, signal.SIGKILL)
+                try:
+                    os.kill(task_id, signal.SIGKILL)
+                except OSError:
+                    pass
 
 def main():
     argv = sys.argv
@@ -136,7 +145,7 @@ def main():
 
 
         u = Undaemon(cmd, args.user)
-        u.undameon()
+        u.undaemon()
 
 
 def main_for_release_agent(argv):
