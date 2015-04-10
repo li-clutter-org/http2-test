@@ -43,7 +43,7 @@ import           Rede.Workers.VeryBasic       (bad404ResponseData,
 -- TODO: We need a better way to taylor an additional delay.
 -- This number represents an artificial latency.
 additionalDelay :: Int
-additionalDelay = 200000
+additionalDelay = 20000
 
 
 adaptHeaders :: Int -> UnpackedNameValueList -> UnpackedNameValueList 

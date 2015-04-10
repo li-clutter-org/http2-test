@@ -491,7 +491,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                 -- Received  advice that everything is ready to proceed
                 liftIO $ do 
                     received_id <- waitRequestBody source
-
+                    threadDelay 2000000
                     test_url <- readChan next_test_url_to_check_chan  
 
                     infoM "ResearchWorker" $ "Dnsmasqupdated received " ++ (show received_id)

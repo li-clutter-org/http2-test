@@ -168,8 +168,10 @@ def restore_chrome_profile():
     # Most likely you will need to create this directory by hand 
     try:
         subprocess.check_call(shlex.split("rm -rf /home/ubuntu/.config"))
+        cmd_out = open("/dev/null", "a")
         subprocess.check_call( 
-            shlex.split("rsync -avz /home/ubuntu/pristine-config/ /home/ubuntu/.config")
+            shlex.split("rsync -avz /home/ubuntu/pristine-config/ /home/ubuntu/.config"),
+            stdout = cmd_out
         )
     except subprocess.CalledProcessError:
         print("Didn't work Chrome restore profile")
