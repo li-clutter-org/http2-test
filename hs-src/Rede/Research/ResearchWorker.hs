@@ -331,7 +331,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                                 a1 = analysisStage .~ SentToTest_CAS $ old_state
                             alarm <- liftIO $ newAlarm 15000000 $ do 
                                 errorM "ResearchWorker" . builderToString $ " failed testing " `mappend` (Bu.byteString url)
-                                --writeChan kill_tester_browser ""
+                                writeChan kill_tester_browser ""
                             return $ currentAlarm .~ alarm $ a1
                         return $ simpleResponse 200 url
                 ) (

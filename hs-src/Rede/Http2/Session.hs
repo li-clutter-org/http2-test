@@ -348,7 +348,7 @@ sessionInputThread  = do
 
                     Just thread_id -> do
                         throwTo thread_id StreamCancelledException
-                        infoM "HTTP2.Session" $ "Stream successfully interrupted"
+                        --infoM "HTTP2.Session" $ "Stream successfully interrupted"
 
             continue 
 

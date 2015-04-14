@@ -82,7 +82,7 @@ harCoherentWorker :: ResolveCenter -> CoherentWorker
 harCoherentWorker resolve_center (input_headers, _ ) = do 
 
     -- liftIO $ putStrLn $ "headers: " ++ (show input_headers)
-    liftIO $ infoM "HarWorker" $ " .. request to " ++ (show resource_handle)
+    
     let 
         resolver = resolveFromHar resolve_center
         maybe_served_entry  = resolver resource_handle :: Maybe ServedEntry
@@ -95,7 +95,9 @@ harCoherentWorker resolve_center (input_headers, _ ) = do
                 contents = (served_entry ^. sreContents)
                 UnpackedNameValueList adapted_headers = adaptHeaders (served_entry ^. sreStatus ) (served_entry ^. sreHeaders)
             in do 
-                liftIO $ threadDelay additionalDelay
+                liftIO $ 
+                    -- threadDelay additionalDelay
+                    liftIO $ infoM "HarWorker" $ " .. HIT " ++ (show resource_handle)
                 return (adapted_headers , pushed_streams, yield contents)
 
         Nothing -> do 
