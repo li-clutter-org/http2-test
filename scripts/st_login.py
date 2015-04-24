@@ -43,6 +43,9 @@ class RedisCache(object):
     def get(self, key):
         k = self._mk_redis_key(key)
         value = self._conn.get( k )
+        if value is not None:
+            self._conn.persist( k )
+            self._conn.expire(k, HOLD_CACHE_TIME)
         return value
     
 CacheClass = SuperfluosCache if redis is None else RedisCache
