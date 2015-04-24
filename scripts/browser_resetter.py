@@ -134,7 +134,7 @@ def work():
             chrome_process = chrome_run()
             args_ready = curl_arguments(NOTIFY_READY+station_name, data_binary=START_TOKEN)
             # The daemon needs to know when the browser is ready to deliver the url, otherwise
-            # the url can be delivered to early ..... 
+            # the url can be delivered too early ..... 
             sp.check_call(args_ready)
             # Run a thread to watch for the reset
             # signal
