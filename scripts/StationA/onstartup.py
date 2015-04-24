@@ -48,12 +48,20 @@ def main():
     logger.info("onstartup, invoking browser resetter")
     # sp.check_call(["xterm"])
     while True:
-        p  = sp.Popen([
-                "/home/ubuntu/browser_resetter/browser_resetter"
-                ])
-        p.wait()
+        status_code = 'none'
+        try:
+            p  = sp.Popen([
+                    "/home/ubuntu/browser_resetter/browser_resetter"
+                    ])
+            status_code = p.wait()
+        except Exception as x:
+            with open("/home/ubuntu/error_reason.txt", "a") as out:
+                out.write( str(x) )
+                out.write("\n" )
         # Sleep a bit 
-        time.sleep(1000)
+        with open("/home/ubuntu/error_reason.txt", "a") as out:
+            out.write( str(status_code)+"\n" )
+        time.sleep(1)
         # And go for it again
 
 
