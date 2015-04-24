@@ -1,0 +1,13 @@
+138c138
+< defInfo (H.PatBind loc pat _ _ ) = map (\name -> DeclarationInfo loc "function" (identOfName name) Nothing Nothing Nothing Nothing) $ names pat where
+---
+> defInfo (H.PatBind loc pat _ _ _) = map (\name -> DeclarationInfo loc "function" (identOfName name) Nothing Nothing Nothing Nothing) $ names pat where
+141c141
+<     -- names (H.PNeg n) = names n
+---
+>     names (H.PNeg n) = names n
+159,160c159
+<     fieldNames (H.PFieldPun (H.Qual mn n)) = [n]
+<     fieldNames (H.PFieldPun (H.UnQual n)) = [n]
+---
+>     fieldNames (H.PFieldPun n) = [n]
