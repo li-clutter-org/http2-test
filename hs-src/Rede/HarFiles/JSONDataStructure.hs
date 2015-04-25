@@ -21,7 +21,7 @@ import qualified Data.ByteString.Lazy           as LB
 
 import           Network.URI
 
--- import           Rede.Utils                     (neutralizeUrl)
+import           Rede.Research.JobId            (HashId(..))
 import           Rede.Utils.PrintfArgByteString ()
 
 -- import           Debug.Trace                    (trace)
@@ -88,8 +88,8 @@ data Har_Outer = Har_Outer {
 
 data Har_PostResponse = Har_PostResponse {
     _harLogPR   :: !Har_Log
-    ,
-    _originUrl :: !HereString
+    ,_originUrl :: !HereString
+    ,_hashIdPR  :: !HashId
     }
 
 
@@ -243,8 +243,9 @@ instance FromJSON Har_Outer where
 instance FromJSON  Har_PostResponse where 
 
     parseJSON (Object v) = Har_PostResponse <$>
-        v .:  "har"                      <*>
-        (pack <$> v .: "originUrl" )    
+        v .:  "har"                         <*>
+        (pack   <$> v .: "originUrl" )      <*>
+        (HashId <$> pack <$> v .: "hashid" )
 
 
 

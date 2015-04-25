@@ -13,34 +13,25 @@ module Rede.Utils (
     ,stripString
     ,neutralizeUrl
     ,domainFromUrl
-    ,hashFromUrl
-    ,hashSafeFromUrl
-    ,unSafeUrl
-    ,safeUrlFromByteStringWhichIsAlreadyAHashedUrl
+    -- ,hashFromUrl
 
-    ,SafeUrl
     ) where 
 
 
 import           Control.Concurrent.Chan
 import           Control.Monad.Trans.Class (lift)
-import qualified Crypto.Hash.MD5           as MD5
 import           Data.Binary               (Binary, get, put, putWord8)
 import           Data.Binary.Get           (Get, getWord16be, getWord8)
 import           Data.Binary.Put           (Put, putWord16be)
 import           Data.Bits
 import qualified Data.ByteString           as B
-import qualified Data.ByteString.Base16    as B16
 import           Data.ByteString.Char8     (pack, unpack)
-import           Data.Hashable             (Hashable)
 import           Data.Conduit
 import qualified Data.Text                 as T
 import           Data.Text.Encoding
 import qualified Network.URI               as U
-import qualified System.Clock              as SC
 import           Text.Printf               (printf)
--- import qualified Text.Show.ByteString      as S(Show(..))
-
+import qualified System.Clock              as SC
 
 
 strToInt::String -> Int 
@@ -49,11 +40,6 @@ strToInt = fromIntegral . toInteger . (read::String->Integer)
 
 newtype Word24 = Word24 Int
     deriving (Show)
-
-
--- Newtype to protect url usage
-newtype SafeUrl = SafeUrl { unSafeUrl :: B.ByteString } deriving (Eq, Show, Hashable)
-
 
 
 word24ToInt :: Word24 -> Int 
@@ -162,20 +148,3 @@ domainFromUrl url = let
     Just (U.URIAuth _ use_host _) = authority
   in 
     pack use_host
-
-
--- TODO: This constant should not be in the repository
-urlHashSalt :: B.ByteString
-urlHashSalt = "Adfafwwf"
-
-
-hashFromUrl :: B.ByteString -> B.ByteString 
-hashFromUrl url = 
-    B.take 10 . B16.encode . MD5.finalize $ foldl MD5.update MD5.init $  [urlHashSalt, neutralizeUrl url]
-
-
-hashSafeFromUrl :: B.ByteString -> SafeUrl 
-hashSafeFromUrl = SafeUrl . hashFromUrl
-
-safeUrlFromByteStringWhichIsAlreadyAHashedUrl :: B.ByteString -> SafeUrl
-safeUrlFromByteStringWhichIsAlreadyAHashedUrl c = SafeUrl c

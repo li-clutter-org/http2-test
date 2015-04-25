@@ -47,11 +47,12 @@ import qualified Data.Set               as S
 -- import qualified Data.ByteString.Base64 as B64
 
 
-import           Rede.Utils             (lowercaseText, hashFromUrl)
-import           Rede.MainLoop.Tokens   (
-                                            UnpackedNameValueList(..)
-                                            , getHeader
-                                        )
+import           Rede.Research.JobId   (HashId)
+import           Rede.Utils            (lowercaseText)
+import           Rede.MainLoop.Tokens  (
+                                          UnpackedNameValueList(..)
+                                          , getHeader
+                                       )
 
 
 import Rede.HarFiles.JSONDataStructure 
@@ -96,7 +97,7 @@ data ResolveCenter = ResolveCenter {
     ,_allSeenHosts :: [B.ByteString]
 
     -- A unique name that can be used to identify this resolve center... 
-    ,_rcName :: B.ByteString
+    ,_rcName :: HashId
 
     -- The original url 
     ,_rcOriginalUrl :: B.ByteString
@@ -145,17 +146,15 @@ createResolveCenter har_document =
     ResolveCenter  
         (M.fromList resource_pairs) -- <- Creates a dictionary
         unduplicated_hosts
-        hash_piece
+        hash_id
         first_url
   where 
     har_log = har_document ^. harLogPR
+    hash_id = har_document ^. hashIdPR
     resource_pairs = extractPairs har_log
     all_seen_hosts = map (L.view ( L._2 . sreHost) ) resource_pairs 
     unduplicated_hosts = (S.toList . S.fromList) all_seen_hosts
-    
     first_url = har_document ^. originUrl 
-    hash_piece = hashFromUrl first_url
-
 
 
 -- createResolveCenterFromFilePath :: B.ByteString -> IO ResolveCenter

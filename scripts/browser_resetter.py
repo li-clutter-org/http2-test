@@ -44,7 +44,7 @@ LOGGING = {
             'format': '%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s'
         },
         'simple': {
-            'format': '%(levelname)s %(message)s'
+            'format': '%(processName)s/%(levelname)s %(message)s'
         },
     },
     'handlers': {
@@ -53,6 +53,7 @@ LOGGING = {
             'class':'logging.handlers.SysLogHandler',
             'formatter': 'simple',
             'facility': SysLogHandler.LOG_LOCAL2,
+            'address': '/dev/log'
         }
     },
     'loggers': {
@@ -68,22 +69,24 @@ logging.config.dictConfig(LOGGING)
 
 logger = logging.getLogger("browser_resetter")
 
+logger.info("STARTING BROWSER RESETTER")
+
 
 station_name = open("/home/ubuntu/Station").read()
 
 
-def curl_arguments(endpoint, data_binary=""):
+def curl_arguments(endpoint, data_binary="", use_output=False):
     # This function is a bit different because we don't need actual data, 
     # but we do need a status....
     return [
         "curl", 
-        "-s", 
-        "-o", "/dev/null",
-        "-w", "%{http_code}",
+        "-s",  ] + \
+        ([ "-o", "/dev/null" ] if not use_output else []) + \
+        ["-w", "%{http_code}",
         "--data-binary", '{0}'.format(repr(data_binary.encode('ascii'))),
          # I don't think any data needs to be submitted
         "-X", "POST", "--http2", endpoint
-    ]
+        ]
 
 
 def main():
@@ -93,43 +96,58 @@ def main():
         work()
 
 
-def on_browser_should_finish(undaemon_instance):
-    args_get = curl_arguments(
-        NOTIFY_UPDATE_COMPLETE_ENDPOINT+station_name, 
-        data_binary=END_TOKEN ) # <-- does nothing, really
+def on_browser_should_finish(undaemon_instance, hashid):
+    args_get = [
+        "curl", 
+        "-s",  # Silent mode
+        "-w", "status=%{http_code}",
+        "--data-binary", END_TOKEN.encode('ascii'),
+         # I don't think any data needs to be submitted
+         "-X", "POST", "--http2", NOTIFY_UPDATE_COMPLETE_ENDPOINT+station_name
+         ]        
     while True:
         try:
-            print("Executing: ", " ".join(args_get))
-            status_code = sp.check_output(args_get)
+            logger.info("Executing: %s", " ".join(args_get))
+            process_output = sp.check_output(args_get)
         except sp.CalledProcessError as e:
-            print(" .... Err in curl, returncode: ", e.returncode, file=sys.stderr)
+            logger.error(" .... Err in curl, returncode: %d ", e.returncode)
             # Sleep a little bit
             time.sleep(3.0)
         else:
+            status_code, returned_hash_id = token_and_status_from_curl_output(process_output)
             # Got a token?
-            if "200" in status_code :
-                undaemon_instance._kill_all()
-                print("KILL ALL RETURNED+")
-                break
+            if status_code=="200":
+                if returned_hash_id == hashid :
+                    undaemon_instance._kill_all()
+                    logger.info("Killed all process in the cgroup")
+                    break
+                else:
+                    logger.error("Skipped to kill the browser because expected hashid=%s and received hashid was %s",
+                                 hashid, returned_hash_id )
             else:
-                print("Bad answer")
+                logger.error("When-to-kill returned non 200 status code: %s", status_code )
                 print(os.environ["PATH"])
                 time.sleep(3.0)
 
 
 def work():
-    args_get = curl_arguments(
-        DEFAULT_POLL_ENDPOINT+station_name, 
-        data_binary=START_TOKEN  ) # Also does nothing
+    args_get = [
+        "curl", 
+        "-s",  # Silent mode
+        "-w", "status=%{http_code}",
+        "--data-binary", START_TOKEN.encode('ascii'),
+         # I don't think any data needs to be submitted
+         "-X", "POST", "--http2", DEFAULT_POLL_ENDPOINT+station_name
+         ]    
     try:
-        print("Executing: ", " ".join(args_get))
-        status_code = sp.check_output(args_get)
+        logger.info("Executing: %s", " ".join(args_get))
+        process_output = sp.check_output(args_get)
     except sp.CalledProcessError as e:
-        print(" .... Err in curl, returncode: ", e.returncode, file=sys.stderr)
+        logger.error(" .... Err in curl, returncode: %d ", e.returncode)
         # Sleep a little bit
         time.sleep(3.0)
     else:
-        # Got a token?
+        status_code, hashid = token_and_status_from_curl_output(process_output)
         if "200" in status_code:
             chrome_process = chrome_run()
             args_ready = curl_arguments(NOTIFY_READY+station_name, data_binary=START_TOKEN)
@@ -139,16 +157,25 @@ def work():
             # Run a thread to watch for the reset
             # signal
             watch = threading.Thread(target = 
-                partial(on_browser_should_finish, chrome_process)
+                partial(on_browser_should_finish, chrome_process, hashid)
             )
             watch.start()
 
             # And now just wait for the watcher before doing anything...
             watch.join()
         else:
-            print("TOKEN IS WRONG")
-            print(os.environ["PATH"])
+            logger.error("Invalid status code in HTTP response: %s", status_code )
             time.sleep(3.0)
+
+
+def token_and_status_from_curl_output(process_output):
+    # Got a good result code?
+    mo = re.search(r"status=(\d+)", process_output )
+    status_code = mo.group(1)
+    # And maybe a token?
+    mo = re.search(r"hashid=([A-Za-z0-9]{3,})")
+    hashid = mo and mo.group(1)
+    return status_code, hashid
 
 
 #google-chrome
