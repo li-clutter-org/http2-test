@@ -30,3 +30,9 @@ Deployment actions
 Installing the latest version of the executable:
 
     $ fab BeefyRehMimic
+
+Initializing the Chrome extension
+---------------------------------
+
+    _myapi.setEndPoints("StationA")
+    _myapi.setEndPoints("StationB")
