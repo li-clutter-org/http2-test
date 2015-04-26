@@ -24,10 +24,11 @@ import qualified Data.ByteString.Lazy      as LB
 import qualified Data.ByteString.Builder   as Bu
 import qualified Data.Monoid               as Mo
 import qualified Data.ByteString.Base16    as B16
-import           Data.ByteString.Char8     (pack, unpack)
+import           Data.ByteString.Char8     (pack, 
+                                            {-unpack-} )
 import qualified Data.Time.Clock           as Cl
 import           Data.Hashable             (Hashable(..))
-import qualified Network.URI               as U
+-- import qualified Network.URI               as U
 import qualified System.Random             as SR
 
 
@@ -61,23 +62,23 @@ idLength :: Int
 idLength = 14
 
 
-neutralizeUrl :: B.ByteString -> B.ByteString
-neutralizeUrl url = let 
-    Just (U.URI {- scheme -} _ authority u_path u_query u_frag) = U.parseURI $ unpack url
-    Just (U.URIAuth _ use_host _) = authority
-    complete_url  = U.URI {
-        U.uriScheme     = "snu:"
-        ,U.uriAuthority = Just $ U.URIAuth {
-            U.uriUserInfo = ""
-            ,U.uriRegName = use_host 
-            ,U.uriPort    = ""
-            }
-        ,U.uriPath      = u_path
-        ,U.uriQuery     = u_query 
-        ,U.uriFragment  = u_frag 
-      }
-  in 
-    pack $ show complete_url
+-- neutralizeUrl :: B.ByteString -> B.ByteString
+-- neutralizeUrl url = let 
+--     Just (U.URI {- scheme -} _ authority u_path u_query u_frag) = U.parseURI $ unpack url
+--     Just (U.URIAuth _ use_host _) = authority
+--     complete_url  = U.URI {
+--         U.uriScheme     = "snu:"
+--         ,U.uriAuthority = Just $ U.URIAuth {
+--             U.uriUserInfo = ""
+--             ,U.uriRegName = use_host 
+--             ,U.uriPort    = ""
+--             }
+--         ,U.uriPath      = u_path
+--         ,U.uriQuery     = u_query 
+--         ,U.uriFragment  = u_frag 
+--       }
+--   in 
+--     pack $ show complete_url
 
 
 newtype HashId = HashId { unHashId::B.ByteString }
@@ -94,8 +95,6 @@ hashidFromJobId url =
 
 jobIdFromUrl :: B.ByteString -> IO UrlJobId 
 jobIdFromUrl url = do 
-    let 
-      neuter_url = neutralizeUrl url
     utc_time <- Cl.getCurrentTime
     -- My high order thinking is flawed right now
     a <- SR.randomIO 
@@ -104,7 +103,7 @@ jobIdFromUrl url = do
     d <- SR.randomIO
     e <- SR.randomIO
     return $ UrlJobId {
-      originalUrl = neuter_url
+      originalUrl = url
       ,reqTimestamp = utc_time
       ,rndDistinctor = pack [a,b,c,d,e]
       }

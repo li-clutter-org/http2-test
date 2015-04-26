@@ -126,7 +126,16 @@ data Har_VersionPair = Har_VersionPair {
 data Har_Entry = Har_Entry {
     _request           :: !Har_Request
     ,_response         :: !Har_Response
+    ,_timings          :: !Har_EntryTimings
    }
+
+
+-- All these times are in Milliseconds
+data Har_EntryTimings = Har_EntryTimings {
+    _send               :: !Double
+    ,_wait              :: Double
+    ,_receive           :: Double 
+    }
 
 
 makeLenses ''Har_Page
@@ -141,7 +150,7 @@ makeLenses ''Har_PageTimings
 makeLenses ''Har_QueryString
 makeLenses ''Har_Content
 makeLenses ''Har_PostResponse
-
+makeLenses ''Har_EntryTimings
 
 
 
@@ -219,7 +228,16 @@ instance FromJSON  Har_Entry where
 
     parseJSON (Object v) = Har_Entry  <$>
         v .: "request"   <*>
-        v .: "response"
+        v .: "response"  <*>
+        v .: "timings"
+
+
+instance FromJSON Har_EntryTimings where 
+
+    parseJSON (Object v) = Har_EntryTimings <$>
+        v .: "send"       <*>
+        v .: "wait"       <*>
+        v .: "receive"
 
 
 instance FromJSON Har_QueryString where 

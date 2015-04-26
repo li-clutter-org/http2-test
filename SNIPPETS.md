@@ -36,3 +36,11 @@ Initializing the Chrome extension
 
     _myapi.setEndPoints("StationA")
     _myapi.setEndPoints("StationB")
+
+Opening a debug session at a particular module
+----------------------------------------------
+
+    $ cabal repl
+    *Main> :load Rede.HarFiles.JSONDataStructure 
+
+... and voila, it works magically!

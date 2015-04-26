@@ -11,7 +11,7 @@ module Rede.Utils (
     ,lowercaseText
     ,unfoldChannelAndSource
     ,stripString
-    ,neutralizeUrl
+    -- ,neutralizeUrl
     ,domainFromUrl
     -- ,hashFromUrl
 
@@ -25,7 +25,8 @@ import           Data.Binary.Get           (Get, getWord16be, getWord8)
 import           Data.Binary.Put           (Put, putWord16be)
 import           Data.Bits
 import qualified Data.ByteString           as B
-import           Data.ByteString.Char8     (pack, unpack)
+import           Data.ByteString.Char8     (pack, 
+                                            unpack )
 import           Data.Conduit
 import qualified Data.Text                 as T
 import           Data.Text.Encoding
@@ -123,23 +124,23 @@ stripString :: String -> String
 stripString  = filter $ \ ch -> (ch /= '\n') && ( ch /= ' ')
 
 
-neutralizeUrl :: B.ByteString -> B.ByteString
-neutralizeUrl url = let 
-    Just (U.URI {- scheme -} _ authority u_path u_query u_frag) = U.parseURI $ unpack url
-    Just (U.URIAuth _ use_host _) = authority
-    complete_url  = U.URI {
-        U.uriScheme     = "snu:"
-        ,U.uriAuthority = Just $ U.URIAuth {
-            U.uriUserInfo = ""
-            ,U.uriRegName = use_host 
-            ,U.uriPort    = ""
-            }
-        ,U.uriPath      = u_path
-        ,U.uriQuery     = u_query 
-        ,U.uriFragment  = u_frag 
-      }
-  in 
-    pack $ show complete_url
+-- neutralizeUrl :: B.ByteString -> B.ByteString
+-- neutralizeUrl url = let 
+--     Just (U.URI {- scheme -} _ authority u_path u_query u_frag) = U.parseURI $ unpack url
+--     Just (U.URIAuth _ use_host _) = authority
+--     complete_url  = U.URI {
+--         U.uriScheme     = "snu:"
+--         ,U.uriAuthority = Just $ U.URIAuth {
+--             U.uriUserInfo = ""
+--             ,U.uriRegName = use_host 
+--             ,U.uriPort    = ""
+--             }
+--         ,U.uriPath      = u_path
+--         ,U.uriQuery     = u_query 
+--         ,U.uriFragment  = u_frag 
+--       }
+--   in 
+--     pack $ show complete_url
 
 
 domainFromUrl :: B.ByteString -> B.ByteString

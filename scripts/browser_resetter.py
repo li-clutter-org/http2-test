@@ -71,9 +71,7 @@ logger = logging.getLogger("browser_resetter")
 
 logger.info("STARTING BROWSER RESETTER")
 
-
 station_name = open("/home/ubuntu/Station").read()
-
 
 def curl_arguments(endpoint, data_binary="", use_output=False):
     # This function is a bit different because we don't need actual data, 
@@ -88,13 +86,11 @@ def curl_arguments(endpoint, data_binary="", use_output=False):
         "-X", "POST", "--http2", endpoint
         ]
 
-
 def main():
     os.environ["PATH"] = os.path.join(AUX_SSL_PATH, "bin/") + ":" + os.environ["PATH"]
     os.environ["LD_LIBRARY_PATH"] = LD_LIBRARY_PATH
     while True:
         work()
-
 
 def on_browser_should_finish(undaemon_instance, hashid):
     args_get = [
@@ -148,6 +144,7 @@ def work():
         time.sleep(3.0)
     else:
         status_code, hashid = token_and_status_from_curl_output(process_output)
+        logger.info("Start browser, status_code=%s, hashid=%s", status_code, hashid)
         if "200" in status_code:
             chrome_process = chrome_run()
             args_ready = curl_arguments(NOTIFY_READY+station_name, data_binary=START_TOKEN)
@@ -173,7 +170,7 @@ def token_and_status_from_curl_output(process_output):
     mo = re.search(r"status=(\d+)", process_output )
     status_code = mo.group(1)
     # And maybe a token?
-    mo = re.search(r"hashid=([A-Za-z0-9]{3,})")
+    mo = re.search(r"hashid=([A-Za-z0-9]{3,})", process_output)
     hashid = mo and mo.group(1)
     return status_code, hashid
 

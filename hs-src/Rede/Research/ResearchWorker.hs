@@ -252,51 +252,51 @@ researchWorkerComp (input_headers, maybe_source) = do
         -- the state of this program... 
         Post_RM 
             | req_url == "/nexturl/" -> doJOMS next_url_asked 
-                    (
-                        do 
-                            -- Starts harvesting of a resource... this request is made by StationA
-                            liftIO $ do 
-                                infoM "ResearchWorker" ".. /nexturl/ asked "
-                                my_thread <- myThreadId
-                                infoM "ResearchWorker" $ "waiting on thread " ++ (show my_thread)
+                (
+                    do 
+                        -- Starts harvesting of a resource... this request is made by StationA
+                        liftIO $ do 
+                            infoM "ResearchWorker" ".. /nexturl/ asked "
+                            my_thread <- myThreadId
+                            infoM "ResearchWorker" $ "waiting on thread " ++ (show my_thread)
 
-                            hashid <- 
-                                catch
-                                    (liftIO $ do 
-                                        -- First we wait for a notification about the browser being ready
-                                        readChan harvester_ready
-                                        -- And then we give out the next url to scan...
-                                        readChan next_harvest_url
-                                    )
-                                    on_url_wait_interrupted
-                            url <- urlFromHashId hashid
-                            liftIO $ infoM "ResearchWorker" .  builderToString $ "..  /nexturl/" `mappend` " answer " `mappend` (Bu.byteString url) `mappend` " "
-                            liftIO $ markAnalysisStage hashid SentToHarvester_CAS base_research_dir
+                        hashid <- 
+                            catch
+                                (liftIO $ do 
+                                    -- First we wait for a notification about the browser being ready
+                                    readChan harvester_ready
+                                    -- And then we give out the next url to scan...
+                                    readChan next_harvest_url
+                                )
+                                on_url_wait_interrupted
+                        url <- urlFromHashId hashid
+                        liftIO $ infoM "ResearchWorker" .  builderToString $ "..  /nexturl/" `mappend` " answer " `mappend` (Bu.byteString url) `mappend` " "
+                        liftIO $ markAnalysisStage hashid SentToHarvester_CAS base_research_dir
 
-                            -- Mark it as sent...
-                            modifyUrlState hashid $ \ old_state -> do 
-                                -- Set an alarm here also...this alarm should be disabled when a .har file comes....
-                                liftIO $ cancelAlarm $ old_state ^. currentAlarm
-                                let 
-                                    a1 = analysisStage .~ SentToHarvester_CAS $ old_state
-                                alarm <- liftIO $ newAlarm timeForAlarm $ do 
-                                    markAnalysisStage hashid SystemCancelled_CAS base_research_dir
-                                    errorM "ResearchWorker" . builderToString $ " failed harvesting " `mappend` (Bu.byteString req_url) `mappend` " (timeout) "
-                                    writeChan kill_harvester_browser hashid
-                                    errorM "ResearchWorker" " ... harvester browser asked killed "
-                                let
-                                    a2 = currentAlarm .~ alarm $ a1
-                                return a2 
+                        -- Mark it as sent...
+                        modifyUrlState hashid $ \ old_state -> do 
+                            -- Set an alarm here also...this alarm should be disabled when a .har file comes....
+                            liftIO $ cancelAlarm $ old_state ^. currentAlarm
+                            let 
+                                a1 = analysisStage .~ SentToHarvester_CAS $ old_state
+                            alarm <- liftIO $ newAlarm timeForAlarm $ do 
+                                markAnalysisStage hashid SystemCancelled_CAS base_research_dir
+                                errorM "ResearchWorker" . builderToString $ " failed harvesting " `mappend` (Bu.byteString req_url) `mappend` " (timeout) "
+                                writeChan kill_harvester_browser hashid
+                                errorM "ResearchWorker" " ... harvester browser asked killed "
+                            let
+                                a2 = currentAlarm .~ alarm $ a1
+                            return a2 
 
-                            -- And finally return.
-                            let msg = WorkIndication hashid url
-                            return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
-                    ) (
-                        do 
-                            -- Somebody asked too many times, say it
-                            liftIO $ errorM "ResearchWorker" ".. /nexturl/ asked too many times, returning 501"
-                            return $ simpleResponse 501 "Asked too many times"
-                    )
+                        -- And finally return.
+                        let msg = WorkIndication hashid url
+                        return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
+                ) (
+                    do 
+                        -- Somebody asked too many times, say it
+                        liftIO $ errorM "ResearchWorker" ".. /nexturl/ asked too many times, returning 501"
+                        return $ simpleResponse 501 "Asked too many times"
+                )
                        
             | req_url == "/browserready/StationA" -> do 
                 -- Check when we can proceed
@@ -401,7 +401,6 @@ researchWorkerComp (input_headers, maybe_source) = do
 
             | req_url == "/killbrowser/StationA" -> do 
                 unQueueKillBrowser "/killbrowser/StationA" kill_harvester_browser
-
 
             | req_url == "/startbrowser/StationB" -> do 
                 unQueueStartBrowser "/startbrowser/StationB" start_tester_browser
@@ -565,11 +564,14 @@ unQueueStartBrowser :: B.ByteString -> Chan HashId -> ServiceStateMonad Principa
 unQueueStartBrowser log_url chan_to_read = 
   do 
     -- Ensure start
-    hashid <- liftIO $ do
-        infoM "ResearchWorker" (unpack $ B.append " .. " log_url)
-        readChan chan_to_read
+    bs_hashid <- liftIO $ do
+        infoM "ResearchWorker" (unpack $ B.append "start browser asked .. " log_url)
+        hashid <- readChan chan_to_read
+        let bs_hashid = unHashId hashid
+        infoM "ResearchWorker" (unpack $ B.concat ["start browser delivered .. ", log_url, " ", bs_hashid ])
+        return bs_hashid
 
-    return $ simpleResponse 200 $ B.append "hashid=" (unHashId hashid)
+    return $ simpleResponse 200 $ B.append "hashid=" bs_hashid
 
 
 unQueueKillBrowser :: B.ByteString -> Chan HashId -> ServiceStateMonad PrincipalStream
@@ -579,7 +581,7 @@ unQueueKillBrowser log_url chan_to_read = do
         -- Let's wait a second before killing the process....
         infoM "ResearchWorker" $ unpack $ B.append " .. " log_url
         hashid <- readChan chan_to_read
-        infoM "ResearchWorker" " .. StationA browser cleared for killing"
+        infoM "ResearchWorker" $ unpack $ B.append log_url " cleared for killing"
         return hashid
 
     return $ simpleResponse 200 $ B.append "hashid=" (unHashId hashid)
