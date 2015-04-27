@@ -89,9 +89,12 @@ harCoherentWorker resolve_center (input_headers, _ ) = do
         Just served_entry -> let 
                 contents = (served_entry ^. sreContents)
                 UnpackedNameValueList adapted_headers = adaptHeaders (served_entry ^. sreStatus ) (served_entry ^. sreHeaders)
+                contents_stream = do 
+                    yield contents
+                    liftIO $ threadDelay (served_entry ^. artificialDelay)
             in do 
-                liftIO $ threadDelay (served_entry ^. artificialDelay)
-                return (adapted_headers , pushed_streams, yield contents)
+                
+                return (adapted_headers , pushed_streams, contents_stream)
 
         Nothing -> do 
             liftIO $ errorM "HarWorker" $ "  .. resource " ++ (show resource_handle) ++ " not found."

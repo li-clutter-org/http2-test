@@ -15,6 +15,7 @@ import subprocess as sp
 import subprocess
 import re
 import shlex
+import signal
 import threading
 from functools import partial
 from logging.handlers import SysLogHandler
@@ -29,6 +30,10 @@ LD_LIBRARY_PATH                 ="/opt/openssl-1.0.2/lib"
 START_TOKEN                     = "KDDFQ"
 END_TOKEN                       = "EAJ"
 CHROME_CGROUP                   = "/sys/fs/cgroup/chrome"
+# Time in seconds to wait
+#KILL_BROWSER_AFTER              = 40
+# Debug time
+KILL_BROWSER_AFTER              = 50
 
 
 exec_env = os.environ.copy()
@@ -44,7 +49,7 @@ LOGGING = {
             'format': '%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s'
         },
         'simple': {
-            'format': '%(processName)s/%(levelname)s %(message)s'
+            'format': 'RESETTER %(levelname)s %(message)s'
         },
     },
     'handlers': {
@@ -61,17 +66,21 @@ LOGGING = {
             'handlers':['syslog'],
             'propagate': True,
             'level':'INFO',
+        },
+        'undaemon': {
+            'handlers':['syslog'],
+            'propagate': True,
+            'level':'INFO',
         }
     },
 }
-
 logging.config.dictConfig(LOGGING)
-
 logger = logging.getLogger("browser_resetter")
-
 logger.info("STARTING BROWSER RESETTER")
 
+
 station_name = open("/home/ubuntu/Station").read()
+
 
 def curl_arguments(endpoint, data_binary="", use_output=False):
     # This function is a bit different because we don't need actual data, 
@@ -86,44 +95,112 @@ def curl_arguments(endpoint, data_binary="", use_output=False):
         "-X", "POST", "--http2", endpoint
         ]
 
+
 def main():
     os.environ["PATH"] = os.path.join(AUX_SSL_PATH, "bin/") + ":" + os.environ["PATH"]
     os.environ["LD_LIBRARY_PATH"] = LD_LIBRARY_PATH
+    set_signal_handlers()
     while True:
         work()
+        
+        
+current_kill_watch = None
 
-def on_browser_should_finish(undaemon_instance, hashid):
-    args_get = [
-        "curl", 
-        "-s",  # Silent mode
-        "-w", "status=%{http_code}",
-        "--data-binary", END_TOKEN.encode('ascii'),
-         # I don't think any data needs to be submitted
-         "-X", "POST", "--http2", NOTIFY_UPDATE_COMPLETE_ENDPOINT+station_name
-         ]        
-    while True:
-        try:
-            logger.info("Executing: %s", " ".join(args_get))
-            process_output = sp.check_output(args_get)
-        except sp.CalledProcessError as e:
-            logger.error(" .... Err in curl, returncode: %d ", e.returncode)
-            # Sleep a little bit
-            time.sleep(3.0)
+
+def on_usr1(arg1, arg2):
+    logger.info("Received SIGUSR1")
+    if current_kill_watch is not None:
+        current_kill_watch(arg1, arg2)
+
+        
+def set_signal_handlers():
+    signal.signal(signal.SIGUSR1, on_usr1)
+    #signal.signal(signal.SIGALRM, self._alarm_handler)
+    #signal.signal(signal.SIGTERM, self._kill_all)    
+
+
+class BrowserKillWatch(object):
+    
+    def __init__( self, undaemon_instance, hash_id):
+        self._undaemon_instance = undaemon_instance
+        self._hashid = hash_id 
+        self._on_exit_lock = threading.Lock()
+        self._browser_already_killed = threading.Event()
+        self._browser_on_normal_exit = threading.Event()
+        global current_kill_watch
+        current_kill_watch = self.on_usr1
+        
+    def run(self):
+        self._kill_timer = threading.Timer(KILL_BROWSER_AFTER, self.timed_kill)
+        self._kill_timer.start()
+        self.on_browser_should_finish()
+        
+    def on_usr1(self, arg1, arg2):
+        if self._browser_on_normal_exit.is_set() :
+            logger.info("Received SIGUSR1 on normal exit")
         else:
-            status_code, returned_hash_id = token_and_status_from_curl_output(process_output)
-            # Got a token?
-            if status_code=="200":
-                if returned_hash_id == hashid :
-                    undaemon_instance._kill_all()
-                    logger.info("Killed all process in the cgroup")
-                    break
-                else:
-                    logger.error("Skipped to kill the browser because expected hashid=%s and received hashid was %s",
-                                 hashid, returned_hash_id )
-            else:
-                logger.error("When-to-kill returned non 200 status code: %s", status_code )
-                print(os.environ["PATH"])
+            logger.info("Received unexpected SIGUSR1")
+            # Force the remaining finalization mechanisms to acknowledge that the browser exited,
+            # so that we can start over.
+            self._browser_already_killed.set()
+        
+    def __call__(self):
+        self.run()
+
+    def on_browser_should_finish(self):
+        undaemon_instance, hashid = self._undaemon_instance, self._hashid
+        args_get = [
+            "curl", 
+            "-s",  # Silent mode
+            "-w", "status=%{http_code}",
+            "-m", str(KILL_BROWSER_AFTER), # Establish a timeout
+            "--data-binary", END_TOKEN.encode('ascii'),
+             # I don't think any data needs to be submitted
+             "-X", "POST", "--http2", NOTIFY_UPDATE_COMPLETE_ENDPOINT+station_name
+             ]        
+        while True:
+            if self._browser_already_killed.is_set():
+                # Well, well met
+                break
+            try:
+                logger.info("Executing: %s", " ".join(args_get))
+                process_output = sp.check_output(args_get)
+            except sp.CalledProcessError as e:
+                logger.error(" .... Err in curl, returncode: %d ", e.returncode)
+                # Sleep a little bit
                 time.sleep(3.0)
+            else:
+                status_code, returned_hash_id = token_and_status_from_curl_output(process_output)
+                logger.info("For killing, just obtained status_code %s and hash  %s", status_code, returned_hash_id)
+                # Got a token?
+                if status_code=="200":
+                    if returned_hash_id == hashid :
+                        self.log_and_kill_the_browser()
+                        break
+                    else:
+                        logger.warning("Expected hashid=%s and received hashid was %s, will keep waiting",
+                                     hashid, returned_hash_id )
+                        # self.log_and_kill_the_browser()
+                        break
+                else:
+                    logger.error("When-to-kill returned non 200 status code: %s", status_code )
+                    print(os.environ["PATH"])
+                    time.sleep(3.0)
+                    
+    def timed_kill(self):
+        if not self._browser_already_killed.is_set():
+            logger.info("Attemping timed kill of the browser")
+            self.log_and_kill_the_browser()
+
+    def log_and_kill_the_browser(self):
+        if not self._browser_already_killed.is_set():
+            self._browser_on_normal_exit.set()
+            with self._on_exit_lock:
+                undaemon_instance = self._undaemon_instance
+                logger.info("Going to kill the Chrome process and all its descendance, if this is the last message you see, we have a problem")
+                (terminated, killed) = undaemon_instance.kill_all()
+                logger.info("Terminated: %d, Killed: %d", terminated, killed)
+                self._browser_already_killed.set()
 
 
 def work():
@@ -153,9 +230,8 @@ def work():
             sp.check_call(args_ready)
             # Run a thread to watch for the reset
             # signal
-            watch = threading.Thread(target = 
-                partial(on_browser_should_finish, chrome_process, hashid)
-            )
+            kill_watch = BrowserKillWatch(chrome_process, hashid)
+            watch = threading.Thread(target = kill_watch)
             watch.start()
 
             # And now just wait for the watcher before doing anything...
@@ -214,12 +290,12 @@ def chrome_run():
     undaemon_thread.start()
     times_tried = 0
     while True:
-        time.sleep(1.0)
+        time.sleep(1.4)
         s = tool("xwininfo -tree -root")
         mo = re.search(r"\s+(0x[a-f0-9]+) \".*?Google Chrome\"", s)
         if mo is None:
             logger.warning("Couldn't find Google chrome windows,  maybe re-trying ")
-            if times_tried > 8:
+            if times_tried > 14:
                 logger.error("Exiting chrome script because chrome windows didn't open")
                 sys.exit(1) 
             else:

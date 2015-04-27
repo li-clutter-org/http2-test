@@ -21,7 +21,7 @@ LOGGING = {
             'format': '%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s'
         },
         'simple': {
-            'format': '%(levelname)s %(message)s'
+            'format': 'ONSTARTUP %(levelname)s %(message)s'
         },
     },
     'handlers': {
@@ -30,6 +30,7 @@ LOGGING = {
             'class':'logging.handlers.SysLogHandler',
             'formatter': 'simple',
             'facility': SysLogHandler.LOG_LOCAL2,
+            'address': '/dev/log'
         }
     },
     'loggers': {
@@ -55,12 +56,10 @@ def main():
                     ])
             status_code = p.wait()
         except Exception as x:
-            with open("/home/ubuntu/error_reason.txt", "a") as out:
-                out.write( str(x) )
-                out.write("\n" )
-        # Sleep a bit 
-        with open("/home/ubuntu/error_reason.txt", "a") as out:
-            out.write( str(status_code)+"\n" )
+            logger.exception("When executing browser resetter")
+        # Report the code
+        if status_code != 0:
+            logger.error("Resetter exited with code %d",  status_code)
         time.sleep(1)
         # And go for it again
 

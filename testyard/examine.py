@@ -72,3 +72,9 @@ for (i, e1) in zip( range(10), entries_lens(H1_json) ):
     print("    wait-time: ", wait_time, type(wait_time) )
     
 print_paragraph("""Looks like milliseconds""")
+
+#enterlens = lens("response", "content", "text")
+#for (i, e1) in zip( range(10), entries_lens(H2_json)):
+    #print("*")
+    #txt = enterlens(e1)
+    #print("    response_keys: ", type(txt),  txt)

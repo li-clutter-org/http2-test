@@ -336,7 +336,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                                 a1 = analysisStage .~ SentToTest_CAS $ old_state
                             alarm <- liftIO $ newAlarm 15000000 $ do 
                                 errorM "ResearchWorker" . builderToString $ " failed testing " `mappend` (Bu.byteString https_url)
-                                --writeChan kill_tester_browser ""
+                                writeChan kill_tester_browser hashid
                             return $ currentAlarm .~ alarm $ a1
                         let msg = WorkIndication hashid https_url
                         return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
@@ -359,12 +359,11 @@ researchWorkerComp (input_headers, maybe_source) = do
                             use_text = "Response processed"
                             hashid = resolve_center ^. rcName
 
-                        -- Okey, cancel the alarm first 
                         modifyUrlState hashid $ \ old_state -> do
                             liftIO $ cancelAlarm $ old_state ^. currentAlarm
-                            alarm <- liftIO $ newAlarm 15000000 $ do 
-                                errorM "ResearchWorker" . builderToString $ " failed forwarding " `mappend` (Bu.byteString test_url)
-                            return $ currentAlarm .~ alarm $ old_state
+                            -- TODO: An alarm must be set here, but we also need to cancel the alarm
+                            -- at some point, and so far that has not worked.
+                            return  old_state
 
                         -- Mark the state
                         liftIO $ markAnalysisStage hashid ReceivedFromHarvester_CAS base_research_dir
@@ -453,16 +452,21 @@ researchWorkerComp (input_headers, maybe_source) = do
 
             | req_url == "/dnsmasq/" , Just source <- maybe_source  -> do 
                 catch 
-                    (liftIO $ do
-                        received_version <- waitRequestBody source
-                        infoM "ResearchWorker" $ " .. updatednsmasq VERSION= " ++ (show received_version)
-                        -- Sends a DNSMASQ file to the test station ("StationB")
-                        infoM "ResearchWorker" ".. /dnsmasq/ asked"
-                        -- Serve the DNS masq file corresponding to the last .har file 
-                        -- received.
-                        dnsmasq_contents <- readChan next_dnsmasq_chan
-                        infoM "ResearchWorker" ".. /dnsmasq/ answers"
-                        infoM "ResearchWorker" $ "Sending " ++ (show dnsmasq_contents)
+                    (do
+                        dnsmasq_contents <- liftIO $ do
+                            received_version <- waitRequestBody source
+                            infoM "ResearchWorker" $ " .. updatednsmasq VERSION= " ++ (show received_version)
+                            -- Sends a DNSMASQ file to the test station ("StationB")
+                            infoM "ResearchWorker" ".. /dnsmasq/ asked"
+                            -- Serve the DNS masq file corresponding to the last .har file 
+                            -- received.
+                            dnsmasq_contents <- readChan next_dnsmasq_chan
+
+                            infoM "ResearchWorker" ".. /dnsmasq/ answers"
+                            infoM "ResearchWorker" $ "Sending " ++ (show dnsmasq_contents)
+
+                            return dnsmasq_contents
+                       
                         return $ simpleResponse 200 $ LB.toStrict $ Da.encode dnsmasq_contents
                     )
                     on_general_error

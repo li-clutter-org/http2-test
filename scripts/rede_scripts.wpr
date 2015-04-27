@@ -1,0 +1,57 @@
+#!wing
+#!version=5.0
+##################################################################
+# Wing IDE project file                                          #
+##################################################################
+[project attributes]
+debug.launch-configs = (1,
+                        {'launch-YObsmVBPzwgNtQy7': ({},
+        {'buildcmd': ('project',
+                      None),
+         'env': ('project',
+                 [u'']),
+         'name': 'examine',
+         'pyexec': ('project',
+                    u''),
+         'pypath': ('project',
+                    ''),
+         'pyrunargs': ('project',
+                       '-u'),
+         'runargs': u'',
+         'rundir': ('default',
+                    u'')}),
+                         'launch-zIFP1WHbbdqhWc7C': ({},
+        {'buildcmd': ('project',
+                      None),
+         'env': ('project',
+                 [u'']),
+         'name': 'st_login_test',
+         'pyexec': ('project',
+                    u''),
+         'pypath': ('project',
+                    ''),
+         'pyrunargs': ('project',
+                       '-u'),
+         'runargs': u'',
+         'rundir': ('default',
+                    u'')})})
+proj.directory-list = [{'dirloc': loc('.'),
+                        'excludes': (),
+                        'filter': u'*',
+                        'include_hidden': False,
+                        'recursive': True,
+                        'watch_for_changes': True},
+                       {'dirloc': loc('../testyard'),
+                        'excludes': (),
+                        'filter': u'*.py',
+                        'include_hidden': False,
+                        'recursive': True,
+                        'watch_for_changes': True}]
+proj.file-type = 'shared'
+proj.launch-config = {loc('st_login.py'): ('custom',
+        (u'',
+         'launch-zIFP1WHbbdqhWc7C')),
+                      loc('../testyard/examine.py'): ('custom',
+        (u'',
+         'launch-YObsmVBPzwgNtQy7'))}
+proj.main-file = loc('../testyard/examine.py')
