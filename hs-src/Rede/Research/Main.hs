@@ -5,9 +5,10 @@ module Rede.Research.Main(research) where
 import           Control.Concurrent           (forkIO)
 import           Control.Concurrent.Chan
 import           System.FilePath
-import qualified Data.ByteString              as B
+-- import qualified Data.ByteString              as B
 import           Data.ByteString.Char8        (pack)
 
+import           System.Log.Logger  
 import           Rede.MainLoop.ConfigHelp     (getCertFilename,
                                                getMimicPostInterface,
                                                getMimicPostPort,
@@ -25,7 +26,6 @@ research :: FilePath -> IO ()
 research mimic_dir  = do 
     let 
         mimic_config_dir = configDir mimic_dir
-    url_chan <- newChan
     resolve_center_chan <- newChan 
     finish_request_chan <- newChan
 
@@ -34,14 +34,14 @@ research mimic_dir  = do
     publishUrlToCaptureWebserver 
           mimic_dir
           mimic_config_dir 
-          url_chan 
           resolve_center_chan 
           finish_request_chan
 
 
-publishUrlToCaptureWebserver :: FilePath -> FilePath -> Chan B.ByteString -> Chan ResolveCenter -> Chan FinishRequest -> IO ()
-publishUrlToCaptureWebserver mimic_dir mimic_config_dir url_chan  resolve_center_chan finish_request_chan = do
+publishUrlToCaptureWebserver :: FilePath -> FilePath -> Chan ResolveCenter -> Chan FinishRequest -> IO ()
+publishUrlToCaptureWebserver mimic_dir mimic_config_dir resolve_center_chan finish_request_chan = do
     post_port <- getMimicPostPort mimic_config_dir
+    infoM "ResearchWorker" $ "Control port: " ++ (show post_port)
     iface <- getMimicPostInterface mimic_config_dir
     let 
         priv_key_filename = getPrivkeyFilename mimic_config_dir
@@ -49,7 +49,6 @@ publishUrlToCaptureWebserver mimic_dir mimic_config_dir url_chan  resolve_center
         research_dir = mimic_dir </> "hars/"
 
     http2worker <- runResearchWorker
-                       url_chan
                        resolve_center_chan
                        finish_request_chan
                        research_dir

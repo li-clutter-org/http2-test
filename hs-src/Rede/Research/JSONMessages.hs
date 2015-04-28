@@ -1,15 +1,26 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, TemplateHaskell, DeriveDataTypeable, FlexibleInstances #-}
+{-# LANGUAGE EmptyDataDecls,
+             MultiParamTypeClasses,
+             ScopedTypeVariables,
+             FunctionalDependencies,
+             OverlappingInstances,
+             FlexibleInstances,
+             UndecidableInstances #-}
 
 -- The purpose of this module is to have several types of messages that 
 -- can be exchanged with the outside world...
 
 module Rede.Research.JSONMessages(
-    SetNextUrl(..),
-    DnsMasqConfig(..)
+    hashOfJob 
+    ,workIndicationDatum
 
+    ,SetNextUrl(..)
+    ,DnsMasqConfig(..)
+    ,WorkIndication(..)
     ) where 
 
 
+import           Control.Lens.TH        (makeLenses)
 import           Control.Applicative
 import qualified Data.ByteString     as B
 -- import           Data.ByteString.Char8 (pack)
@@ -17,11 +28,11 @@ import qualified Data.ByteString     as B
 
 import           Data.Aeson          ()
 import           Data.Aeson.Types
+import           Data.Text           (Text)
 import           Data.Text.Encoding  (encodeUtf8, decodeUtf8)
 -- import           Data.Text.Decoding  (decodeUtf8)
 
-
-import           Rede.Utils          (SafeUrl, unSafeUrl)
+import           Rede.Research.JobId (HashId, unHashId)
 
 
 
@@ -34,14 +45,34 @@ instance FromJSON SetNextUrl where
     parseJSON (Object v) = SetNextUrl <$>
         (encodeUtf8 <$> v .: "url" )
 
-
 -- This is a controlled message to be sure that dnsmasq set 
 -- the correct DNS file for the current item in the pipeline.
-data DnsMasqConfig = DnsMasqConfig !SafeUrl !B.ByteString
+data DnsMasqConfig = DnsMasqConfig !HashId !B.ByteString
     deriving (Show, Eq)
 
 instance ToJSON DnsMasqConfig where 
-	toJSON (DnsMasqConfig safe_url file_contents) = object [
-		"analysis_id" .= (decodeUtf8 . unSafeUrl $ safe_url),
+	toJSON (DnsMasqConfig hashid file_contents) = object [
+		"analysis_id" .= (decodeUtf8 . unHashId  $ hashid),
 		"config_file" .= decodeUtf8 file_contents
 		]
+
+data WorkIndication a = WorkIndication {
+    _hashOfJob               :: HashId 
+    ,_workIndicationDatum    :: a
+    }
+
+makeLenses ''WorkIndication
+
+class (ToJSON b) => ToJSONInput a b | a -> b where 
+    toJSONInput :: a -> b
+
+instance ToJSONInput B.ByteString Text where 
+    toJSONInput a = decodeUtf8 a
+
+
+instance (ToJSONInput a b) => ToJSON (WorkIndication a) where 
+    toJSON (WorkIndication h datum) = object [
+        "analysis_id" .= (decodeUtf8 . unHashId $ h),
+        "datum"       .= (toJSONInput datum)
+        ]
+

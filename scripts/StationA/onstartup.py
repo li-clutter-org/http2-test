@@ -21,7 +21,7 @@ LOGGING = {
             'format': '%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s'
         },
         'simple': {
-            'format': '%(levelname)s %(message)s'
+            'format': 'ONSTARTUP %(levelname)s %(message)s'
         },
     },
     'handlers': {
@@ -30,6 +30,7 @@ LOGGING = {
             'class':'logging.handlers.SysLogHandler',
             'formatter': 'simple',
             'facility': SysLogHandler.LOG_LOCAL2,
+            'address': '/dev/log'
         }
     },
     'loggers': {
@@ -48,12 +49,18 @@ def main():
     logger.info("onstartup, invoking browser resetter")
     # sp.check_call(["xterm"])
     while True:
-        p  = sp.Popen([
-                "/home/ubuntu/browser_resetter/browser_resetter"
-                ])
-        p.wait()
-        # Sleep a bit 
-        time.sleep(1000)
+        status_code = 'none'
+        try:
+            p  = sp.Popen([
+                    "/home/ubuntu/browser_resetter/browser_resetter"
+                    ])
+            status_code = p.wait()
+        except Exception as x:
+            logger.exception("When executing browser resetter")
+        # Report the code
+        if status_code != 0:
+            logger.error("Resetter exited with code %d",  status_code)
+        time.sleep(1)
         # And go for it again
 
 

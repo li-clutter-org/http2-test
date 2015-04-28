@@ -18,6 +18,7 @@ module Rede.HarFiles.ServedEntry(
     ,rcName
     ,rcOriginalUrl
     ,handlesAtResolveCenter
+    ,artificialDelay
 
     ,ServedEntry  (..)
     ,ResolveCenter
@@ -47,11 +48,12 @@ import qualified Data.Set               as S
 -- import qualified Data.ByteString.Base64 as B64
 
 
-import           Rede.Utils             (lowercaseText, hashFromUrl)
-import           Rede.MainLoop.Tokens   (
-                                            UnpackedNameValueList(..)
-                                            , getHeader
-                                        )
+import           Rede.Research.JobId   (HashId)
+import           Rede.Utils            (lowercaseText)
+import           Rede.MainLoop.Tokens  (
+                                          UnpackedNameValueList(..)
+                                          , getHeader
+                                       )
 
 
 import Rede.HarFiles.JSONDataStructure 
@@ -84,6 +86,10 @@ data ServedEntry = ServedEntry {
 
     -- Let's just keep here the host 
     ,_sreHost :: !B.ByteString
+
+    -- And an artificial delay (in microseconds), to be calculated whenever it 
+    -- fits
+    ,_artificialDelay :: Int
     } 
 
 
@@ -96,7 +102,7 @@ data ResolveCenter = ResolveCenter {
     ,_allSeenHosts :: [B.ByteString]
 
     -- A unique name that can be used to identify this resolve center... 
-    ,_rcName :: B.ByteString
+    ,_rcName :: HashId
 
     -- The original url 
     ,_rcOriginalUrl :: B.ByteString
@@ -145,17 +151,15 @@ createResolveCenter har_document =
     ResolveCenter  
         (M.fromList resource_pairs) -- <- Creates a dictionary
         unduplicated_hosts
-        hash_piece
+        hash_id
         first_url
   where 
     har_log = har_document ^. harLogPR
+    hash_id = har_document ^. hashIdPR
     resource_pairs = extractPairs har_log
     all_seen_hosts = map (L.view ( L._2 . sreHost) ) resource_pairs 
     unduplicated_hosts = (S.toList . S.fromList) all_seen_hosts
-    
     first_url = har_document ^. originUrl 
-    hash_piece = hashFromUrl first_url
-
 
 
 -- createResolveCenterFromFilePath :: B.ByteString -> IO ResolveCenter
@@ -214,11 +218,12 @@ entryCanBeServed har_entry = http_method == "GET"
 
 docFromEntry :: Har_Entry -> Maybe (ResourceHandle, ServedEntry)
 docFromEntry e = do
-    entry <- servedEntryFromStatusHeadersAndContents
+    entry <- servedEntryFromBits
         (resp ^. status)
         (resp ^. respHeaders . L.to harHeadersToUVL)
         content_text
         the_url
+        artificial_delay
     return (
             handleFromMethodAndUrl
                 (req ^. method)
@@ -226,11 +231,20 @@ docFromEntry e = do
             , entry 
         )
   where 
-    the_url      = (req ^. reqUrl )
-    req          = e ^. request
-    resp         = e ^. response
-    content_text =  fromMaybe "" (resp ^. content . contentText )
-
+    the_url = (req ^. reqUrl )
+    req  = e ^. request
+    resp  = e ^. response
+    content_text = fromMaybe "" (resp ^. content . contentText )
+    artificial_delay = round $ (
+        0.9    -- To account for natural delays at HTTP/2
+        * 1000 -- To take from milliseconds to microseconds 
+        ) * (
+               ( e ^. timings . send) 
+               +
+               ( e ^. timings . wait)
+               +
+               ( e ^. timings . receive)
+            )
 
 -- This not only changes format, it also lower-cases header names. 
 -- I do this as a way of normalizing them... 
@@ -260,17 +274,18 @@ handleFromMethodAndUrl methodx url =
       }
 
 
-servedEntryFromStatusHeadersAndContents :: Int
+servedEntryFromBits :: Int
     -> UnpackedNameValueList 
     -> B.ByteString 
     -> B.ByteString
+    -> Int
     -> Maybe ServedEntry
-servedEntryFromStatusHeadersAndContents statusx unvl contents the_url = do
+servedEntryFromBits statusx unvl contents the_url artificial_delay = do
     uri <- parseURI $ unpack the_url
     auth <- uriAuthority uri 
     let 
         host_of_url = pack $ uriRegName auth 
-        preliminar = ServedEntry statusx unvl contents host_of_url
+        preliminar = ServedEntry statusx unvl contents host_of_url artificial_delay
 
     return $ heedContentTypeAndDecode preliminar
   -- where 
@@ -287,8 +302,14 @@ contentsAreBinary content_type =
     binary_content_types 
   where 
     binary_content_types = S.fromList [
-        "image/png",
-        "image/jpg"
+        "image/png"                ,
+        "image/jpg"                ,
+        "font/woff2"               ,
+        "application/octet-stream" ,
+        "image/gif"                ,
+        "image/bmp"                ,
+        "image/jpg"                ,
+        "audio/mpeg"
         ]
 
 

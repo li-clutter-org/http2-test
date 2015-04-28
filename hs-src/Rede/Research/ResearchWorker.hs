@@ -63,16 +63,16 @@ import           Rede.MainLoop.ConfigHelp        (configDir, getInterfaceName,
 import           Rede.MainLoop.OpenSSL_TLS       (FinishRequest (..), tlsServeWithALPNAndFinishOnRequest)
 import           Rede.Utils.ConcatConduit        (concatConduit)
 import           Rede.Utils.PrintfArgByteString  ()
-import           Rede.Utils                      (hashSafeFromUrl, unSafeUrl, SafeUrl, unSafeUrl, safeUrlFromByteStringWhichIsAlreadyAHashedUrl)
 import           Rede.Utils.Alarm                
 import           Rede.Utils.JustOneMakesSense
 import           Rede.Workers.HarWorker          (harCoherentWorker)
-import           Rede.Research.JSONMessages      (SetNextUrl(..), DnsMasqConfig(..))
+
+import           Rede.Research.JobId             (HashId(..), UrlJobId, jobIdFromUrl, 
+                                                  lnOriginalUrl, hashidFromJobId)
+import           Rede.Research.JSONMessages      (SetNextUrl(..), DnsMasqConfig(..), WorkIndication(..))
 
 
 type HashTable k v = H.CuckooHashTable k v
-
-
 
 data CurrentAnalysisStage = 
     AnalysisRequested_CAS
@@ -83,6 +83,10 @@ data CurrentAnalysisStage =
     |Done_CAS
 
 
+-- TODO: Check that we really don't need the hashid at this stage...
+data ReadinessPing = ReadinessPing
+
+
 -- Time to wait before unleashing an alarm... 
 timeForAlarm :: Int 
 timeForAlarm = 40000000
@@ -91,8 +95,8 @@ timeForAlarm = 40000000
 -- This state structure follows a given URL analysis. 
 -- You can find a dictionary of these in the structure below...
 data UrlState = UrlState {
-    -- _completeUrl     :: B.ByteString
-    _analysisStage  :: CurrentAnalysisStage
+    _urlJobIdAtState :: UrlJobId
+    ,_analysisStage   :: CurrentAnalysisStage
     ,_currentAlarm   :: Alarm ()
     }
 
@@ -102,21 +106,21 @@ L.makeLenses ''UrlState
 
 data ServiceState = ServiceState {
     -- Put one here, let it run through the pipeline...
-    _nextHarvestUrl          :: Chan B.ByteString
+    _nextHarvestUrl              :: Chan HashId
 
     -- To be passed on to StationB
-    ,_nextTestUrl            :: Chan B.ByteString
+    ,_nextTestUrl                :: Chan HashId
 
     -- To be passed from the har files receiver (from StationA)
     -- to the DNSMasq checker...Contains urls
-    ,_nextTestUrlToCheck     :: Chan B.ByteString
+    , _nextTestUrlToCheck        :: Chan HashId
 
     -- Files to be handed out to DNSMasq
-    , _nextDNSMasqFile       :: Chan DnsMasqConfig
+    , _nextDNSMasqFile           :: Chan DnsMasqConfig
 
-    , _resolveCenterChan     :: Chan ResolveCenter
+    , _resolveCenterChan         :: Chan ResolveCenter
 
-    , _finishRequestChan        :: Chan FinishRequest
+    , _finishRequestChan         :: Chan FinishRequest
 
     -- Goes between the browser resetter and the next url call. 
     -- We pass the url to load through here just to be sure....
@@ -124,35 +128,36 @@ data ServiceState = ServiceState {
     -- The logic for "starts" is that we write to it when we want
     -- the browser started, then we read from it to start it, and 
     -- then put the url in the next step.
-    , _startHarvesterBrowserChan:: Chan B.ByteString
+    , _startHarvesterBrowserChan :: Chan HashId
 
     -- Order sent to the browser resetter of anyquilating the current
     -- Chrome instance. We write to this one as soon as we want to kill
     -- the browser, and then read from it when we are ready to go to the 
     -- next step.
-    , _killHarvesterBrowserChan :: Chan B.ByteString
+    , _killHarvesterBrowserChan  :: Chan HashId
 
-    , _startTesterBrowserChan   :: Chan B.ByteString
+    , _startTesterBrowserChan    :: Chan HashId
     
-    , _killTesterBrowserChan    :: Chan B.ByteString
+    , _killTesterBrowserChan     :: Chan HashId
 
-    , _testerReadyChan           :: Chan B.ByteString
+    -- TODO: Is this the best idiom to use?
+    , _testerReadyChan           :: Chan ReadinessPing
 
-    , _harvesterReadyChan        :: Chan B.ByteString
+    , _harvesterReadyChan        :: Chan ReadinessPing
 
     -- The "Research dir" is the "hars" subdirectory of the mimic
     -- scratch directory. 
-    , _researchDir              :: FilePath 
+    , _researchDir               :: FilePath 
 
     -- The IP address that StationB needs to connect
-    , _useAddressForStationB :: B.ByteString
+    , _useAddressForStationB     :: B.ByteString
 
     -- The state of each URL 
-    , _urlState              :: HashTable SafeUrl UrlState
+    , _urlState                  :: HashTable HashId UrlState
 
-    , _nextUrlAsked          :: JustOneMakesSense
+    , _nextUrlAsked              :: JustOneMakesSense
 
-    , _testUrlAsked          :: JustOneMakesSense 
+    , _testUrlAsked              :: JustOneMakesSense 
     }
 
 
@@ -163,22 +168,22 @@ type ServiceStateMonad = ReaderT ServiceState IO
 
 
 runResearchWorker :: 
-    Chan B.ByteString 
-    -> Chan ResolveCenter 
+    Chan ResolveCenter 
     -> Chan FinishRequest 
     -> FilePath                -- Research dir
     -> B.ByteString
     -> IO CoherentWorker
-runResearchWorker url_chan resolve_center_chan finish_request_chan research_dir use_address_for_station_b = do 
+runResearchWorker resolve_center_chan finish_request_chan research_dir use_address_for_station_b = do 
 
-    liftIO $ infoM "ResearchWorker" "Starting research worker"
+    liftIO $ debugM "ResearchWorker" "(on research worker)"
 
-    next_test_url_chan               <- newChan          -- <-- Goes from the dnsmasq response handler 
-    next_test_url_to_check_chan      <- newChan -- <-- Goes to the dnsmasq response handler
-    next_dns_masq_file               <- newChan
+    next_harvest_url_chan         <- newChan
+    next_test_url_chan            <- newChan -- <-- Goes from the dnsmasq response handler 
+    next_test_url_to_check_chan   <- newChan -- <-- Goes to the dnsmasq response handler
+    next_dns_masq_file            <- newChan
 
-    start_harvester_browser          <- newChan
-    kill_harvester_browser           <- newChan
+    start_harvester_browser       <- newChan
+    kill_harvester_browser        <- newChan
 
     start_tester_browser          <- newChan
     kill_tester_browser           <- newChan
@@ -193,7 +198,7 @@ runResearchWorker url_chan resolve_center_chan finish_request_chan research_dir 
 
     let     
         state = ServiceState {
-             _nextHarvestUrl              = url_chan
+             _nextHarvestUrl              = next_harvest_url_chan
             ,_nextTestUrl                 = next_test_url_chan
             ,_nextTestUrlToCheck          = next_test_url_to_check_chan
             ,_nextDNSMasqFile             = next_dns_masq_file
@@ -226,7 +231,7 @@ researchWorkerComp (input_headers, maybe_source) = do
     finish_chan                   <- L.view finishRequestChan 
     base_research_dir             <- L.view researchDir
     use_address_for_station_b     <- L.view useAddressForStationB
-    url_state_hash                <- L.view urlState
+    url_state_hashtable           <- L.view urlState
     test_url_asked                <- L.view testUrlAsked
     next_url_asked                <- L.view nextUrlAsked
 
@@ -247,64 +252,64 @@ researchWorkerComp (input_headers, maybe_source) = do
         -- the state of this program... 
         Post_RM 
             | req_url == "/nexturl/" -> doJOMS next_url_asked 
-                    (
-                        do 
-                            -- Starts harvesting of a resource... this request is made by StationA
-                            liftIO $ do 
-                                infoM "ResearchWorker" ".. /nexturl/ asked "
-                                my_thread <- myThreadId
-                                infoM "ResearchWorker" $ "waiting on thread " ++ (show my_thread)
+                (
+                    do 
+                        -- Starts harvesting of a resource... this request is made by StationA
+                        liftIO $ do 
+                            infoM "ResearchWorker" ".. /nexturl/ asked "
+                            my_thread <- myThreadId
+                            infoM "ResearchWorker" $ "waiting on thread " ++ (show my_thread)
 
-                            url <- 
-                                catch
-                                    (liftIO $ do 
-                                        -- First we wait for a notification about the browser being ready
-                                        readChan harvester_ready
-                                        -- And then we give out the next url to scan...
-                                        readChan next_harvest_url
-                                    )
-                                    on_url_wait_interrupted
-                            liftIO $ infoM "ResearchWorker" .  builderToString $ "..  /nexturl/" `mappend` " answer " `mappend` (Bu.byteString url) `mappend` " "
+                        hashid <- 
+                            catch
+                                (liftIO $ do 
+                                    -- First we wait for a notification about the browser being ready
+                                    readChan harvester_ready
+                                    -- And then we give out the next url to scan...
+                                    readChan next_harvest_url
+                                )
+                                on_url_wait_interrupted
+                        url <- urlFromHashId hashid
+                        liftIO $ infoM "ResearchWorker" .  builderToString $ "..  /nexturl/" `mappend` " answer " `mappend` (Bu.byteString url) `mappend` " "
+                        liftIO $ markAnalysisStage hashid SentToHarvester_CAS base_research_dir
+
+                        -- Mark it as sent...
+                        modifyUrlState hashid $ \ old_state -> do 
+                            -- Set an alarm here also...this alarm should be disabled when a .har file comes....
+                            liftIO $ cancelAlarm $ old_state ^. currentAlarm
                             let 
-                                url_hash = hashSafeFromUrl url
-                            liftIO $ markState url_hash SentToHarvester_CAS base_research_dir
+                                a1 = analysisStage .~ SentToHarvester_CAS $ old_state
+                            alarm <- liftIO $ newAlarm timeForAlarm $ do 
+                                markAnalysisStage hashid SystemCancelled_CAS base_research_dir
+                                errorM "ResearchWorker" . builderToString $ " failed harvesting " `mappend` (Bu.byteString req_url) `mappend` " (timeout) "
+                                writeChan kill_harvester_browser hashid
+                                errorM "ResearchWorker" " ... harvester browser asked killed "
+                            let
+                                a2 = currentAlarm .~ alarm $ a1
+                            return a2 
 
-                            -- Mark it as sent...
-                            modifyUrlState (hashSafeFromUrl url) $ \ old_state -> do 
-                                -- Set an alarm here also...this alarm should be disabled when a .har file comes....
-                                liftIO $ cancelAlarm $ old_state ^. currentAlarm
-                                let 
-                                    a1 = analysisStage .~ SentToHarvester_CAS $ old_state
-                                alarm <- liftIO $ newAlarm timeForAlarm $ do 
-                                    markState url_hash SystemCancelled_CAS base_research_dir
-                                    errorM "ResearchWorker" . builderToString $ " failed harvesting " `mappend` (Bu.byteString req_url) `mappend` " (timeout) "
-                                    writeChan kill_harvester_browser ""
-                                    errorM "ResearchWorker" " ... harvester browser asked killed "
-                                let
-                                    a2 = currentAlarm .~ alarm $ a1
-                                return a2 
-
-                            -- And finally return.
-                            return $ simpleResponse 200 url 
-                    ) (
-                        do 
-                            -- Somebody asked too many times, say it
-                            liftIO $ errorM "ResearchWorker" ".. /nexturl/ asked too many times, returning 501"
-                            return $ simpleResponse 501 "Asked too many times"
-                    )
+                        -- And finally return.
+                        let msg = WorkIndication hashid url
+                        return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
+                ) (
+                    do 
+                        -- Somebody asked too many times, say it
+                        liftIO $ errorM "ResearchWorker" ".. /nexturl/ asked too many times, returning 501"
+                        return $ simpleResponse 501 "Asked too many times"
+                )
                        
             | req_url == "/browserready/StationA" -> do 
                 -- Check when we can proceed
                 liftIO $ do 
                     infoM "ResearchWorker" ".. /browserready/StationA/"
-                    writeChan harvester_ready ""
+                    writeChan harvester_ready ReadinessPing
                 return $ simpleResponse 200 "Ok"
 
             | req_url == "/browserready/StationB" -> do 
                 -- Check when we can proceed
                 liftIO $ do 
                     infoM "ResearchWorker" ".. /browserready/StationB/"
-                    writeChan tester_ready ""
+                    writeChan tester_ready ReadinessPing
                 return $ simpleResponse 200 "Ok"
 
             | req_url == "/testurl/" -> doJOMS test_url_asked (
@@ -312,28 +317,29 @@ researchWorkerComp (input_headers, maybe_source) = do
                     do 
                         -- Sends the next test url to the Chrome extension, this starts processing by 
                         -- StationB... the request is started by StationB and we send the url in the response...
-                        (url_hash, url) <- liftIO $ do
+                        hashid <- liftIO $ do
                             -- Wait for readiness indication in the browser
                             readChan tester_ready
                             -- And then snatch the url.... 
-                            url <- readChan next_test_url_chan
-                            infoM "ResearchWorker" . builderToString $ "..  /testurl/ answered with " `mappend` (Bu.byteString url)
-                            let 
-                                url_hash = (hashSafeFromUrl url)
-                            -- Mark the new state 
-                            markState url_hash SentToTest_CAS base_research_dir
-                            return (url_hash,url)
+                            readChan next_test_url_chan
+                        anyschema_url <-  urlFromHashId hashid
+                        let https_url = urlToHTTPSScheme anyschema_url
+                        liftIO $ do
+                            infoM "ResearchWorker" . builderToString $ "..  /testurl/ answered with " `mappend` (Bu.byteString https_url)
+                            -- Mark the new stage 
+                            markAnalysisStage hashid SentToTest_CAS base_research_dir
 
-                        modifyUrlState url_hash $ \ old_state -> do 
+                        modifyUrlState hashid $ \ old_state -> do 
                             -- This alarm should be disabled by the http2har file
                             liftIO $ cancelAlarm $ old_state ^. currentAlarm
                             let 
                                 a1 = analysisStage .~ SentToTest_CAS $ old_state
                             alarm <- liftIO $ newAlarm 15000000 $ do 
-                                errorM "ResearchWorker" . builderToString $ " failed testing " `mappend` (Bu.byteString url)
-                                writeChan kill_tester_browser ""
+                                errorM "ResearchWorker" . builderToString $ " failed testing " `mappend` (Bu.byteString https_url)
+                                writeChan kill_tester_browser hashid
                             return $ currentAlarm .~ alarm $ a1
-                        return $ simpleResponse 200 url
+                        let msg = WorkIndication hashid https_url
+                        return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
                 ) (
                     -- Problems spotted
                     do
@@ -342,7 +348,6 @@ researchWorkerComp (input_headers, maybe_source) = do
                 ) 
 
             | req_url == "/har/", Just source <- maybe_source -> do
-
                 -- Receives a .har object from the harvest station ("StationA"), and 
                 -- makes all the arrangements for it to be tested using HTTP 2
                 liftIO $ infoM "ResearchWorker" "..  /har/"
@@ -352,17 +357,16 @@ researchWorkerComp (input_headers, maybe_source) = do
                         let 
                             test_url = resolve_center ^. rcOriginalUrl
                             use_text = "Response processed"
-                            analysis_id = hashSafeFromUrl test_url
+                            hashid = resolve_center ^. rcName
 
-                        -- Okey, cancel the alarm first 
-                        modifyUrlState analysis_id $ \ old_state -> do
+                        modifyUrlState hashid $ \ old_state -> do
                             liftIO $ cancelAlarm $ old_state ^. currentAlarm
-                            alarm <- liftIO $ newAlarm 15000000 $ do 
-                                errorM "ResearchWorker" . builderToString $ " failed forwarding " `mappend` (Bu.byteString test_url)
-                            return $ currentAlarm .~ alarm $ old_state
+                            -- TODO: An alarm must be set here, but we also need to cancel the alarm
+                            -- at some point, and so far that has not worked.
+                            return  old_state
 
                         -- Mark the state
-                        liftIO $ markState analysis_id ReceivedFromHarvester_CAS base_research_dir
+                        liftIO $ markAnalysisStage hashid ReceivedFromHarvester_CAS base_research_dir
                         
 
                         -- Create the contents to go in the dnsmasq file, and queue them 
@@ -371,10 +375,10 @@ researchWorkerComp (input_headers, maybe_source) = do
                             dnsmasq_contents = dnsMasqFileContentsToIp use_address_for_station_b all_seen_hosts 
 
                         liftIO $ do
-                            writeChan next_dnsmasq_chan $! DnsMasqConfig analysis_id dnsmasq_contents
+                            writeChan next_dnsmasq_chan $! DnsMasqConfig hashid dnsmasq_contents
 
                             -- We also need to queue the url somewhere to be checked by the dnsmasqupdated entrypoint
-                            writeChan kill_harvester_browser $ urlToHTTPSScheme test_url
+                            writeChan kill_harvester_browser hashid
 
                             -- And the resolve center to be used by the serving side
                             writeChan resolve_center_chan resolve_center
@@ -382,7 +386,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                             -- We can also use this opportunity to create a folder for this research 
                             -- project 
                             let 
-                                scratch_folder = (base_research_dir) </> (resolve_center ^. rcName . L.to unpack)
+                                scratch_folder = (base_research_dir) </> (unpack . unHashId $ hashid)
                                 har_filename = scratch_folder </> "harvested.har"
                             createDirectoryIfMissing True scratch_folder
                             LB.writeFile har_filename har_file_contents
@@ -391,50 +395,27 @@ researchWorkerComp (input_headers, maybe_source) = do
                     )
                     on_bad_har_file
 
-            | req_url == "/startbrowser/StationA" -> do 
-                -- This token has no meaning 
-                let startToken = "KDDFQ"
-
-                -- Ensure start
-                liftIO $ do
-                    infoM "ResearchWorker" " .. /startbrowser/StationA"
-                    readChan start_harvester_browser
-
-                return $ simpleResponse 200 startToken 
+            | req_url == "/startbrowser/StationA" -> 
+                unQueueStartBrowser "/startbrowser/StationA" start_harvester_browser
 
             | req_url == "/killbrowser/StationA" -> do 
-                -- StationA refers to the harvester....
-                let endToken = "EAJ"
-                liftIO $ do 
-                    -- Let's wait a second before killing the process....
-                    infoM "ResearchWorker" " .. /killbrowser/StationA"
-                    threadDelay 1000000
-                    -- There is an url being returned from here, but we don't need it... 
-                    readChan kill_harvester_browser
-                    infoM "ResearchWorker" " .. StationA browser cleared for killing"
-
-                return $ simpleResponse 200 endToken
+                unQueueKillBrowser "/killbrowser/StationA" kill_harvester_browser
 
             | req_url == "/startbrowser/StationB" -> do 
-                let startToken = "KDDFQ"
-                liftIO $ do 
-                    infoM "ResearchWorker" " .. /startbrowser/StationB"
-                    -- Ensure start... next read returns url, but I'm not 
-                    -- very interested on it....
-                    liftIO $ readChan start_tester_browser
-
-                return $ simpleResponse 200 startToken 
+                unQueueStartBrowser "/startbrowser/StationB" start_tester_browser
 
             | req_url == "/killbrowser/StationB" -> do 
-                let endToken = "EAJ"
-                liftIO $ do 
-                    -- Let's wait a second before killing the process....
-                    infoM "ResearchWorker" " .. /killbrowser/StationB"
-                    threadDelay 1000000
-                    -- There is an url being returned from here, but we don't need it... 
-                    readChan kill_tester_browser
+                unQueueKillBrowser "/killbrowser/StationB" kill_tester_browser
 
-                return $ simpleResponse 200 endToken
+                -- let endToken = "EAJ"
+                -- liftIO $ do 
+                --     -- Let's wait a second before killing the process....
+                --     infoM "ResearchWorker" " .. /killbrowser/StationB"
+                --     threadDelay 1000000
+                --     -- There is an url being returned from here, but we don't need it... 
+                --     readChan kill_tester_browser
+
+                -- return $ simpleResponse 200 endToken
 
 
             | req_url == "/http2har/", Just source <- maybe_source -> do
@@ -445,27 +426,25 @@ researchWorkerComp (input_headers, maybe_source) = do
                     (do
                         (resolve_center,  har_contents_lb) <- liftIO $ output_computation source
                         let 
-                            test_url = resolve_center ^. rcOriginalUrl
                             use_text = "Response processed"
-                            url_hash = hashSafeFromUrl test_url
+                            hashid = resolve_center ^. rcName
                         let 
-                            scratch_folder = base_research_dir </> (unpack (resolve_center ^. rcName ) )
+                            scratch_folder = base_research_dir </> (unpack . unHashId $ hashid)
                             har_filename = scratch_folder </> "test_http2.har"
                         liftIO $ LB.writeFile har_filename har_contents_lb
 
-
                         -- Okey, cancel the alarm  
-                        modifyUrlState  url_hash $ \ old_state -> do
+                        modifyUrlState  hashid $ \ old_state -> do
                             liftIO $ cancelAlarm $ old_state ^. currentAlarm
                             return old_state
 
                         -- And finish the business
                         liftIO $ do
                             writeChan finish_chan FinishRequest
-                            writeChan kill_tester_browser test_url
+                            writeChan kill_tester_browser hashid
 
                         -- Mark the state 
-                        liftIO $ markState url_hash Done_CAS base_research_dir
+                        liftIO $ markAnalysisStage hashid Done_CAS base_research_dir
 
                         return $ simpleResponse 200 use_text
                     )
@@ -473,16 +452,21 @@ researchWorkerComp (input_headers, maybe_source) = do
 
             | req_url == "/dnsmasq/" , Just source <- maybe_source  -> do 
                 catch 
-                    (liftIO $ do
-                        received_version <- waitRequestBody source
-                        infoM "ResearchWorker" $ " .. updatednsmasq VERSION= " ++ (show received_version)
-                        -- Sends a DNSMASQ file to the test station ("StationB")
-                        infoM "ResearchWorker" ".. /dnsmasq/ asked"
-                        -- Serve the DNS masq file corresponding to the last .har file 
-                        -- received.
-                        dnsmasq_contents <- readChan next_dnsmasq_chan
-                        infoM "ResearchWorker" ".. /dnsmasq/ answers"
-                        infoM "ResearchWorker" $ "Sending " ++ (show dnsmasq_contents)
+                    (do
+                        dnsmasq_contents <- liftIO $ do
+                            received_version <- waitRequestBody source
+                            infoM "ResearchWorker" $ " .. updatednsmasq VERSION= " ++ (show received_version)
+                            -- Sends a DNSMASQ file to the test station ("StationB")
+                            infoM "ResearchWorker" ".. /dnsmasq/ asked"
+                            -- Serve the DNS masq file corresponding to the last .har file 
+                            -- received.
+                            dnsmasq_contents <- readChan next_dnsmasq_chan
+
+                            infoM "ResearchWorker" ".. /dnsmasq/ answers"
+                            infoM "ResearchWorker" $ "Sending " ++ (show dnsmasq_contents)
+
+                            return dnsmasq_contents
+                       
                         return $ simpleResponse 200 $ LB.toStrict $ Da.encode dnsmasq_contents
                     )
                     on_general_error
@@ -491,26 +475,14 @@ researchWorkerComp (input_headers, maybe_source) = do
                 -- Received  advice that everything is ready to proceed
                 liftIO $ do 
                     received_id <- waitRequestBody source
+                    -- Ensure any in-system changes get enough time to propagate
                     threadDelay 2000000
-                    test_url <- readChan next_test_url_to_check_chan  
-
+                    testurl_hashid <- readChan next_test_url_to_check_chan  
                     infoM "ResearchWorker" $ "Dnsmasqupdated received " ++ (show received_id)
-                    infoM "ResearchWorker" $ "and test_url has hash " ++ (show (hashSafeFromUrl test_url) )
-                    -- Now compare that these two have the same id .... 
-                    if (safeUrlFromByteStringWhichIsAlreadyAHashedUrl received_id) == (hashSafeFromUrl test_url) 
-                      then 
-                        infoM "ResearchWorker" $ "Dnsmasqupdated matched urls (for " ++ (show test_url) ++ " )"
-                      else 
-                        -- This is a very bad thing
-                        errorM "ResearchWorker" $ "Dnsmasqupdated could not match urls (for " ++ (show test_url) ++ " )"
-
+                    infoM "ResearchWorker" $ "and test_url has hash "   ++ (show testurl_hashid )
                     -- Write the url to the queue so that /testurl/ can return when seeing this value 
-                    let 
-                        https_url = urlToHTTPSScheme test_url
-
-                    writeChan next_test_url_chan https_url
-
-                    writeChan start_tester_browser https_url
+                    writeChan next_test_url_chan testurl_hashid
+                    writeChan start_tester_browser testurl_hashid
 
                 return $ simpleResponse 200 $ "ok"
 
@@ -521,31 +493,34 @@ researchWorkerComp (input_headers, maybe_source) = do
                     url_to_analyze = case Da.decode . LB.fromStrict $ url_or_json_to_analyze of 
                         Just (SetNextUrl x)  -> x 
                         Nothing              -> url_or_json_to_analyze
-                let 
-                    job_descriptor = hashSafeFromUrl url_to_analyze
+
+                -- Ojivas are launched at this point, so let it be IO
+                url_job_id <- liftIO $ jobIdFromUrl url_to_analyze
+                let hashid = hashidFromJobId url_job_id
+
                 alarm <- liftIO $ newAlarm 25000000 $ do 
                     errorM "ResearchWorker" . builderToString $ 
                         "Job for url " `mappend` (Bu.byteString url_to_analyze) `mappend` " still waiting... "
-                    markState job_descriptor SystemCancelled_CAS base_research_dir
+                    markAnalysisStage hashid SystemCancelled_CAS base_research_dir
                 let 
-                    new_url_state = UrlState AnalysisRequested_CAS alarm
+                    new_url_state = UrlState url_job_id AnalysisRequested_CAS alarm
 
                 liftIO $ do
                     H.insert 
-                        url_state_hash job_descriptor new_url_state 
+                        url_state_hashtable hashid new_url_state 
                     infoM "ResearchWorker" . builderToString $ 
                         ".. /setnexturl/ asked " `mappend` (Bu.byteString url_to_analyze)
 
 
-                    writeChan next_harvest_url url_to_analyze
+                    writeChan next_harvest_url hashid
 
-                    writeChan start_harvester_browser url_to_analyze
+                    writeChan start_harvester_browser hashid
 
-                    writeChan next_test_url_to_check_chan  url_to_analyze
+                    writeChan next_test_url_to_check_chan  hashid
 
-                    markState job_descriptor AnalysisRequested_CAS base_research_dir
+                    markAnalysisStage hashid AnalysisRequested_CAS base_research_dir
 
-                return $ simpleResponse 200 (unSafeUrl job_descriptor)
+                return $ simpleResponse 200 (unHashId hashid)
 
             | otherwise     -> do 
                 return $ simpleResponse 500 "Can't handle url and method"
@@ -589,6 +564,41 @@ researchWorkerComp (input_headers, maybe_source) = do
                 return b
 
 
+unQueueStartBrowser :: B.ByteString -> Chan HashId -> ServiceStateMonad PrincipalStream
+unQueueStartBrowser log_url chan_to_read = 
+  do 
+    -- Ensure start
+    bs_hashid <- liftIO $ do
+        infoM "ResearchWorker" (unpack $ B.append "start browser asked .. " log_url)
+        hashid <- readChan chan_to_read
+        let bs_hashid = unHashId hashid
+        infoM "ResearchWorker" (unpack $ B.concat ["start browser delivered .. ", log_url, " ", bs_hashid ])
+        return bs_hashid
+
+    return $ simpleResponse 200 $ B.append "hashid=" bs_hashid
+
+
+unQueueKillBrowser :: B.ByteString -> Chan HashId -> ServiceStateMonad PrincipalStream
+unQueueKillBrowser log_url chan_to_read = do 
+    -- StationA refers to the harvester....
+    hashid <- liftIO $ do 
+        -- Let's wait a second before killing the process....
+        infoM "ResearchWorker" $ unpack $ B.append " .. " log_url
+        hashid <- readChan chan_to_read
+        infoM "ResearchWorker" $ unpack $ B.append log_url " cleared for killing"
+        return hashid
+
+    return $ simpleResponse 200 $ B.append "hashid=" (unHashId hashid)
+
+
+urlFromHashId :: HashId -> ServiceStateMonad B.ByteString
+urlFromHashId hashid = do 
+    url_state_hashtable <- L.view urlState
+    -- Pattern matching fails here and we are in deep trouble...
+    Just state <- liftIO $ H.lookup url_state_hashtable hashid
+    return $ state ^. ( urlJobIdAtState . lnOriginalUrl )
+
+
 -- And here for when we need to fork a server to load the .har file from 
 spawnHarServer :: FilePath -> Chan ResolveCenter -> Chan  FinishRequest -> IO ()
 spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do 
@@ -615,10 +625,10 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
 
             resolve_center <- readChan resolve_center_chan
 
-            infoM "ResearchWorker.SpawnHarServer" $ printf ".. START for resolve center %s" (resolve_center ^. rcName)
+            infoM "ResearchWorker.SpawnHarServer" $ printf ".. START for resolve center %s" (show $ resolve_center ^. rcName)
 
             let 
-                har_filename = unpack $ resolve_center ^. rcName 
+                har_filename = unpack . unHashId $ resolve_center ^. rcName 
                 priv_key_filename = privKeyFilename mimic_dir har_filename
                 cert_filename  = certificateFilename mimic_dir har_filename
                 host_list = resolve_center ^. allSeenHosts
@@ -639,7 +649,7 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
                  -- TODO: Let the user select HTTP/1.1 from time to time...
                 ] port finish_request_mvar
             -- 
-            infoM "ResearchWorker.SpawnHarServer" $ printf ".. FINISH for resolve center %s" (resolve_center ^. rcName)
+            infoM "ResearchWorker.SpawnHarServer" $ printf ".. FINISH for resolve center %s" (show $ resolve_center ^. rcName)
             serveWork 
 
     serveWork
@@ -751,7 +761,7 @@ builderToString :: Bu.Builder -> String
 builderToString =  Lch.unpack . Bu.toLazyByteString
 
 
-modifyUrlState :: SafeUrl -> (UrlState -> ServiceStateMonad UrlState) -> ServiceStateMonad ()
+modifyUrlState :: HashId -> (UrlState -> ServiceStateMonad UrlState) -> ServiceStateMonad ()
 modifyUrlState key mutator = do 
     h  <- L.view urlState
     vv <- liftIO $ H.lookup h key
@@ -761,37 +771,42 @@ modifyUrlState key mutator = do
             liftIO $ H.insert h key new_value
 
         Nothing -> do
-            liftIO $ warningM "ResearchWorker" $  builderToString $ "Trying to modify state of non-seen url job " `mappend` (Bu.byteString . unSafeUrl $ key)
+            -- Can this even happen by accident?
+            liftIO 
+                $ warningM "ResearchWorker" 
+                $ builderToString 
+                $ "Trying to modify state of non-seen url job " `mappend` 
+                  (Bu.byteString . unHashId $ key)
 
 
-markState :: SafeUrl -> CurrentAnalysisStage -> FilePath -> IO ()
-markState safe_url current_analysis_stage research_dir = do 
+markAnalysisStage :: HashId -> CurrentAnalysisStage -> FilePath -> IO ()
+markAnalysisStage url_hash current_analysis_stage research_dir = do 
     let 
-        url_hash = unSafeUrl safe_url
-        scratch_dir = research_dir </> (unpack url_hash)
+        hash_bs = unHashId url_hash
+        scratch_dir = research_dir </> (unpack hash_bs)
     createDirectoryIfMissing True scratch_dir
-    eraseStatusFiles safe_url research_dir
+    eraseStatusFiles url_hash research_dir
     let 
         percent:: Int
         (status_fname, percent) = case current_analysis_stage of 
             AnalysisRequested_CAS      -> ("status.processing", 5)
             SentToHarvester_CAS        -> ("status.processing", 20)
-            ReceivedFromHarvester_CAS  -> ("status.processing", 35)
-            SentToTest_CAS             -> ("status.processing", 55)
+            ReceivedFromHarvester_CAS  -> ("status.processing", 45)
+            SentToTest_CAS             -> ("status.processing", 65)
             SystemCancelled_CAS        -> ("status.failed", 0)
             Done_CAS                   -> ("status.done", 100)
         file_location = scratch_dir  </> status_fname 
     (withFile file_location WriteMode $ \ handle -> hPutStr handle (show percent))
 
 
-eraseStatusFiles :: SafeUrl -> FilePath -> IO ()
-eraseStatusFiles safe_url research_dir = do 
+eraseStatusFiles :: HashId -> FilePath -> IO ()
+eraseStatusFiles url_hash research_dir = do 
     let 
-        url_hash = unSafeUrl safe_url
+        hash_bs = unHashId url_hash
     mapM_ (
         \ end_name -> do 
             let 
-                complete_name = research_dir </> (unpack url_hash) </> end_name
+                complete_name = research_dir </> (unpack hash_bs) </> end_name
             removeIfExists complete_name
         )
         fileNames

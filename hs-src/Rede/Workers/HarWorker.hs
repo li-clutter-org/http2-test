@@ -40,11 +40,6 @@ import           Rede.Workers.VeryBasic       (bad404ResponseData,
                                                bad404ResponseHeaders)
 
 
--- TODO: We need a better way to taylor an additional delay.
--- This number represents an artificial latency.
-additionalDelay :: Int
-additionalDelay = 20000
-
 
 adaptHeaders :: Int -> UnpackedNameValueList -> UnpackedNameValueList 
 adaptHeaders status_code (UnpackedNameValueList raw_headers) = let
@@ -94,6 +89,9 @@ harCoherentWorker resolve_center (input_headers, _ ) = do
         Just served_entry -> let 
                 contents = (served_entry ^. sreContents)
                 UnpackedNameValueList adapted_headers = adaptHeaders (served_entry ^. sreStatus ) (served_entry ^. sreHeaders)
+                contents_stream = do 
+                    yield contents
+                    liftIO $ threadDelay (served_entry ^. artificialDelay)
             in do 
                 liftIO $ 
                     -- threadDelay additionalDelay
