@@ -96,7 +96,7 @@ harCoherentWorker resolve_center (input_headers, _ ) = do
                 liftIO $ 
                     -- threadDelay additionalDelay
                     liftIO $ infoM "HarWorker" $ " .. HIT " ++ (show resource_handle)
-                return (adapted_headers , pushed_streams, yield contents)
+                return (adapted_headers , pushed_streams, contents_stream)
 
         Nothing -> do 
             liftIO $ errorM "HarWorker" $ "  .. resource " ++ (show resource_handle) ++ " not found."
