@@ -2,23 +2,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 
--- System grade imports
--- import qualified Data.ByteString            as B
--- import qualified Data.ByteString.Builder    as Bu
--- import           Data.ByteString.Char8      (pack)
--- import qualified Data.ByteString.Lazy       as BL
+-- System imports
 import           Data.Foldable             (find)
 import           Data.Monoid
 import           Text.Printf               (printf)
 
--- import           System.Directory
--- import           System.FilePath
 import           Control.Exception         (catch)
 --
 --
 import           System.Environment        (getEnvironment)
 import           System.IO
--- import           System.Process
 
 import           Options.Applicative
 
