@@ -236,7 +236,7 @@ docFromEntry e = do
     resp  = e ^. response
     content_text = fromMaybe "" (resp ^. content . contentText )
     artificial_delay = round $ (
-        0.9    -- To account for natural delays at HTTP/2
+        0.5    -- To account for natural delays at HTTP/2
         * 1000 -- To take from milliseconds to microseconds 
         ) * (
                ( e ^. timings . send) 
