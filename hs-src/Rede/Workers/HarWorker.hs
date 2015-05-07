@@ -77,7 +77,7 @@ harCoherentWorker :: ResolveCenter -> CoherentWorker
 harCoherentWorker resolve_center (input_headers, _ ) = do 
 
     -- liftIO $ putStrLn $ "headers: " ++ (show input_headers)
-    liftIO $ infoM "HarWorker" $ " .. request to " ++ (show resource_handle)
+    
     let 
         resolver = resolveFromHar resolve_center
         maybe_served_entry  = resolver resource_handle :: Maybe ServedEntry
@@ -93,8 +93,10 @@ harCoherentWorker resolve_center (input_headers, _ ) = do
                     liftIO $ threadDelay (served_entry ^. artificialDelay)
                     yield contents
             in do 
-                
-                return (adapted_headers , pushed_streams, contents_stream)
+                liftIO $ 
+                    -- threadDelay additionalDelay
+                    liftIO $ infoM "HarWorker" $ " .. HIT " ++ (show resource_handle)
+                return (adapted_headers , pushed_streams, yield contents)
 
         Nothing -> do 
             liftIO $ errorM "HarWorker" $ "  .. resource " ++ (show resource_handle) ++ " not found."
