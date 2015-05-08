@@ -4,6 +4,9 @@ module Rede.Research.Main(research) where
 
 import           Control.Concurrent           (forkIO)
 import           Control.Concurrent.Chan
+import           Control.Concurrent.MVar  
+import           Control.Concurrent.STM.TMVar (newEmptyTMVar, TMVar)
+import           Control.Concurrent.STM       (atomically)
 import           System.FilePath
 -- import qualified Data.ByteString              as B
 import           Data.ByteString.Char8        (pack)
@@ -26,8 +29,8 @@ research :: FilePath -> IO ()
 research mimic_dir  = do 
     let 
         mimic_config_dir = configDir mimic_dir
-    resolve_center_chan <- newChan 
-    finish_request_chan <- newChan
+    resolve_center_chan <- atomically $ newEmptyTMVar 
+    finish_request_chan <- atomically $ newEmptyTMVar
 
     forkIO $ spawnHarServer mimic_dir resolve_center_chan finish_request_chan
 
@@ -38,7 +41,7 @@ research mimic_dir  = do
           finish_request_chan
 
 
-publishUrlToCaptureWebserver :: FilePath -> FilePath -> Chan ResolveCenter -> Chan FinishRequest -> IO ()
+publishUrlToCaptureWebserver :: FilePath -> FilePath -> TMVar ResolveCenter -> TMVar FinishRequest -> IO ()
 publishUrlToCaptureWebserver mimic_dir mimic_config_dir resolve_center_chan finish_request_chan = do
     post_port <- getMimicPostPort mimic_config_dir
     infoM "ResearchWorker" $ "Control port: " ++ (show post_port)

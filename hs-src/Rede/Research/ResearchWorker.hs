@@ -120,18 +120,18 @@ data ServiceState = ServiceState {
     ,_readyToGo                  :: TMVar ReadyToGo
 
     -- To be passed on to StationB
-    ,_nextTestUrl                :: Chan HashId
+    ,_nextTestUrl                :: TMVar HashId
 
     -- To be passed from the har files receiver (from StationA)
     -- to the DNSMasq checker...Contains urls
-    , _nextTestUrlToCheck        :: Chan HashId
+    , _nextTestUrlToCheck        :: TMVar HashId
 
     -- Files to be handed out to DNSMasq
-    , _nextDNSMasqFile           :: Chan DnsMasqConfig
+    , _nextDNSMasqFile           :: TMVar DnsMasqConfig
 
-    , _resolveCenterChan         :: Chan ResolveCenter
+    , _resolveCenterChan          :: TMVar ResolveCenter
 
-    , _finishRequestChan         :: Chan FinishRequest
+    , _finishRequestChan         :: TMVar FinishRequest
 
     -- Goes between the browser resetter and the next url call. 
     -- We pass the url to load through here just to be sure....
@@ -139,22 +139,22 @@ data ServiceState = ServiceState {
     -- The logic for "starts" is that we write to it when we want
     -- the browser started, then we read from it to start it, and 
     -- then put the url in the next step.
-    , _startHarvesterBrowserChan :: Chan HashId
+    , _startHarvesterBrowserChan :: TMVar HashId
 
     -- Order sent to the browser resetter of anyquilating the current
     -- Chrome instance. We write to this one as soon as we want to kill
     -- the browser, and then read from it when we are ready to go to the 
     -- next step.
-    , _killHarvesterBrowserChan  :: Chan HashId
+    , _killHarvesterBrowserChan  :: TMVar HashId
 
-    , _startTesterBrowserChan    :: Chan HashId
+    , _startTesterBrowserChan    :: TMVar HashId
     
-    , _killTesterBrowserChan     :: Chan HashId
+    , _killTesterBrowserChan     :: TMVar HashId
 
     -- TODO: Is this the best idiom to use?
-    , _testerReadyChan           :: Chan ReadinessPing
+    , _testerReadyChan           :: TMVar ReadinessPing
 
-    , _harvesterReadyChan        :: Chan ReadinessPing
+    , _harvesterReadyChan        :: TMVar ReadinessPing
 
     -- The "Research dir" is the "hars" subdirectory of the mimic
     -- scratch directory. 
@@ -179,8 +179,8 @@ type ServiceStateMonad = ReaderT ServiceState IO
 
 
 runResearchWorker :: 
-    Chan ResolveCenter 
-    -> Chan FinishRequest 
+    TMVar ResolveCenter 
+    -> TMVar FinishRequest 
     -> FilePath                -- Research dir
     -> B.ByteString
     -> IO CoherentWorker
@@ -188,19 +188,22 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
 
     liftIO $ debugM "ResearchWorker" "(on research worker)"
 
+    -- Only queue
     next_harvest_url_chan         <- atomically $ T.newTBChan maxInQueue
-    next_test_url_chan            <- newChan -- <-- Goes from the dnsmasq response handler 
-    next_test_url_to_check_chan   <- newChan -- <-- Goes to the dnsmasq response handler
-    next_dns_masq_file            <- newChan
 
-    start_harvester_browser       <- newChan
-    kill_harvester_browser        <- newChan
+    -- All the other jobs simply go on
+    next_test_url_chan            <- atomically $ newEmptyTMVar -- <-- Goes from the dnsmasq response handler 
+    next_test_url_to_check_chan   <- atomically $ newEmptyTMVar -- <-- Goes to the dnsmasq response handler
+    next_dns_masq_file            <- atomically $ newEmptyTMVar
 
-    start_tester_browser          <- newChan
-    kill_tester_browser           <- newChan
+    start_harvester_browser       <- atomically $ newEmptyTMVar
+    kill_harvester_browser        <- atomically $ newEmptyTMVar
 
-    harvester_ready               <- newChan 
-    tester_ready                  <- newChan 
+    start_tester_browser          <- atomically $ newEmptyTMVar
+    kill_tester_browser           <- atomically $ newEmptyTMVar
+
+    harvester_ready               <- atomically $ newEmptyTMVar 
+    tester_ready                  <- atomically $ newEmptyTMVar 
     ready_to_go                   <- atomically $ newTMVar ReadyToGo
 
     new_url_state  <- H.new
@@ -300,9 +303,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                                     -- TEXT BOOKMARK HERE
 
                                     -- Wait for a notification about the browser being ready, 
-                                    -- After this point, I have secured the exclusive processing 
-                                    -- token, so nobody else should be interested in reading this. 
-                                    readChan harvester_ready
+                                    atomically $ takeTMVar harvester_ready
                                     return h1
                                 )
                                 on_url_wait_interrupted
@@ -319,7 +320,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                             alarm <- liftIO $ newAlarm timeForAlarm $ do 
                                 markAnalysisStage hashid SystemCancelled_CAS base_research_dir
                                 errorM "ResearchWorker" . builderToString $ " failed harvesting " `mappend` (Bu.byteString req_url) `mappend` " (timeout) "
-                                writeChan kill_harvester_browser hashid
+                                atomically $ putTMVar kill_harvester_browser hashid
                                 errorM "ResearchWorker" " ... harvester browser asked killed "
                             let
                                 a2 = currentAlarm .~ alarm $ a1
@@ -339,14 +340,14 @@ researchWorkerComp (input_headers, maybe_source) = do
                 -- Check when we can proceed
                 liftIO $ do 
                     infoM "ResearchWorker" ".. /browserready/StationA/"
-                    writeChan harvester_ready ReadinessPing
+                    atomically $ putTMVar harvester_ready ReadinessPing
                 return $ simpleResponse 200 "Ok"
 
             | req_url == "/browserready/StationB" -> do 
                 -- Check when we can proceed
                 liftIO $ do 
                     infoM "ResearchWorker" ".. /browserready/StationB/"
-                    writeChan tester_ready ReadinessPing
+                    atomically $ putTMVar tester_ready ReadinessPing
                 return $ simpleResponse 200 "Ok"
 
             | req_url == "/testurl/" -> doJOMS test_url_asked (
@@ -354,11 +355,10 @@ researchWorkerComp (input_headers, maybe_source) = do
                     do 
                         -- Sends the next test url to the Chrome extension, this starts processing by 
                         -- StationB... the request is started by StationB and we send the url in the response...
-                        hashid <- liftIO $ do
-                            -- Wait for readiness indication in the browser
-                            readChan tester_ready
-                            -- And then snatch the url.... 
-                            readChan next_test_url_chan
+                        hashid <- liftIO . atomically $ do 
+                                takeTMVar tester_ready
+                                -- And then snatch the url.... 
+                                takeTMVar next_test_url_chan
                         anyschema_url <-  urlFromHashId hashid
                         let https_url = urlToHTTPSScheme anyschema_url
                         liftIO $ do
@@ -373,7 +373,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                                 a1 = analysisStage .~ SentToTest_CAS $ old_state
                             alarm <- liftIO $ newAlarm 15000000 $ do 
                                 errorM "ResearchWorker" . builderToString $ " failed testing " `mappend` (Bu.byteString https_url)
-                                writeChan kill_tester_browser hashid
+                                atomically $ putTMVar kill_tester_browser hashid
                             return $ currentAlarm .~ alarm $ a1
                         let msg = WorkIndication hashid https_url
                         return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
@@ -412,13 +412,13 @@ researchWorkerComp (input_headers, maybe_source) = do
                             dnsmasq_contents = dnsMasqFileContentsToIp use_address_for_station_b all_seen_hosts 
 
                         liftIO $ do
-                            writeChan next_dnsmasq_chan $! DnsMasqConfig hashid dnsmasq_contents
+                            atomically $ putTMVar next_dnsmasq_chan $! DnsMasqConfig hashid dnsmasq_contents
 
                             -- We also need to queue the url somewhere to be checked by the dnsmasqupdated entrypoint
-                            writeChan kill_harvester_browser hashid
+                            atomically $ putTMVar kill_harvester_browser hashid
 
                             -- And the resolve center to be used by the serving side
-                            writeChan resolve_center_chan resolve_center
+                            atomically $ putTMVar resolve_center_chan resolve_center
 
                             -- We can also use this opportunity to create a folder for this research 
                             -- project 
@@ -476,9 +476,9 @@ researchWorkerComp (input_headers, maybe_source) = do
                             return old_state
 
                         -- And finish the business
-                        liftIO $ do
-                            writeChan finish_chan FinishRequest
-                            writeChan kill_tester_browser hashid
+                        liftIO . atomically $ do
+                            putTMVar finish_chan FinishRequest
+                            putTMVar kill_tester_browser hashid
 
                         -- Mark the state 
                         liftIO $ markAnalysisStage hashid Done_CAS base_research_dir
@@ -502,7 +502,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                             infoM "ResearchWorker" ".. /dnsmasq/ asked"
                             -- Serve the DNS masq file corresponding to the last .har file 
                             -- received.
-                            dnsmasq_contents <- readChan next_dnsmasq_chan
+                            dnsmasq_contents <- atomically $ takeTMVar next_dnsmasq_chan
 
                             infoM "ResearchWorker" ".. /dnsmasq/ answers"
                             infoM "ResearchWorker" $ "Sending " ++ (show dnsmasq_contents)
@@ -519,12 +519,14 @@ researchWorkerComp (input_headers, maybe_source) = do
                     received_id <- waitRequestBody source
                     -- Ensure any in-system changes get enough time to propagate
                     threadDelay 2000000
-                    testurl_hashid <- readChan next_test_url_to_check_chan  
+                    testurl_hashid <- atomically $ do
+                        testurl_hashid_ <- takeTMVar next_test_url_to_check_chan  
+                        putTMVar next_test_url_chan testurl_hashid_
+                        putTMVar start_tester_browser testurl_hashid_
+                        return testurl_hashid_
                     infoM "ResearchWorker" $ "Dnsmasqupdated received " ++ (show received_id)
                     infoM "ResearchWorker" $ "and test_url has hash "   ++ (show testurl_hashid )
                     -- Write the url to the queue so that /testurl/ can return when seeing this value 
-                    writeChan next_test_url_chan testurl_hashid
-                    writeChan start_tester_browser testurl_hashid
 
                 return $ simpleResponse 200 $ "ok"
 
@@ -535,9 +537,6 @@ researchWorkerComp (input_headers, maybe_source) = do
                     url_to_analyze = case Da.decode . LB.fromStrict $ url_or_json_to_analyze of 
                         Just (SetNextUrl x)  -> x 
                         Nothing              -> url_or_json_to_analyze
-
-
-
 
                 -- Ojivas are launched at this point, so let it be IO.
                 -- The only side effect is that the system clock is read, 
@@ -567,10 +566,9 @@ researchWorkerComp (input_headers, maybe_source) = do
 
 
                         -- writeChan next_harvest_url hashid
-
-                        writeChan start_harvester_browser hashid
-
-                        writeChan next_test_url_to_check_chan  hashid
+                        atomically $ do 
+                            putTMVar start_harvester_browser hashid
+                            putTMVar next_test_url_to_check_chan  hashid
 
                         markAnalysisStage hashid AnalysisRequested_CAS base_research_dir
 
@@ -620,13 +618,13 @@ researchWorkerComp (input_headers, maybe_source) = do
                 return b
 
 
-unQueueStartBrowser :: B.ByteString -> Chan HashId -> ServiceStateMonad PrincipalStream
+unQueueStartBrowser :: B.ByteString -> TMVar HashId -> ServiceStateMonad PrincipalStream
 unQueueStartBrowser log_url chan_to_read = 
   do 
     -- Ensure start
     bs_hashid <- liftIO $ do
         infoM "ResearchWorker" (unpack $ B.append "start browser asked .. " log_url)
-        hashid <- readChan chan_to_read
+        hashid <- atomically $ takeTMVar chan_to_read
         let bs_hashid = unHashId hashid
         infoM "ResearchWorker" (unpack $ B.concat ["start browser delivered .. ", log_url, " ", bs_hashid ])
         return bs_hashid
@@ -634,13 +632,13 @@ unQueueStartBrowser log_url chan_to_read =
     return $ simpleResponse 200 $ B.append "hashid=" bs_hashid
 
 
-unQueueKillBrowser :: B.ByteString -> Chan HashId -> ServiceStateMonad PrincipalStream
+unQueueKillBrowser :: B.ByteString -> TMVar HashId -> ServiceStateMonad PrincipalStream
 unQueueKillBrowser log_url chan_to_read = do 
     -- StationA refers to the harvester....
     hashid <- liftIO $ do 
         -- Let's wait a second before killing the process....
         infoM "ResearchWorker" $ unpack $ B.append " .. " log_url
-        hashid <- readChan chan_to_read
+        hashid <- atomically $ readTMVar chan_to_read
         infoM "ResearchWorker" $ unpack $ B.append log_url " cleared for killing"
         return hashid
 
@@ -656,7 +654,7 @@ urlFromHashId hashid = do
 
 
 -- And here for when we need to fork a server to load the .har file from 
-spawnHarServer :: FilePath -> Chan ResolveCenter -> Chan  FinishRequest -> IO ()
+spawnHarServer :: FilePath -> TMVar ResolveCenter -> TMVar  FinishRequest -> IO ()
 spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do 
     let 
         mimic_config_dir = configDir mimic_dir    
@@ -669,8 +667,8 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
 
     let 
         watcher = do 
-            r <- readChan finish_request_chan
             infoM "ResearchWorker.SpawnHarServer" $ " .. Finishing mimic service  " 
+            r <- readChan finish_request_chan
             putMVar finish_request_mvar r
             watcher 
 
