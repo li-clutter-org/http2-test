@@ -283,6 +283,22 @@ researchWorkerComp (input_headers, maybe_source) = do
                                         h2 <- T.readTBChan next_harvest_url
                                         takeTMVar ready_to_go 
                                         return h2
+
+                                    -- The system may fail to complete the whole task, and then 
+                                    -- we will be stuck and blocked... what to do in this situation?
+                                    -- Simple option: mark the state as "rotten" and have the outer 
+                                    -- layer to replace it?
+
+                                    -- Second choice is to have all the pipes emptied, but we don't 
+                                    -- know how to do that with the current types for the pipes... 
+
+                                    -- There is a problem with both choices, and that is that some 
+                                    -- of the browser controllers may have started their browsers 
+                                    -- but they never get a request to shut down them... 
+                                    -- We are protected from that kind of problem by the resetters themselves,
+                                    -- which will kill the browser anyway after some time passes. 
+                                    -- TEXT BOOKMARK HERE
+
                                     -- Wait for a notification about the browser being ready, 
                                     -- After this point, I have secured the exclusive processing 
                                     -- token, so nobody else should be interested in reading this. 
