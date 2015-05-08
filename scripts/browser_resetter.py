@@ -295,7 +295,7 @@ def chrome_run():
         mo = re.search(r"\s+(0x[a-f0-9]+) \".*?Google Chrome\"", s)
         if mo is None:
             logger.warning("Couldn't find Google chrome windows,  maybe re-trying ")
-            if times_tried > 14:
+            if times_tried > 20:
                 logger.error("Exiting chrome script because chrome windows didn't open")
                 sys.exit(1) 
             else:
