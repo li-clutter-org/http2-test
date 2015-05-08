@@ -15,8 +15,10 @@ import qualified Control.Lens                    as L
 import           Control.Concurrent              (forkIO, myThreadId, threadDelay)
 import           Control.Concurrent.Chan
 import           Control.Concurrent.MVar
+import qualified Control.Concurrent.STM.TBChan  as T
 import           Control.Monad.Catch             (catch,throwM)
 import qualified Control.Exception               as E
+import           Control.Concurrent.STM
 
 import qualified Data.ByteString                 as B
 import qualified Data.ByteString.Builder         as Bu
@@ -91,6 +93,9 @@ data ReadinessPing = ReadinessPing
 timeForAlarm :: Int 
 timeForAlarm = 40000000
 
+maxInQueue :: Int 
+maxInQueue = 5
+
 
 -- This state structure follows a given URL analysis. 
 -- You can find a dictionary of these in the structure below...
@@ -104,9 +109,15 @@ data UrlState = UrlState {
 L.makeLenses ''UrlState
 
 
+data ReadyToGo = ReadyToGo
+
+
 data ServiceState = ServiceState {
     -- Put one here, let it run through the pipeline...
-    _nextHarvestUrl              :: Chan HashId
+    _nextHarvestUrl              :: T.TBChan HashId
+
+    -- Busy: we will wait on this before doing anything
+    ,_readyToGo                  :: TMVar ReadyToGo
 
     -- To be passed on to StationB
     ,_nextTestUrl                :: Chan HashId
@@ -177,7 +188,7 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
 
     liftIO $ debugM "ResearchWorker" "(on research worker)"
 
-    next_harvest_url_chan         <- newChan
+    next_harvest_url_chan         <- atomically $ T.newTBChan maxInQueue
     next_test_url_chan            <- newChan -- <-- Goes from the dnsmasq response handler 
     next_test_url_to_check_chan   <- newChan -- <-- Goes to the dnsmasq response handler
     next_dns_masq_file            <- newChan
@@ -190,6 +201,7 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
 
     harvester_ready               <- newChan 
     tester_ready                  <- newChan 
+    ready_to_go                   <- atomically $ newTMVar ReadyToGo
 
     new_url_state  <- H.new
     next_url_asked <- newJOMSAtZero
@@ -199,6 +211,7 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
     let     
         state = ServiceState {
              _nextHarvestUrl              = next_harvest_url_chan
+            ,_readyToGo                   = ready_to_go
             ,_nextTestUrl                 = next_test_url_chan
             ,_nextTestUrlToCheck          = next_test_url_to_check_chan
             ,_nextDNSMasqFile             = next_dns_masq_file
@@ -241,6 +254,7 @@ researchWorkerComp (input_headers, maybe_source) = do
     kill_tester_browser           <- L.view killTesterBrowserChan     
     tester_ready                  <- L.view testerReadyChan 
     harvester_ready               <- L.view harvesterReadyChan  
+    ready_to_go                   <- L.view readyToGo
 
     let 
         method = getMethodFromHeaders input_headers
@@ -263,10 +277,17 @@ researchWorkerComp (input_headers, maybe_source) = do
                         hashid <- 
                             catch
                                 (liftIO $ do 
-                                    -- First we wait for a notification about the browser being ready
-                                    readChan harvester_ready
+                                    
                                     -- And then we give out the next url to scan...
-                                    readChan next_harvest_url
+                                    h1 <- atomically $ do 
+                                        h2 <- T.readTBChan next_harvest_url
+                                        takeTMVar ready_to_go 
+                                        return h2
+                                    -- Wait for a notification about the browser being ready, 
+                                    -- After this point, I have secured the exclusive processing 
+                                    -- token, so nobody else should be interested in reading this. 
+                                    readChan harvester_ready
+                                    return h1
                                 )
                                 on_url_wait_interrupted
                         url <- urlFromHashId hashid
@@ -446,6 +467,11 @@ researchWorkerComp (input_headers, maybe_source) = do
                         -- Mark the state 
                         liftIO $ markAnalysisStage hashid Done_CAS base_research_dir
 
+                        -- Not sure if this is the best place for that, but maybe we should 
+                        -- mark the end of the processing
+                        liftIO . atomically $ do 
+                            putTMVar ready_to_go ReadyToGo
+
                         return $ simpleResponse 200 use_text
                     )
                     on_bad_har_file
@@ -494,33 +520,47 @@ researchWorkerComp (input_headers, maybe_source) = do
                         Just (SetNextUrl x)  -> x 
                         Nothing              -> url_or_json_to_analyze
 
-                -- Ojivas are launched at this point, so let it be IO
+
+
+
+                -- Ojivas are launched at this point, so let it be IO.
+                -- The only side effect is that the system clock is read, 
+                -- so this operation is harmless in the sense that it doesn't 
+                -- create any kind of filesystem entries or something like that.
                 url_job_id <- liftIO $ jobIdFromUrl url_to_analyze
                 let hashid = hashidFromJobId url_job_id
 
-                alarm <- liftIO $ newAlarm 25000000 $ do 
-                    errorM "ResearchWorker" . builderToString $ 
-                        "Job for url " `mappend` (Bu.byteString url_to_analyze) `mappend` " still waiting... "
-                    markAnalysisStage hashid SystemCancelled_CAS base_research_dir
-                let 
-                    new_url_state = UrlState url_job_id AnalysisRequested_CAS alarm
+                -- Are we allowed to queue this task? That depends on having enough space 
+                -- in the queue....
+                could_write <- liftIO . atomically $ T.tryWriteTBChan next_harvest_url hashid
 
-                liftIO $ do
-                    H.insert 
-                        url_state_hashtable hashid new_url_state 
-                    infoM "ResearchWorker" . builderToString $ 
-                        ".. /setnexturl/ asked " `mappend` (Bu.byteString url_to_analyze)
+                if could_write 
+                  then do
+                    alarm <- liftIO $ newAlarm 25000000 $ do 
+                        errorM "ResearchWorker" . builderToString $ 
+                            "Job for url " `mappend` (Bu.byteString url_to_analyze) `mappend` " still waiting... "
+                        markAnalysisStage hashid SystemCancelled_CAS base_research_dir
+                    let 
+                        new_url_state = UrlState url_job_id AnalysisRequested_CAS alarm
+
+                    liftIO $ do
+                        H.insert 
+                            url_state_hashtable hashid new_url_state 
+                        infoM "ResearchWorker" . builderToString $ 
+                            ".. /setnexturl/ asked " `mappend` (Bu.byteString url_to_analyze)
 
 
-                    writeChan next_harvest_url hashid
+                        -- writeChan next_harvest_url hashid
 
-                    writeChan start_harvester_browser hashid
+                        writeChan start_harvester_browser hashid
 
-                    writeChan next_test_url_to_check_chan  hashid
+                        writeChan next_test_url_to_check_chan  hashid
 
-                    markAnalysisStage hashid AnalysisRequested_CAS base_research_dir
+                        markAnalysisStage hashid AnalysisRequested_CAS base_research_dir
 
-                return $ simpleResponse 200 (unHashId hashid)
+                    return $ simpleResponse 200 (unHashId hashid)
+                  else
+                    return $ simpleResponse 505 "QueueFull" 
 
             | otherwise     -> do 
                 return $ simpleResponse 500 "Can't handle url and method"
