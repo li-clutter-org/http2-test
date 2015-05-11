@@ -279,10 +279,13 @@ researchWorkerComp (input_headers, maybe_source) = do
                                 (liftIO $ do 
                                     
                                     -- And then we give out the next url to scan...
+                                    infoM "ResearchWorker" " .. before atomic block"
                                     h1 <- atomically $ do 
+
                                         h2 <- T.readTBChan next_harvest_url
                                         takeTMVar ready_to_go 
                                         return h2
+                                    infoM "ResearchWorker" " .. after atomic block"
                                     -- Wait for a notification about the browser being ready, 
                                     -- After this point, I have secured the exclusive processing 
                                     -- token, so nobody else should be interested in reading this. 
