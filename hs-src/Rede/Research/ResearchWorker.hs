@@ -282,7 +282,9 @@ researchWorkerComp (input_headers, maybe_source) = do
                                 (liftIO $ do 
                                     
                                     -- And then we give out the next url to scan...
+                                    infoM "ResearchWorker" " .. before atomic block"
                                     h1 <- atomically $ do 
+
                                         h2 <- T.readTBChan next_harvest_url
                                         takeTMVar ready_to_go 
                                         return h2
@@ -302,6 +304,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                                     -- which will kill the browser anyway after some time passes. 
                                     -- TEXT BOOKMARK HERE
 
+                                    infoM "ResearchWorker" " .. after atomic block"
                                     -- Wait for a notification about the browser being ready, 
                                     atomically $ takeTMVar harvester_ready
                                     return h1
