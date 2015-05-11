@@ -12,7 +12,7 @@ import sys
 import findout_instance_ips
     
 # Time in seconds
-HOLD_CACHE_TIME = 3600
+HOLD_CACHE_TIME = 10800 # 3 hours
 
 
 class SuperfluosCache(object):
