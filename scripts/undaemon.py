@@ -144,8 +144,18 @@ class Undaemon(object):
             signal.pause()
         # At due moment, just exit
 
-    def kill_all(self, *args):
-        # Very bloodily kill all processes in the cgroup
+    def kill_all(self):
+        # Start by sending a killing signal to root_pid
+        os.kill(self._root_pid, signal.SIGTERM)
+        time.sleep(1.0)
+        r = os.waitpid(self._root_pid, os.WNOHANG)
+        if r == (0,0):
+            # Be more agressive
+            os.kill(self._root_pid, signal.SIGKILL)
+            time.sleep(0.4)
+            os.waitpid(self._root_pid, os.WNOHANG)
+
+        # Very bloodily kill any remaining processes in the cgroup
         cgroup_dir = self._cgroup_dir
         tasks_fname = os.path.join(cgroup_dir, "tasks")
         processes_killed = 0
