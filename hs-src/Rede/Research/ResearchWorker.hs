@@ -301,7 +301,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                             -- Well, in that case have all the pipes emptied and start again...
                             liftIO $ newAlarm timeForGeneralFail $ do 
                                 failed <- atomically $ do 
-                                    rtg_state <- takeTMVar ready_to_go
+                                    rtg_state <- readTMVar ready_to_go
                                     case rtg_state of 
                                         Processing_RTG nn | nn == jobseq_id -> return True 
                                                           | otherwise       -> return False 
@@ -496,7 +496,8 @@ researchWorkerComp (input_headers, maybe_source) = do
                         liftIO . atomically $ do 
                             rtg_state <- takeTMVar ready_to_go
                             case rtg_state of 
-                                Ready_RTG _ -> error "Internal Error with RTG!!!!"
+                                Ready_RTG _ -> do 
+                                    error "*** Serious Internal Error with RTG!!!!"
                                 Processing_RTG nn -> putTMVar ready_to_go $ Ready_RTG (nn+1)
                         liftIO $ infoM "ResearchWorker" "After ReadyToGo"
 
