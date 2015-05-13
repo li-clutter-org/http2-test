@@ -34,15 +34,15 @@ research mimic_dir  = do
 
     forkIO $ spawnHarServer mimic_dir resolve_center_chan finish_request_chan
 
-    publishUrlToCaptureWebserver 
-          mimic_dir
-          mimic_config_dir 
-          resolve_center_chan 
-          finish_request_chan
+    setupAndRun 
+        mimic_dir
+        mimic_config_dir 
+        resolve_center_chan 
+        finish_request_chan
 
 
-publishUrlToCaptureWebserver :: FilePath -> FilePath -> TMVar ResolveCenter -> TMVar FinishRequest -> IO ()
-publishUrlToCaptureWebserver mimic_dir mimic_config_dir resolve_center_chan finish_request_chan = do
+setupAndRun :: FilePath -> FilePath -> TMVar ResolveCenter -> TMVar FinishRequest -> IO ()
+setupAndRun mimic_dir mimic_config_dir resolve_center_chan finish_request_chan = do
     post_port <- getMimicPostPort mimic_config_dir
     infoM "ResearchWorker" $ "Control port: " ++ (show post_port)
     iface <- getMimicPostInterface mimic_config_dir

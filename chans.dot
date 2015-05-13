@@ -57,8 +57,9 @@ digraph chans {
 
     dnsmasqupdated ->  testurl [label="next_test_url_chan"];
 
-    setnexturl -> startbrowserStationA [label="start_harvester_browser"];
-    setnexturl -> nexturl [label="next_harvest_url"];
-    setnexturl -> dnsmasqupdated [ label="next_test_url_to_check_chan"]
+    startnextjob -> startbrowserStationA [label="start_harvester_browser"];
+    startnextjob -> nexturl [label="next_harvest_url"];
+    startnextjob -> dnsmasqupdated [ label="next_test_url_to_check_chan"];
 
+    setnexturl -> startnextjob [ label="next_job_descr" ];
 }

@@ -53,8 +53,7 @@ import           Rede.Workers.ResponseFragments  (RequestMethod (..),
 import           Rede.HarFiles.DnsMasq           (dnsMasqFileContentsToIp)
 import           Rede.HarFiles.ServedEntry       (BadHarFile (..),
                                                   ResolveCenter, allSeenHosts,
-                                                  rcName, resolveCenterFromLazyByteString,
-                                                  rcOriginalUrl
+                                                  rcName, resolveCenterFromLazyByteString
                                                   )
 import           Rede.Http2.MakeAttendant        (http2Attendant)
 import           Rede.MainLoop.CoherentWorker
@@ -66,8 +65,7 @@ import           Rede.Utils.PrintfArgByteString  ()
 import           Rede.Utils.Alarm                
 import           Rede.Workers.HarWorker          (harCoherentWorker)
 
-import           Rede.Research.JobId             (HashId(..), UrlJobId, jobIdFromUrl, 
-                                                  lnOriginalUrl, hashidFromJobId)
+import           Rede.Research.JobId             (HashId(..), jobIdFromUrl, hashidFromJobId)
 import           Rede.Research.JSONMessages      (SetNextUrl(..), DnsMasqConfig(..), WorkIndication(..))
 
 
@@ -101,9 +99,10 @@ maxInQueue = 5
 -- This state structure follows a given URL analysis. 
 -- You can find a dictionary of these in the structure below...
 data UrlState = UrlState {
-    _urlJobIdAtState :: UrlJobId
+    _urlHashId        :: HashId
     ,_analysisStage   :: CurrentAnalysisStage
-    ,_currentAlarm   :: Alarm ()
+    ,_jobOriginalUrl  :: B.ByteString
+    ,_currentAlarm    :: Alarm ()
     }
 
 
@@ -115,9 +114,15 @@ data ReadyToGo =
     |Processing_RTG Int
 
 
+-- The id and the url
+data JobDescr = JobDescr HashId B.ByteString
+
+
 data ServiceState = ServiceState {
     -- Put one here, let it run through the pipeline...
-    _nextHarvestUrl              :: T.TBChan HashId
+    _nextHarvestUrl              :: TMVar HashId
+
+    ,_nextJobDescr               :: T.TBChan JobDescr
 
     -- Busy: we will wait on this before doing anything
     ,_readyToGo                  :: TMVar ReadyToGo
@@ -188,7 +193,7 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
     liftIO $ debugM "ResearchWorker" "(on research worker)"
 
     -- Only queue
-    next_harvest_url_chan         <- atomically $ T.newTBChan maxInQueue
+    next_harvest_url_chan         <- atomically $ newEmptyTMVar
 
     -- All the other jobs simply go on
     next_test_url_chan            <- atomically $ newEmptyTMVar -- <-- Goes from the dnsmasq response handler 
@@ -204,12 +209,14 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
     harvester_ready               <- atomically $ newEmptyTMVar 
     tester_ready                  <- atomically $ newEmptyTMVar 
     ready_to_go                   <- atomically $ newTMVar (Ready_RTG 0)
+    next_job_descr                <- atomically $ T.newTBChan maxInQueue
 
     new_url_state  <- H.new
 
     let     
         state = ServiceState {
              _nextHarvestUrl              = next_harvest_url_chan
+            ,_nextJobDescr                = next_job_descr
             ,_readyToGo                   = ready_to_go
             ,_nextTestUrl                 = next_test_url_chan
             ,_nextTestUrlToCheck          = next_test_url_to_check_chan
@@ -228,6 +235,11 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
             ,_testerReadyChan             = tester_ready
             ,_harvesterReadyChan          = harvester_ready
             }
+
+    -- Let's create the job-pusher thread
+    forkIO $ runReaderT startNextJobThread state 
+
+    -- And return the worker
     return $ \request -> runReaderT (researchWorkerComp request) state
 
 
@@ -241,7 +253,7 @@ researchWorkerComp (input_headers, maybe_source) = do
     finish_chan                   <- L.view finishRequestChan 
     base_research_dir             <- L.view researchDir
     use_address_for_station_b     <- L.view useAddressForStationB
-    url_state_hashtable           <- L.view urlState
+    -- url_state_hashtable           <- L.view urlState
 
     start_harvester_browser       <- L.view startHarvesterBrowserChan   
     kill_harvester_browser        <- L.view killHarvesterBrowserChan    
@@ -250,6 +262,7 @@ researchWorkerComp (input_headers, maybe_source) = do
     tester_ready                  <- L.view testerReadyChan 
     harvester_ready               <- L.view harvesterReadyChan  
     ready_to_go                   <- L.view readyToGo
+    next_job_descr                <- L.view nextJobDescr
 
     -- The entire thing, a few functions need it.
     comp_state <- ask
@@ -270,7 +283,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                 -- Notice the complex interleaving with the real world. I could put 
                 -- more things in a transaction, but then I wouldn't see anything in 
                 -- the logs...TODO
-                maybe_hready <-  liftIO $ do 
+                liftIO $ do 
                     infoM "ResearchWorker" ".. /nexturl/ asked, won't touch anything yet "
 
                     -- Wait for a notification about the browser being ready, this one 
@@ -282,41 +295,9 @@ researchWorkerComp (input_headers, maybe_source) = do
                 hashid <- 
                     catch
                         (liftIO $ do 
-                            
-                            -- And then we give out the next url to scan...
-                            infoM "ResearchWorker" " .. before atomic block"
-                            (jobseq_id, h1) <- atomically $ do 
-
-                                h2 <- T.readTBChan next_harvest_url
-                                rtg_state <- takeTMVar ready_to_go 
-                                case rtg_state of 
-                                    Ready_RTG n -> do
-                                        putTMVar ready_to_go $ Processing_RTG n
-                                        return (n,h2)
-                                    _ -> retry
-
-                            -- The system may fail to complete the whole task, and then 
-                            -- we will be stuck and blocked... what to do in this situation?
-
-                            -- Well, in that case have all the pipes emptied and start again...
-                            liftIO $ newAlarm timeForGeneralFail $ do 
-                                failed <- atomically $ do 
-                                    rtg_state <- readTMVar ready_to_go
-                                    case rtg_state of 
-                                        Processing_RTG nn | nn == jobseq_id -> return True 
-                                                          | otherwise       -> return False 
-                                        _                                   -> return False
-                                if failed 
-                                  then do 
-                                    errorM "ResearchWorker" " .. General fail triggered "
-                                    waitAndResetState comp_state 
-                                  else do
-                                    infoM "ResearchWorker" " .. (harmless alarm ran).. "
-                                    return ()
-
-                            infoM "ResearchWorker" " .. after atomic block"
-
-                            return h1
+                            hashid <- atomically . takeTMVar $ next_harvest_url
+                            infoM "ResearchWorker" " .. got next harvest url"                            
+                            return hashid
                         )
                         on_url_wait_interrupted
                 url <- urlFromHashId hashid
@@ -548,7 +529,9 @@ researchWorkerComp (input_headers, maybe_source) = do
                 return $ simpleResponse 200 $ "ok"
 
             | req_url == "/setnexturl/", Just source <- maybe_source -> do 
-                -- Receives a url to investigate from the user front-end, or from curl
+                -- Receives a url to investigate from the user front-end, or from curl,
+                -- and drops it in a queue
+
                 url_or_json_to_analyze <- liftIO $ source $$ concatConduit
                 let 
                     url_to_analyze = case Da.decode . LB.fromStrict $ url_or_json_to_analyze of 
@@ -564,35 +547,13 @@ researchWorkerComp (input_headers, maybe_source) = do
 
                 -- Are we allowed to queue this task? That depends on having enough space 
                 -- in the queue....
-                could_write <- liftIO . atomically $ T.tryWriteTBChan next_harvest_url hashid
+                could_write <- liftIO . atomically $ 
+                                    T.tryWriteTBChan next_job_descr $ JobDescr hashid url_to_analyze
 
                 if could_write 
                   then do
-                    -- I'm disabling this alarm for now, 
-                    alarm <- liftIO $ newAlarm 65000000 $ do 
-                        errorM "ResearchWorker" . builderToString $ 
-                            "Job for url " `mappend` (Bu.byteString url_to_analyze) `mappend` " still waiting... "
-                        -- markAnalysisStage hashid SystemCancelled_CAS base_research_dir
-                        -- waitAndResetState comp_state
-                    let 
-                        new_url_state = UrlState url_job_id AnalysisRequested_CAS alarm
-
-                    liftIO $ do
-                        H.insert 
-                            url_state_hashtable hashid new_url_state 
-                        infoM "ResearchWorker" . builderToString $ 
-                            ".. /setnexturl/ asked " `mappend` (Bu.byteString url_to_analyze)
-
-
-                        -- writeChan next_harvest_url hashid
-                        atomically $ do 
-                            putTMVar start_harvester_browser hashid
-                            putTMVar next_test_url_to_check_chan  hashid
-
-                        infoM "ResearchWorker" "After /setnexturl/ queueing"
-
-                        markAnalysisStage hashid AnalysisRequested_CAS base_research_dir
-
+                    liftIO $ infoM "ResearchWorker" "After /setnexturl/ queueing"
+                    liftIO $ markAnalysisStage hashid AnalysisRequested_CAS base_research_dir
                     return $ simpleResponse 200 (unHashId hashid)
                   else
                     return $ simpleResponse 505 "QueueFull" 
@@ -639,6 +600,80 @@ researchWorkerComp (input_headers, maybe_source) = do
                 return b
 
 
+-- External thread in charge of pushing jobs
+-- (Also register the new hashid to url mapping...)
+startNextJobThread :: ServiceStateMonad ()
+startNextJobThread = do 
+    -- next_harvest_url              <- L.view nextHarvestUrl
+    -- next_dnsmasq_chan             <- L.view nextDNSMasqFile
+    -- next_test_url_chan            <- L.view nextTestUrl
+    next_test_url_to_check_chan   <- L.view nextTestUrlToCheck
+    -- resolve_center_chan           <- L.view resolveCenterChan 
+    -- finish_chan                   <- L.view finishRequestChan 
+    -- base_research_dir             <- L.view researchDir
+    -- use_address_for_station_b     <- L.view useAddressForStationB
+    url_state_hashtable           <- L.view urlState
+
+    start_harvester_browser       <- L.view startHarvesterBrowserChan   
+    -- kill_harvester_browser        <- L.view killHarvesterBrowserChan    
+    -- start_tester_browser          <- L.view startTesterBrowserChan      
+    -- kill_tester_browser           <- L.view killTesterBrowserChan     
+    -- tester_ready                  <- L.view testerReadyChan 
+    -- harvester_ready               <- L.view harvesterReadyChan  
+    ready_to_go                   <- L.view readyToGo
+    next_job_descr                <- L.view nextJobDescr
+
+    -- The entire thing, a few functions need it.
+    comp_state <- ask
+
+    -- This op will be retried until we can get a ready on the 
+    -- rtg_state
+    (jobseq_id, hashid, url_to_analyze) <- liftIO $ atomically $ do 
+        rtg_state <- takeTMVar ready_to_go 
+        JobDescr hashid url <- T.readTBChan next_job_descr
+        case rtg_state of 
+            Ready_RTG n -> do
+                putTMVar ready_to_go $ Processing_RTG n
+                putTMVar start_harvester_browser hashid
+                putTMVar next_test_url_to_check_chan  hashid
+                return (n,hashid,url)
+            _ -> retry
+
+    -- Just complain
+    alarm <- liftIO $ newAlarm 65000000 $ do 
+        errorM "ResearchWorker" . builderToString $ 
+            "Job for url " `mappend` (Bu.byteString url_to_analyze) `mappend` " still waiting... "
+
+    let 
+        new_url_state = UrlState hashid AnalysisRequested_CAS url_to_analyze alarm
+
+    liftIO $ do
+        H.insert
+            url_state_hashtable hashid new_url_state 
+        infoM "ResearchWorker" . builderToString $ 
+            ".. <<processing new job>> asked " `mappend` (Bu.byteString url_to_analyze)
+
+    -- The system may fail to complete the whole task, and then 
+    -- we will be stuck and blocked... what to do in this situation?
+    -- Well, in that case have all the pipes emptied and start again...
+    liftIO $ newAlarm timeForGeneralFail $ do 
+        failed <- atomically $ do 
+            rtg_state <- readTMVar ready_to_go
+            case rtg_state of 
+                Processing_RTG nn | nn == jobseq_id -> return True 
+                                  | otherwise       -> return False 
+                _                                   -> return False
+        if failed 
+          then do 
+            errorM "ResearchWorker" " .. General fail triggered "
+            waitAndResetState comp_state 
+          else do
+            infoM "ResearchWorker" " .. (harmless alarm went off).. "
+            return ()
+
+    startNextJobThread
+
+
 unQueueStartBrowser :: B.ByteString -> TMVar HashId -> ServiceStateMonad PrincipalStream
 unQueueStartBrowser log_url chan_to_read = 
   do 
@@ -671,7 +706,7 @@ urlFromHashId hashid = do
     url_state_hashtable <- L.view urlState
     -- Pattern matching fails here and we are in deep trouble...
     Just state <- liftIO $ H.lookup url_state_hashtable hashid
-    return $ state ^. ( urlJobIdAtState . lnOriginalUrl )
+    return $ state ^. jobOriginalUrl
 
 
 -- And here for when we need to fork a server to load the .har file from 
