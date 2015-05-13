@@ -73,7 +73,7 @@ class Undaemon(object):
                 print(this_filename, file=out)
             logger.info("(undaemon) Cgroup path %s just configured", self._undaemon_cgroup_path)
 
-    def _undameon_core(
+    def _undaemon_core(
             self,
             # The cgroup_name is the pid of the controlling process....
             cgroup_name):
@@ -119,7 +119,7 @@ class Undaemon(object):
     def _set_signal_handlers(self):
         signal.signal(signal.SIGUSR1, self._usr1_handler)
         signal.signal(signal.SIGALRM, self._alarm_handler)
-        signal.signal(signal.SIGTERM, self.kill_all)
+        signal.signal(signal.SIGTERM, self._sigterm_handler)
 
     def _usr1_handler(self, sgn, frame):
         time.sleep(0.5)
@@ -131,6 +131,9 @@ class Undaemon(object):
     def _alarm_handler(self, sgn, frame):
         pass
 
+    def _sigterm_handler(self, sgn, frame):
+        self.kill_all()
+
     def undaemon(self, set_signal_handlers = True):
         # ATTENTION: Since we can process only a set of signals, this class is not re-entrant...
         if set_signal_handlers :
@@ -138,7 +141,7 @@ class Undaemon(object):
             self._set_signal_handlers()
         self._create_undaemon_fs_if_not_exists()
         cgroup_name = str(os.getpid())
-        self._undameon_core(cgroup_name)
+        self._undaemon_core(cgroup_name)
         # And wait until a signal is received
         while not self._ready_to_finish:
             signal.pause()

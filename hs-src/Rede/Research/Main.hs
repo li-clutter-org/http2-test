@@ -3,8 +3,8 @@ module Rede.Research.Main(research) where
 
 
 import           Control.Concurrent           (forkIO)
-import           Control.Concurrent.Chan
-import           Control.Concurrent.MVar  
+-- import           Control.Concurrent.Chan
+-- import           Control.Concurrent.MVar  
 import           Control.Concurrent.STM.TMVar (newEmptyTMVar, TMVar)
 import           Control.Concurrent.STM       (atomically)
 import           System.FilePath

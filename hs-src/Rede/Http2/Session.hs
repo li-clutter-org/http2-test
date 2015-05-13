@@ -283,7 +283,6 @@ sessionInputThread  = do
                 H.mapM_
                     (\ (_, thread_id) -> do
                         throwTo thread_id StreamCancelledException
-                        infoM "HTTP2.Session" $ "Stream successfully interrupted"
                     )
                     stream2workerthread
 
@@ -337,9 +336,9 @@ sessionInputThread  = do
         Right frame@(NH2.Frame _ (NH2.RSTStreamFrame error_code_id)) -> do
             let stream_id = streamIdFromFrame frame
             liftIO $ do 
-                infoM "HTTP2.Session" $ "Stream reset: " ++ (show error_code_id)
+                debugM "HTTP2.Session" $ "Stream reset: " ++ (show error_code_id)
                 cancelled_streams <- takeMVar cancelled_streams_mvar
-                infoM "HTTP2.Session" $ "Cancelled stream was: " ++ (show stream_id)
+                debugM "HTTP2.Session" $ "Cancelled stream was: " ++ (show stream_id)
                 putMVar cancelled_streams_mvar $ NS.insert  stream_id cancelled_streams
                 maybe_thread_id <- H.lookup stream2workerthread stream_id
                 case maybe_thread_id  of 
@@ -348,7 +347,6 @@ sessionInputThread  = do
 
                     Just thread_id -> do
                         throwTo thread_id StreamCancelledException
-                        --infoM "HTTP2.Session" $ "Stream successfully interrupted"
 
             continue 
 

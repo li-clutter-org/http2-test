@@ -11,12 +11,11 @@ import           Control.Lens                    (
                                                  , (.~)
                                                  )
 import qualified Control.Lens                    as L
--- import           Control.Exception              (catch)
-import           Control.Concurrent              (forkIO, myThreadId, threadDelay)
-import           Control.Concurrent.Chan
+import           Control.Concurrent              (forkIO, threadDelay)
 import           Control.Concurrent.MVar
 import qualified Control.Concurrent.STM.TBChan  as T
 import           Control.Monad.Catch             (catch,throwM)
+import           Control.Monad.Trans.Reader      (ask)
 import qualified Control.Exception               as E
 import           Control.Concurrent.STM
 
@@ -31,7 +30,7 @@ import           Data.Foldable                   (foldMap)
 import           Data.Monoid                     (mappend)
 import qualified Data.Monoid                     as M
 import qualified Data.Aeson                      as Da(decode, encode)
--- import qualified Data.ByteString.Lazy           as LB
+-- import           Data.Maybe                      (isJust)
 
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Reader      (ReaderT (..), runReaderT)
@@ -52,7 +51,6 @@ import           Rede.Workers.ResponseFragments  (RequestMethod (..),
                                                   simpleResponse)
 
 import           Rede.HarFiles.DnsMasq           (dnsMasqFileContentsToIp)
--- import           Rede.HarFiles.JSONDataStructure (originUrl)
 import           Rede.HarFiles.ServedEntry       (BadHarFile (..),
                                                   ResolveCenter, allSeenHosts,
                                                   rcName, resolveCenterFromLazyByteString,
@@ -66,7 +64,6 @@ import           Rede.MainLoop.OpenSSL_TLS       (FinishRequest (..), tlsServeWi
 import           Rede.Utils.ConcatConduit        (concatConduit)
 import           Rede.Utils.PrintfArgByteString  ()
 import           Rede.Utils.Alarm                
-import           Rede.Utils.JustOneMakesSense
 import           Rede.Workers.HarWorker          (harCoherentWorker)
 
 import           Rede.Research.JobId             (HashId(..), UrlJobId, jobIdFromUrl, 
@@ -89,9 +86,13 @@ data CurrentAnalysisStage =
 data ReadinessPing = ReadinessPing
 
 
--- Time to wait before unleashing an alarm... 
+-- Time to wait before unleashing an alarm for a failed step
 timeForAlarm :: Int 
-timeForAlarm = 40000000
+timeForAlarm = 30000000
+
+-- Time to wait before unleashing an alarm for a failed sequence
+timeForGeneralFail :: Int 
+timeForGeneralFail = 105000000
 
 maxInQueue :: Int 
 maxInQueue = 5
@@ -109,7 +110,9 @@ data UrlState = UrlState {
 L.makeLenses ''UrlState
 
 
-data ReadyToGo = ReadyToGo
+data ReadyToGo = 
+     Ready_RTG Int
+    |Processing_RTG Int
 
 
 data ServiceState = ServiceState {
@@ -165,10 +168,6 @@ data ServiceState = ServiceState {
 
     -- The state of each URL 
     , _urlState                  :: HashTable HashId UrlState
-
-    , _nextUrlAsked              :: JustOneMakesSense
-
-    , _testUrlAsked              :: JustOneMakesSense 
     }
 
 
@@ -204,12 +203,9 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
 
     harvester_ready               <- atomically $ newEmptyTMVar 
     tester_ready                  <- atomically $ newEmptyTMVar 
-    ready_to_go                   <- atomically $ newTMVar ReadyToGo
+    ready_to_go                   <- atomically $ newTMVar (Ready_RTG 0)
 
     new_url_state  <- H.new
-    next_url_asked <- newJOMSAtZero
-    test_url_asked <- newJOMSAtZero
-
 
     let     
         state = ServiceState {
@@ -223,8 +219,6 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
             ,_researchDir                 = research_dir
             ,_useAddressForStationB       = use_address_for_station_b
             ,_urlState                    = new_url_state
-            ,_nextUrlAsked                = next_url_asked
-            ,_testUrlAsked                = test_url_asked
 
             ,_startHarvesterBrowserChan   = start_harvester_browser
             ,_killHarvesterBrowserChan    = kill_harvester_browser
@@ -248,8 +242,6 @@ researchWorkerComp (input_headers, maybe_source) = do
     base_research_dir             <- L.view researchDir
     use_address_for_station_b     <- L.view useAddressForStationB
     url_state_hashtable           <- L.view urlState
-    test_url_asked                <- L.view testUrlAsked
-    next_url_asked                <- L.view nextUrlAsked
 
     start_harvester_browser       <- L.view startHarvesterBrowserChan   
     kill_harvester_browser        <- L.view killHarvesterBrowserChan    
@@ -258,6 +250,10 @@ researchWorkerComp (input_headers, maybe_source) = do
     tester_ready                  <- L.view testerReadyChan 
     harvester_ready               <- L.view harvesterReadyChan  
     ready_to_go                   <- L.view readyToGo
+
+    -- The entire thing, a few functions need it.
+    comp_state <- ask
+
 
     let 
         method = getMethodFromHeaders input_headers
@@ -268,81 +264,91 @@ researchWorkerComp (input_headers, maybe_source) = do
         -- Most requests are served by POST to emphasize that a request changes 
         -- the state of this program... 
         Post_RM 
-            | req_url == "/nexturl/" -> doJOMS next_url_asked 
-                (
-                    do 
-                        -- Starts harvesting of a resource... this request is made by StationA
-                        liftIO $ do 
-                            infoM "ResearchWorker" ".. /nexturl/ asked "
-                            my_thread <- myThreadId
-                            infoM "ResearchWorker" $ "waiting on thread " ++ (show my_thread)
+            | req_url == "/nexturl/" -> do 
+                -- Starts harvesting of a resource... this request is made by StationA.
+                --
+                -- Notice the complex interleaving with the real world. I could put 
+                -- more things in a transaction, but then I wouldn't see anything in 
+                -- the logs...TODO
+                maybe_hready <-  liftIO $ do 
+                    infoM "ResearchWorker" ".. /nexturl/ asked, won't touch anything yet "
 
-                        hashid <- 
-                            catch
-                                (liftIO $ do 
-                                    
-                                    -- And then we give out the next url to scan...
-                                    infoM "ResearchWorker" " .. before atomic block"
-                                    h1 <- atomically $ do 
+                    -- Wait for a notification about the browser being ready, this one 
+                    -- is sent by an independent script
+                    atomically $ takeTMVar harvester_ready
+                
+                liftIO $ infoM "ResearchWorker" "..harvester browser ok, mutations to proceed"
 
-                                        h2 <- T.readTBChan next_harvest_url
-                                        takeTMVar ready_to_go 
-                                        return h2
+                hashid <- 
+                    catch
+                        (liftIO $ do 
+                            
+                            -- And then we give out the next url to scan...
+                            infoM "ResearchWorker" " .. before atomic block"
+                            (jobseq_id, h1) <- atomically $ do 
 
-                                    -- The system may fail to complete the whole task, and then 
-                                    -- we will be stuck and blocked... what to do in this situation?
-                                    -- Simple option: mark the state as "rotten" and have the outer 
-                                    -- layer to replace it?
+                                h2 <- T.readTBChan next_harvest_url
+                                rtg_state <- takeTMVar ready_to_go 
+                                case rtg_state of 
+                                    Ready_RTG n -> do
+                                        putTMVar ready_to_go $ Processing_RTG n
+                                        return (n,h2)
+                                    _ -> retry
 
-                                    -- Second choice is to have all the pipes emptied, but we don't 
-                                    -- know how to do that with the current types for the pipes... 
+                            -- The system may fail to complete the whole task, and then 
+                            -- we will be stuck and blocked... what to do in this situation?
 
-                                    -- There is a problem with both choices, and that is that some 
-                                    -- of the browser controllers may have started their browsers 
-                                    -- but they never get a request to shut down them... 
-                                    -- We are protected from that kind of problem by the resetters themselves,
-                                    -- which will kill the browser anyway after some time passes. 
-                                    -- TEXT BOOKMARK HERE
+                            -- Well, in that case have all the pipes emptied and start again...
+                            liftIO $ newAlarm timeForGeneralFail $ do 
+                                failed <- atomically $ do 
+                                    rtg_state <- takeTMVar ready_to_go
+                                    case rtg_state of 
+                                        Processing_RTG nn | nn == jobseq_id -> return True 
+                                                          | otherwise       -> return False 
+                                        _                                   -> return False
+                                if failed 
+                                  then do 
+                                    errorM "ResearchWorker" " .. General fail triggered "
+                                    waitAndResetState comp_state 
+                                  else do
+                                    infoM "ResearchWorker" " .. (harmless alarm ran).. "
+                                    return ()
 
-                                    infoM "ResearchWorker" " .. after atomic block"
-                                    -- Wait for a notification about the browser being ready, 
-                                    atomically $ takeTMVar harvester_ready
-                                    return h1
-                                )
-                                on_url_wait_interrupted
-                        url <- urlFromHashId hashid
-                        liftIO $ infoM "ResearchWorker" .  builderToString $ "..  /nexturl/" `mappend` " answer " `mappend` (Bu.byteString url) `mappend` " "
-                        liftIO $ markAnalysisStage hashid SentToHarvester_CAS base_research_dir
+                            infoM "ResearchWorker" " .. after atomic block"
 
-                        -- Mark it as sent...
-                        modifyUrlState hashid $ \ old_state -> do 
-                            -- Set an alarm here also...this alarm should be disabled when a .har file comes....
-                            liftIO $ cancelAlarm $ old_state ^. currentAlarm
-                            let 
-                                a1 = analysisStage .~ SentToHarvester_CAS $ old_state
-                            alarm <- liftIO $ newAlarm timeForAlarm $ do 
-                                markAnalysisStage hashid SystemCancelled_CAS base_research_dir
-                                errorM "ResearchWorker" . builderToString $ " failed harvesting " `mappend` (Bu.byteString req_url) `mappend` " (timeout) "
-                                atomically $ putTMVar kill_harvester_browser hashid
-                                errorM "ResearchWorker" " ... harvester browser asked killed "
-                            let
-                                a2 = currentAlarm .~ alarm $ a1
-                            return a2 
+                            return h1
+                        )
+                        on_url_wait_interrupted
+                url <- urlFromHashId hashid
+                liftIO $ infoM "ResearchWorker" .  builderToString $ "..  /nexturl/" `mappend` " answer " `mappend` (Bu.byteString url) `mappend` " "
+                liftIO $ markAnalysisStage hashid SentToHarvester_CAS base_research_dir
 
-                        -- And finally return.
-                        let msg = WorkIndication hashid url
-                        return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
-                ) (
-                    do 
-                        -- Somebody asked too many times, say it
-                        liftIO $ errorM "ResearchWorker" ".. /nexturl/ asked too many times, returning 501"
-                        return $ simpleResponse 501 "Asked too many times"
-                )
+                -- Mark it as sent...
+                modifyUrlState hashid $ \ old_state -> do 
+                    -- Set an alarm here also...this alarm should be disabled when a .har file comes....
+                    liftIO $ cancelAlarm $ old_state ^. currentAlarm
+                    let 
+                        a1 = analysisStage .~ SentToHarvester_CAS $ old_state
+                    alarm <- liftIO $ newAlarm timeForAlarm $ do 
+                        markAnalysisStage hashid SystemCancelled_CAS base_research_dir
+                        errorM "ResearchWorker" . builderToString $ " failed harvesting " `mappend` (Bu.byteString req_url) `mappend` " (timeout) "
+                        atomically $ putTMVar kill_harvester_browser hashid
+                        errorM "ResearchWorker" " ... harvester browser asked killed "
+                        waitAndResetState comp_state
+                    let
+                        a2 = currentAlarm .~ alarm $ a1
+                    return a2
+
+
+                -- And finally return.
+                let msg = WorkIndication hashid url
+                return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
                        
             | req_url == "/browserready/StationA" -> do 
                 -- Check when we can proceed
                 liftIO $ do 
                     infoM "ResearchWorker" ".. /browserready/StationA/"
+                    threadDelay 1000000
                     atomically $ putTMVar harvester_ready ReadinessPing
                 return $ simpleResponse 200 "Ok"
 
@@ -350,42 +356,38 @@ researchWorkerComp (input_headers, maybe_source) = do
                 -- Check when we can proceed
                 liftIO $ do 
                     infoM "ResearchWorker" ".. /browserready/StationB/"
+                    threadDelay 1000000
                     atomically $ putTMVar tester_ready ReadinessPing
                 return $ simpleResponse 200 "Ok"
 
-            | req_url == "/testurl/" -> doJOMS test_url_asked (
-                    -- Normal flow
-                    do 
-                        -- Sends the next test url to the Chrome extension, this starts processing by 
-                        -- StationB... the request is started by StationB and we send the url in the response...
-                        hashid <- liftIO . atomically $ do 
-                                takeTMVar tester_ready
-                                -- And then snatch the url.... 
-                                takeTMVar next_test_url_chan
-                        anyschema_url <-  urlFromHashId hashid
-                        let https_url = urlToHTTPSScheme anyschema_url
-                        liftIO $ do
-                            infoM "ResearchWorker" . builderToString $ "..  /testurl/ answered with " `mappend` (Bu.byteString https_url)
-                            -- Mark the new stage 
-                            markAnalysisStage hashid SentToTest_CAS base_research_dir
+            | req_url == "/testurl/" -> do
+                -- Sends the next test url to the Chrome extension, this starts processing by 
+                -- StationB... the request is started by StationB and we send the url in the response...
+                liftIO $ infoM "ResearchWorker" ".. /testurl/ asked"
+                hashid <- liftIO . atomically $ do 
+                        takeTMVar tester_ready
+                        -- And then snatch the url.... 
+                        takeTMVar next_test_url_chan
+                anyschema_url <-  urlFromHashId hashid
+                let https_url = urlToHTTPSScheme anyschema_url
+                liftIO $ do
+                    infoM "ResearchWorker" . builderToString $ "..  /testurl/ answered with " `mappend` (Bu.byteString https_url)
+                    -- Mark the new stage 
+                    markAnalysisStage hashid SentToTest_CAS base_research_dir
 
-                        modifyUrlState hashid $ \ old_state -> do 
-                            -- This alarm should be disabled by the http2har file
-                            liftIO $ cancelAlarm $ old_state ^. currentAlarm
-                            let 
-                                a1 = analysisStage .~ SentToTest_CAS $ old_state
-                            alarm <- liftIO $ newAlarm 15000000 $ do 
-                                errorM "ResearchWorker" . builderToString $ " failed testing " `mappend` (Bu.byteString https_url)
-                                atomically $ putTMVar kill_tester_browser hashid
-                            return $ currentAlarm .~ alarm $ a1
-                        let msg = WorkIndication hashid https_url
-                        return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
-                ) (
-                    -- Problems spotted
-                    do
-                        liftIO $ errorM "ResearchWorker" ".. /testurl/ was asked more than once, returning 501"
-                        return $ simpleResponse 501 "Asked too many times"
-                ) 
+                modifyUrlState hashid $ \ old_state -> do 
+                    -- This alarm should be disabled by the http2har file
+                    liftIO $ cancelAlarm $ old_state ^. currentAlarm
+                    let 
+                        a1 = analysisStage .~ SentToTest_CAS $ old_state
+
+                    alarm <- liftIO $ newAlarm 15000000 $ do 
+                        errorM "ResearchWorker" . builderToString $ " failed testing " `mappend` (Bu.byteString https_url)
+                        atomically $ putTMVar kill_tester_browser hashid
+                        waitAndResetState comp_state
+                    return $ currentAlarm .~ alarm $ a1
+                let msg = WorkIndication hashid https_url
+                return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
 
             | req_url == "/har/", Just source <- maybe_source -> do
                 -- Receives a .har object from the harvest station ("StationA"), and 
@@ -395,7 +397,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                     (do
                         (resolve_center, har_file_contents) <- liftIO $ output_computation source
                         let 
-                            test_url = resolve_center ^. rcOriginalUrl
+                            -- test_url = resolve_center ^. rcOriginalUrl
                             use_text = "Response processed"
                             hashid = resolve_center ^. rcName
 
@@ -415,14 +417,13 @@ researchWorkerComp (input_headers, maybe_source) = do
                             dnsmasq_contents = dnsMasqFileContentsToIp use_address_for_station_b all_seen_hosts 
 
                         liftIO $ do
-                            atomically $ putTMVar next_dnsmasq_chan $! DnsMasqConfig hashid dnsmasq_contents
-
-                            -- We also need to queue the url somewhere to be checked by the dnsmasqupdated entrypoint
-                            atomically $ putTMVar kill_harvester_browser hashid
-
-                            -- And the resolve center to be used by the serving side
-                            atomically $ putTMVar resolve_center_chan resolve_center
-
+                            infoM "ResearchWorker" "BeforeHARBlock"
+                            atomically $ do 
+                                putTMVar next_dnsmasq_chan $! DnsMasqConfig hashid dnsmasq_contents
+                                -- We also need to queue the url somewhere to be checked by the dnsmasqupdated entrypoint
+                                putTMVar kill_harvester_browser hashid
+                                -- And the resolve center to be used by the serving side
+                                putTMVar resolve_center_chan resolve_center
                             -- We can also use this opportunity to create a folder for this research 
                             -- project 
                             let 
@@ -480,16 +481,24 @@ researchWorkerComp (input_headers, maybe_source) = do
 
                         -- And finish the business
                         liftIO . atomically $ do
+                            -- Ends the mimic serving of resources
                             putTMVar finish_chan FinishRequest
                             putTMVar kill_tester_browser hashid
+                        -- liftIO $ threadDelay 10000000 -- <-- Remove this!!
 
                         -- Mark the state 
+
                         liftIO $ markAnalysisStage hashid Done_CAS base_research_dir
+                        liftIO $ infoM "ResearchWorker" "Just after setting status to \"done\""
 
                         -- Not sure if this is the best place for that, but maybe we should 
                         -- mark the end of the processing
                         liftIO . atomically $ do 
-                            putTMVar ready_to_go ReadyToGo
+                            rtg_state <- takeTMVar ready_to_go
+                            case rtg_state of 
+                                Ready_RTG _ -> error "Internal Error with RTG!!!!"
+                                Processing_RTG nn -> putTMVar ready_to_go $ Ready_RTG (nn+1)
+                        liftIO $ infoM "ResearchWorker" "After ReadyToGo"
 
                         return $ simpleResponse 200 use_text
                     )
@@ -499,8 +508,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                 catch 
                     (do
                         dnsmasq_contents <- liftIO $ do
-                            received_version <- waitRequestBody source
-                            infoM "ResearchWorker" $ " .. updatednsmasq VERSION= " ++ (show received_version)
+                            waitRequestBody source
                             -- Sends a DNSMASQ file to the test station ("StationB")
                             infoM "ResearchWorker" ".. /dnsmasq/ asked"
                             -- Serve the DNS masq file corresponding to the last .har file 
@@ -508,7 +516,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                             dnsmasq_contents <- atomically $ takeTMVar next_dnsmasq_chan
 
                             infoM "ResearchWorker" ".. /dnsmasq/ answers"
-                            infoM "ResearchWorker" $ "Sending " ++ (show dnsmasq_contents)
+                            -- infoM "ResearchWorker" $ " /dnsmasq/ sending " ++ (show dnsmasq_contents)
 
                             return dnsmasq_contents
                        
@@ -522,15 +530,20 @@ researchWorkerComp (input_headers, maybe_source) = do
                     received_id <- waitRequestBody source
                     -- Ensure any in-system changes get enough time to propagate
                     threadDelay 2000000
-                    testurl_hashid <- atomically $ do
+                    proceed <- atomically $ do
                         testurl_hashid_ <- takeTMVar next_test_url_to_check_chan  
-                        putTMVar next_test_url_chan testurl_hashid_
-                        putTMVar start_tester_browser testurl_hashid_
-                        return testurl_hashid_
-                    infoM "ResearchWorker" $ "Dnsmasqupdated received " ++ (show received_id)
-                    infoM "ResearchWorker" $ "and test_url has hash "   ++ (show testurl_hashid )
-                    -- Write the url to the queue so that /testurl/ can return when seeing this value 
-
+                        if testurl_hashid_ == (HashId received_id)
+                          then do
+                            -- All Ok, proceed
+                            putTMVar next_test_url_chan testurl_hashid_
+                            putTMVar start_tester_browser testurl_hashid_
+                            return True
+                          else do
+                            -- Nothing OK, restore things and wait
+                            -- for an upcoming invoication
+                            putTMVar next_test_url_to_check_chan testurl_hashid_
+                            return False
+                    infoM "ResearchWorker" $ "When receiving dnsmasqupdated, proceed = " ++ (show proceed)
                 return $ simpleResponse 200 $ "ok"
 
             | req_url == "/setnexturl/", Just source <- maybe_source -> do 
@@ -554,10 +567,12 @@ researchWorkerComp (input_headers, maybe_source) = do
 
                 if could_write 
                   then do
-                    alarm <- liftIO $ newAlarm 25000000 $ do 
+                    -- I'm disabling this alarm for now, 
+                    alarm <- liftIO $ newAlarm 65000000 $ do 
                         errorM "ResearchWorker" . builderToString $ 
                             "Job for url " `mappend` (Bu.byteString url_to_analyze) `mappend` " still waiting... "
-                        markAnalysisStage hashid SystemCancelled_CAS base_research_dir
+                        -- markAnalysisStage hashid SystemCancelled_CAS base_research_dir
+                        -- waitAndResetState comp_state
                     let 
                         new_url_state = UrlState url_job_id AnalysisRequested_CAS alarm
 
@@ -572,6 +587,8 @@ researchWorkerComp (input_headers, maybe_source) = do
                         atomically $ do 
                             putTMVar start_harvester_browser hashid
                             putTMVar next_test_url_to_check_chan  hashid
+
+                        infoM "ResearchWorker" "After /setnexturl/ queueing"
 
                         markAnalysisStage hashid AnalysisRequested_CAS base_research_dir
 
@@ -641,7 +658,7 @@ unQueueKillBrowser log_url chan_to_read = do
     hashid <- liftIO $ do 
         -- Let's wait a second before killing the process....
         infoM "ResearchWorker" $ unpack $ B.append " .. " log_url
-        hashid <- atomically $ readTMVar chan_to_read
+        hashid <- atomically $ takeTMVar chan_to_read
         infoM "ResearchWorker" $ unpack $ B.append log_url " cleared for killing"
         return hashid
 
@@ -666,21 +683,21 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
     iface <-  getInterfaceName mimic_config_dir
     infoM "ResearchWorker.SpawnHarServer" $ ".. Mimic using interface: " ++ (show iface)
 
-    finish_request_mvar <- newEmptyMVar 
-
-    let 
-        watcher = do 
-            infoM "ResearchWorker.SpawnHarServer" $ " .. Finishing mimic service  " 
-            r <- readChan finish_request_chan
-            putMVar finish_request_mvar r
-            watcher 
-
-    forkIO watcher
 
     let 
         serveWork = do
+            finish_request_mvar <- newEmptyMVar 
 
-            resolve_center <- readChan resolve_center_chan
+            let 
+                watcher = do 
+                    r <- atomically $ takeTMVar finish_request_chan
+                    infoM "ResearchWorker.SpawnHarServer" $ " .. Finishing mimic service  " 
+                    putMVar finish_request_mvar r
+
+            forkIO watcher
+
+            infoM "ResearchWorker.SpawnHarServer" "Waiting for next assignment"
+            resolve_center <- atomically $ takeTMVar resolve_center_chan
 
             infoM "ResearchWorker.SpawnHarServer" $ printf ".. START for resolve center %s" (show $ resolve_center ^. rcName)
 
@@ -700,10 +717,8 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
             let 
                 http2worker = harCoherentWorker resolve_center
             tlsServeWithALPNAndFinishOnRequest  cert_filename priv_key_filename iface [ 
-                 -- ("h2-14", wrapSession veryBasic)
                  ("h2-14", http2Attendant http2worker)
 
-                 -- TODO: Let the user select HTTP/1.1 from time to time...
                 ] port finish_request_mvar
             -- 
             infoM "ResearchWorker.SpawnHarServer" $ printf ".. FINISH for resolve center %s" (show $ resolve_center ^. rcName)
@@ -883,3 +898,37 @@ removeIfExists fileName = removeFile fileName `catch` handleExists
   where handleExists e
           | isDoesNotExistError e = return ()
           | otherwise = E.throwIO e
+
+
+-- Cleans the state of any unfinished tokens
+resetState :: ServiceState -> IO ()
+resetState state = atomically $ do 
+    tryTakeTMVar $ state ^. nextTestUrl 
+    tryTakeTMVar $ state ^. nextTestUrlToCheck
+    tryTakeTMVar $ state ^. nextDNSMasqFile 
+    tryTakeTMVar $ state ^. resolveCenterChan 
+    tryTakeTMVar $ state ^. finishRequestChan 
+    tryTakeTMVar $ state ^. startHarvesterBrowserChan
+    tryTakeTMVar $ state ^. killHarvesterBrowserChan 
+    tryTakeTMVar $ state ^. startTesterBrowserChan
+    tryTakeTMVar $ state ^. killTesterBrowserChan
+    tryTakeTMVar $ state ^. testerReadyChan
+    tryTakeTMVar $ state ^. harvesterReadyChan 
+    putTMVar  (state ^. readyToGo) (Ready_RTG 0)
+    return ()
+
+
+waitAndResetState :: ServiceState -> IO ()
+waitAndResetState state = do 
+    -- Trigger stopping the mirror service, if needs come
+    atomically $ tryPutTMVar (state ^. finishRequestChan) FinishRequest
+    -- Not need to trigger kill-browsers, the resetter kills them 
+    -- automatically after a time. 
+
+    -- If the mimic server was not running before, the state of the 
+    -- finishRequestChan will be reset anyway.... 
+
+    -- Wait a little bit, so that a few resources can be freed
+    threadDelay 1000000
+    -- and then reset the state 
+    resetState state

@@ -38,7 +38,7 @@ MY_VERSION = "2015-04-01--12:32:00"
 
 def curl_arguments(endpoint, data_binary=""):
     return [
-        "curl", "-sS", "-k", "--data-binary", '{0}'.format(repr(data_binary.encode('ascii'))), # I don't think any data needs to be submitted
+        "curl", "-sS", "-k", "--data-binary", '{0}'.format(data_binary.encode('ascii')), # I don't think any data needs to be submitted
         "-X", "POST", "--http2", endpoint
     ]
 
