@@ -62,7 +62,10 @@ class Undaemon(object):
             return
         else:
             os.mkdir(self._undaemon_cgroup_path)
-            sp.check_call(shlex.split("mount -t cgroup undaemon -ocpu {0}".format(self._undaemon_cgroup_path)))
+            try:
+                sp.check_call(shlex.split("mount -t cgroup undaemon -ocpu {0}".format(self._undaemon_cgroup_path)))
+            except sp.CalledProcessError:
+                logger.info("As usual, mounting cgroup undaemon was rejected. This is normally done by the upstart stanza anyway...")            
             # Further setup the cgroup
             notify_on_release_flags = os.path.join(self._undaemon_cgroup_path, "notify_on_release")
             with open(notify_on_release_flags, "w") as out:
