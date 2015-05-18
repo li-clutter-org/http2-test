@@ -34,6 +34,7 @@ CHROME_CGROUP                   = "/sys/fs/cgroup/chrome"
 #KILL_BROWSER_AFTER              = 40
 # Debug time
 KILL_BROWSER_AFTER              = 50
+TIMES_TO_CHECK_FOR_CHROME       = 50
 
 
 exec_env = os.environ.copy()
@@ -295,7 +296,7 @@ def chrome_run():
         mo = re.search(r"\s+(0x[a-f0-9]+) \".*?Google Chrome\"", s)
         if mo is None:
             logger.warning("Couldn't find Google chrome windows,  maybe re-trying ")
-            if times_tried > 20:
+            if times_tried > TIMES_TO_CHECK_FOR_CHROME:
                 logger.error("Exiting chrome script because chrome windows didn't open")
                 sys.exit(1) 
             else:
