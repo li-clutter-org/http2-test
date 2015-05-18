@@ -628,17 +628,21 @@ startNextJobThread = do
 
     -- This op will be retried until we can get a ready on the 
     -- rtg_state
-    (jobseq_id, hashid, url_to_analyze) <- liftIO $ atomically $ do 
-        rtg_state <- takeTMVar ready_to_go 
-        JobDescr hashid url <- T.readTBChan next_job_descr
-        case rtg_state of 
-            Ready_RTG n -> do
-                putTMVar ready_to_go $ Processing_RTG n
-                putTMVar start_harvester_browser hashid
-                putTMVar next_test_url_to_check_chan  hashid
-                putTMVar next_harvest_url hashid
-                return (n,hashid,url)
-            _ -> retry
+    (jobseq_id, hashid, url_to_analyze) <- liftIO $ do 
+        infoM "ResearchWorker" "Before startNextJobThread block"
+        data_out <- atomically $ do 
+            rtg_state <- takeTMVar ready_to_go 
+            JobDescr hashid url <- T.readTBChan next_job_descr
+            case rtg_state of 
+                Ready_RTG n -> do
+                    putTMVar ready_to_go $ Processing_RTG n
+                    putTMVar start_harvester_browser hashid
+                    putTMVar next_test_url_to_check_chan  hashid
+                    putTMVar next_harvest_url hashid
+                    return (n,hashid,url)
+                _ -> retry
+        infoM "ResearchWorker" "After startNextJobThread block"
+        return data_out
 
     -- Just complain
     alarm <- liftIO $ newAlarm 65000000 $ do 
