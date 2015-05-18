@@ -604,7 +604,7 @@ researchWorkerComp (input_headers, maybe_source) = do
 -- (Also register the new hashid to url mapping...)
 startNextJobThread :: ServiceStateMonad ()
 startNextJobThread = do 
-    -- next_harvest_url              <- L.view nextHarvestUrl
+    next_harvest_url              <- L.view nextHarvestUrl
     -- next_dnsmasq_chan             <- L.view nextDNSMasqFile
     -- next_test_url_chan            <- L.view nextTestUrl
     next_test_url_to_check_chan   <- L.view nextTestUrlToCheck
@@ -636,6 +636,7 @@ startNextJobThread = do
                 putTMVar ready_to_go $ Processing_RTG n
                 putTMVar start_harvester_browser hashid
                 putTMVar next_test_url_to_check_chan  hashid
+                putTMVar next_harvest_url hashid
                 return (n,hashid,url)
             _ -> retry
 
