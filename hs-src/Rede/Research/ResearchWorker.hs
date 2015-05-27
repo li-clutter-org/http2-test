@@ -30,7 +30,7 @@ import           Data.Foldable                   (foldMap)
 import           Data.Monoid                     (mappend)
 import qualified Data.Monoid                     as M
 import qualified Data.Aeson                      as Da(decode, encode)
--- import           Data.Maybe                      (isJust)
+import           Data.Maybe                      (isJust)
 
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Reader      (ReaderT (..), runReaderT)
@@ -600,8 +600,19 @@ researchWorkerComp (input_headers, maybe_source) = do
                 return b
 
 
+sayIfFull :: MonadIO m => String -> TMVar b -> m ()
+sayIfFull msg tmvar = do 
+    r <- liftIO . atomically . tryTakeTMVar $ tmvar 
+    liftIO $ 
+        if isJust r 
+            then putStrLn $ msg ++ (" is full")
+            else putStrLn $ msg ++ (" is empty")
+
+
+
 -- External thread in charge of pushing jobs
--- (Also register the new hashid to url mapping...)
+-- (Also register the new hashid to url mapping...). It reads from 
+-- the nextJobDescr field of the ServiceStateMonad
 startNextJobThread :: ServiceStateMonad ()
 startNextJobThread = do 
     next_harvest_url              <- L.view nextHarvestUrl
@@ -658,7 +669,8 @@ startNextJobThread = do
         infoM "ResearchWorker" . builderToString $ 
             ".. <<processing new job>> asked " `mappend` (Bu.byteString url_to_analyze)
 
-    -- The system may fail to complete the whole task, and then 
+    -- The system may fail to complete the whole task, and then
+
     -- we will be stuck and blocked... what to do in this situation?
     -- Well, in that case have all the pipes emptied and start again...
     liftIO $ newAlarm timeForGeneralFail $ do 
@@ -943,19 +955,21 @@ removeIfExists fileName = removeFile fileName `catch` handleExists
 
 -- Cleans the state of any unfinished tokens
 resetState :: ServiceState -> IO ()
-resetState state = atomically $ do 
-    tryTakeTMVar $ state ^. nextTestUrl 
-    tryTakeTMVar $ state ^. nextTestUrlToCheck
-    tryTakeTMVar $ state ^. nextDNSMasqFile 
-    tryTakeTMVar $ state ^. resolveCenterChan 
-    tryTakeTMVar $ state ^. finishRequestChan 
-    tryTakeTMVar $ state ^. startHarvesterBrowserChan
-    tryTakeTMVar $ state ^. killHarvesterBrowserChan 
-    tryTakeTMVar $ state ^. startTesterBrowserChan
-    tryTakeTMVar $ state ^. killTesterBrowserChan
-    tryTakeTMVar $ state ^. testerReadyChan
-    tryTakeTMVar $ state ^. harvesterReadyChan 
-    putTMVar  (state ^. readyToGo) (Ready_RTG 0)
+resetState state = 
+  do
+    atomically $ tryTakeTMVar $ state ^. nextTestUrl 
+    atomically $ tryTakeTMVar $ state ^. nextTestUrlToCheck
+    atomically $ tryTakeTMVar $ state ^. nextHarvestUrl
+    atomically $ tryTakeTMVar $ state ^. nextDNSMasqFile 
+    atomically $ tryTakeTMVar $ state ^. resolveCenterChan 
+    atomically $ tryTakeTMVar $ state ^. finishRequestChan 
+    atomically $ tryTakeTMVar $ state ^. startHarvesterBrowserChan
+    atomically $ tryTakeTMVar $ state ^. killHarvesterBrowserChan 
+    atomically $ tryTakeTMVar $ state ^. startTesterBrowserChan
+    atomically $ tryTakeTMVar $ state ^. killTesterBrowserChan
+    atomically $ tryTakeTMVar $ state ^. testerReadyChan
+    atomically $ tryTakeTMVar $ state ^. harvesterReadyChan 
+    atomically $ tryPutTMVar  (state ^. readyToGo) (Ready_RTG 0)
     return ()
 
 
