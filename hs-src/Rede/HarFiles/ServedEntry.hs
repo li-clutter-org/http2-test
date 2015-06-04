@@ -333,5 +333,7 @@ heedContentTypeAndDecode served_entry =
 
 
     maybe_content_type = getHeader (served_entry ^. sreHeaders) "content-type"
-    Right rightly_decoded      = B64.decode not_decoded
+    rightly_decoded      = case  B64.decode not_decoded of 
+        Right r -> r 
+        Left _ -> not_decoded
     not_decoded = served_entry ^. sreContents

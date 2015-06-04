@@ -69,6 +69,9 @@ import           Rede.Research.JobId             (HashId(..), jobIdFromUrl, hash
 import           Rede.Research.JSONMessages      (SetNextUrl(..), DnsMasqConfig(..), WorkIndication(..))
 
 
+import           Debug.Trace (trace)
+
+
 type HashTable k v = H.CuckooHashTable k v
 
 data CurrentAnalysisStage = 
@@ -642,16 +645,36 @@ startNextJobThread = do
     (jobseq_id, hashid, url_to_analyze) <- liftIO $ do 
         infoM "ResearchWorker" "Before startNextJobThread block"
         data_out <- atomically $ do 
-            rtg_state <- takeTMVar ready_to_go 
+
+            -- Debug code ....
+            ready_to_go_is <- isEmptyTMVar ready_to_go
+            start_harvester_browser_is <- isEmptyTMVar start_harvester_browser
+            next_test_url_to_check_chan_is <- isEmptyTMVar next_test_url_to_check_chan
+            next_harvest_url_is <- isEmptyTMVar next_harvest_url
+            next_job_descr_is <-T.isEmptyTBChan next_job_descr
+            let 
+                c = trace (
+                    printf " *** %d %d %d %d %d"
+                        (fromEnum ready_to_go_is) 
+                        (fromEnum start_harvester_browser_is)
+                        (fromEnum next_test_url_to_check_chan_is)
+                        (fromEnum next_harvest_url_is)
+                        (fromEnum next_job_descr_is)
+                    ) 
+                d = trace "rtg ready "
+                e = trace "rtg busy"
+            -- End debug code 
+
+            rtg_state <- c $ takeTMVar ready_to_go 
             JobDescr hashid url <- T.readTBChan next_job_descr
             case rtg_state of 
-                Ready_RTG n -> do
+                Ready_RTG n -> d $ do
                     putTMVar ready_to_go $ Processing_RTG n
                     putTMVar start_harvester_browser hashid
                     putTMVar next_test_url_to_check_chan  hashid
                     putTMVar next_harvest_url hashid
                     return (n,hashid,url)
-                _ -> retry
+                _ -> e $ retry
         infoM "ResearchWorker" "After startNextJobThread block"
         return data_out
 
