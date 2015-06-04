@@ -980,19 +980,21 @@ removeIfExists fileName = removeFile fileName `catch` handleExists
 resetState :: ServiceState -> IO ()
 resetState state = 
   do
-    atomically $ tryTakeTMVar $ state ^. nextTestUrl 
-    atomically $ tryTakeTMVar $ state ^. nextTestUrlToCheck
-    atomically $ tryTakeTMVar $ state ^. nextHarvestUrl
-    atomically $ tryTakeTMVar $ state ^. nextDNSMasqFile 
-    atomically $ tryTakeTMVar $ state ^. resolveCenterChan 
-    atomically $ tryTakeTMVar $ state ^. finishRequestChan 
-    atomically $ tryTakeTMVar $ state ^. startHarvesterBrowserChan
-    atomically $ tryTakeTMVar $ state ^. killHarvesterBrowserChan 
-    atomically $ tryTakeTMVar $ state ^. startTesterBrowserChan
-    atomically $ tryTakeTMVar $ state ^. killTesterBrowserChan
-    atomically $ tryTakeTMVar $ state ^. testerReadyChan
-    atomically $ tryTakeTMVar $ state ^. harvesterReadyChan 
-    atomically $ tryPutTMVar  (state ^. readyToGo) (Ready_RTG 0)
+    atomically $ do 
+        tryTakeTMVar $ state ^. nextTestUrl
+        tryTakeTMVar $ state ^. nextTestUrlToCheck
+        tryTakeTMVar $ state ^. nextHarvestUrl
+        tryTakeTMVar $ state ^. nextDNSMasqFile 
+        tryTakeTMVar $ state ^. resolveCenterChan 
+        tryTakeTMVar $ state ^. finishRequestChan 
+        tryTakeTMVar $ state ^. startHarvesterBrowserChan
+        tryTakeTMVar $ state ^. killHarvesterBrowserChan 
+        tryTakeTMVar $ state ^. startTesterBrowserChan
+        tryTakeTMVar $ state ^. killTesterBrowserChan
+        tryTakeTMVar $ state ^. testerReadyChan
+        tryTakeTMVar $ state ^. harvesterReadyChan 
+        tryTakeTMVar $ (state ^. readyToGo)
+        tryPutTMVar (state ^. readyToGo) (Ready_RTG 0)
     return ()
 
 

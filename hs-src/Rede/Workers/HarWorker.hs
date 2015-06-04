@@ -90,7 +90,9 @@ harCoherentWorker resolve_center (input_headers, _ ) = do
                 contents = (served_entry ^. sreContents)
                 UnpackedNameValueList adapted_headers = adaptHeaders (served_entry ^. sreStatus ) (served_entry ^. sreHeaders)
                 contents_stream = do 
-                    liftIO $ threadDelay (served_entry ^. artificialDelay)
+                    -- liftIO $ threadDelay (served_entry ^. artificialDelay)
+                    -- Delay a fixed amount of 150ms...
+                    liftIO $ threadDelay 150000
                     yield contents
             in do 
                 liftIO $ 
