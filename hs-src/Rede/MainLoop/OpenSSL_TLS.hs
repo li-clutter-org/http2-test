@@ -222,107 +222,115 @@ tlsServeWithALPNAndFinishOnRequest :: FilePath
                  -> Int 
                  -> MVar FinishRequest
                  -> IO ()
-tlsServeWithALPNAndFinishOnRequest certificate_filename key_filename interface_name attendants interface_port finish_request = do 
+tlsServeWithALPNAndFinishOnRequest 
+    certificate_filename 
+    key_filename 
+    interface_name 
+    attendants 
+    interface_port 
+    finish_request = 
+    do 
 
-    let protocols_bs = protocolsToWire $ fmap (\ (s,_) -> pack s) attendants
-    withCString certificate_filename $ \ c_certfn -> withCString key_filename $ \ c_keyfn -> withCString interface_name $ \ c_iname -> do 
+        let protocols_bs = protocolsToWire $ fmap (\ (s,_) -> pack s) attendants
+        withCString certificate_filename $ \ c_certfn -> withCString key_filename $ \ c_keyfn -> withCString interface_name $ \ c_iname -> do 
 
-        -- Create an accepting endpoint
-        connection_ptr <- BU.unsafeUseAsCStringLen protocols_bs $ \ (pchar, len) ->
-            makeConnection 
-                c_certfn
-                c_keyfn
-                c_iname
-                (fromIntegral interface_port)
-                pchar 
-                (fromIntegral len)
+            -- Create an accepting endpoint
+            connection_ptr <- BU.unsafeUseAsCStringLen protocols_bs $ \ (pchar, len) ->
+                makeConnection 
+                    c_certfn
+                    c_keyfn
+                    c_iname
+                    (fromIntegral interface_port)
+                    pchar 
+                    (fromIntegral len)
 
-        -- Create a computation that accepts a connection, runs a session on it and recurses
-        let 
-            recursion = do 
-                -- Get a SSL session
-                either_wired_ptr <- alloca $ \ wired_ptr_ptr -> 
-                    let 
-                        tryOnce = do 
-                            result_code <- waitForConnection connection_ptr smallWaitTime wired_ptr_ptr
-                            let 
-                                r = case result_code of  
-                                    re  | re == allOk        -> do 
-                                            p <- peek wired_ptr_ptr
-                                            return $ Right_I  p
-                                        | re == timeoutReached -> do 
-                                            got_finish_request <- tryTakeMVar finish_request
-                                            case got_finish_request of 
-                                                Nothing ->
-                                                    tryOnce
-                                                Just _ ->
-                                                    return Interrupted 
-
-                                        | re == badHappened  -> return $ Left_I "A wait for connection failed"
-                            r 
-                    in tryOnce
-
-                -- With the potentially obtained SSL session do...
-                case either_wired_ptr of 
-
-                    Left_I msg -> do 
-                        errorM "OpenSSL" $ ".. wait for connection failed. " ++ msg
-
-                        -- // .. //
-                        recursion
-
-                    Right_I wired_ptr -> do 
-                        already_closed_mvar <- newMVar False
+            -- Create a computation that accepts a connection, runs a session on it and recurses
+            let 
+                recursion = do 
+                    -- Get a SSL session
+                    either_wired_ptr <- alloca $ \ wired_ptr_ptr -> 
                         let 
-                            pushAction datum = BU.unsafeUseAsCStringLen (LB.toStrict datum) $ \ (pchar, len) -> do 
-                                result <- sendData wired_ptr pchar (fromIntegral len)
-                                case result of  
-                                    r | r == allOk           -> return ()
-                                      | r == badHappened     -> throwIO $ ConnectionIOError "Could not send data"
-                            pullAction = do 
-                                allocaBytes useBufferSize $ \ pcharbuffer -> 
-                                    alloca $ \ data_recvd_ptr -> do 
-                                        result <- recvData wired_ptr pcharbuffer (fromIntegral useBufferSize) data_recvd_ptr
-                                        recvd_bytes <- case result of 
-                                            r | r == allOk       -> peek data_recvd_ptr
-                                              | r == badHappened -> throwIO $ ConnectionIOError "Could not receive data"
+                            tryOnce = do 
+                                result_code <- waitForConnection connection_ptr smallWaitTime wired_ptr_ptr
+                                let 
+                                    r = case result_code of  
+                                        re  | re == allOk        -> do 
+                                                p <- peek wired_ptr_ptr
+                                                return $ Right_I  p
+                                            | re == timeoutReached -> do 
+                                                got_finish_request <- tryTakeMVar finish_request
+                                                case got_finish_request of 
+                                                    Nothing ->
+                                                        tryOnce
+                                                    Just _ -> do
+                                                        infoM "OpenSSL" $ ".. mimic nicely asked to be interrupted"
+                                                        return Interrupted 
 
-                                        B.packCStringLen (pcharbuffer, fromIntegral recvd_bytes)
-                            closeAction = do
-                                b <- readMVar already_closed_mvar
-                                if not b 
-                                  then do
-                                    putMVar already_closed_mvar True
-                                    disposeWiredSession wired_ptr
-                                  else 
+                                            | re == badHappened  -> return $ Left_I "A wait for connection failed"
+                                r 
+                        in tryOnce
+
+                    -- With the potentially obtained SSL session do...
+                    case either_wired_ptr of 
+
+                        Left_I msg -> do 
+                            errorM "OpenSSL" $ ".. wait for connection failed. " ++ msg
+
+                            -- // .. //
+                            recursion
+
+                        Right_I wired_ptr -> do 
+                            already_closed_mvar <- newMVar False
+                            let 
+                                pushAction datum = BU.unsafeUseAsCStringLen (LB.toStrict datum) $ \ (pchar, len) -> do 
+                                    result <- sendData wired_ptr pchar (fromIntegral len)
+                                    case result of  
+                                        r | r == allOk           -> return ()
+                                          | r == badHappened     -> throwIO $ ConnectionIOError "Could not send data"
+                                pullAction = do 
+                                    allocaBytes useBufferSize $ \ pcharbuffer -> 
+                                        alloca $ \ data_recvd_ptr -> do 
+                                            result <- recvData wired_ptr pcharbuffer (fromIntegral useBufferSize) data_recvd_ptr
+                                            recvd_bytes <- case result of 
+                                                r | r == allOk       -> peek data_recvd_ptr
+                                                  | r == badHappened -> throwIO $ ConnectionIOError "Could not receive data"
+
+                                            B.packCStringLen (pcharbuffer, fromIntegral recvd_bytes)
+                                closeAction = do
+                                    b <- readMVar already_closed_mvar
+                                    if not b 
+                                      then do
+                                        putMVar already_closed_mvar True
+                                        disposeWiredSession wired_ptr
+                                      else 
+                                        return ()
+
+                            use_protocol <- getSelectedProtocol wired_ptr
+
+                            infoM "OpenSSL" $ ".. Using protocol: " ++ (show use_protocol)
+
+                            let 
+                                maybe_session_attendant = case fromIntegral use_protocol of 
+                                    n | (use_protocol >= 0)  -> Just $ snd $ attendants !! n 
+                                      | otherwise          -> Nothing 
+
+                            case maybe_session_attendant of 
+
+                                Just session_attendant -> 
+                                    session_attendant pushAction pullAction closeAction
+
+                                Nothing ->
                                     return ()
 
-                        use_protocol <- getSelectedProtocol wired_ptr
+                            -- // .. //
+                            recursion 
 
-                        infoM "OpenSSL" $ ".. Using protocol: " ++ (show use_protocol)
+                        Interrupted -> do
+                            infoM "OpenSSL" "Connection closed"
+                            closeConnection connection_ptr
 
-                        let 
-                            maybe_session_attendant = case fromIntegral use_protocol of 
-                                n | (use_protocol >= 0)  -> Just $ snd $ attendants !! n 
-                                  | otherwise          -> Nothing 
-
-                        case maybe_session_attendant of 
-
-                            Just session_attendant -> 
-                                session_attendant pushAction pullAction closeAction
-
-                            Nothing ->
-                                return ()
-
-                        -- // .. //
-                        recursion 
-
-                    Interrupted -> do
-                        infoM "OpenSSL" "Connection closed"
-                        closeConnection connection_ptr
-
-        -- Start the loop defined above...
-        recursion 
+            -- Start the loop defined above...
+            recursion 
 
 -- When we are using the eternal version of this function, wake up 
 -- each second .... 
