@@ -13,6 +13,7 @@
 module Rede.Research.JSONMessages(
     hashOfJob 
     ,workIndicationDatum
+    ,captureTime
 
     ,SetNextUrl(..)
     ,DnsMasqConfig(..)
@@ -59,6 +60,8 @@ instance ToJSON DnsMasqConfig where
 data WorkIndication a = WorkIndication {
     _hashOfJob               :: HashId 
     ,_workIndicationDatum    :: a
+    -- Wait time in seconds and fractions of a second.
+    ,_captureTime            :: Float 
     }
 
 makeLenses ''WorkIndication
@@ -71,8 +74,9 @@ instance ToJSONInput B.ByteString Text where
 
 
 instance (ToJSONInput a b) => ToJSON (WorkIndication a) where 
-    toJSON (WorkIndication h datum) = object [
+    toJSON (WorkIndication h datum ct) = object [
         "analysis_id" .= (decodeUtf8 . unHashId $ h),
-        "datum"       .= (toJSONInput datum)
+        "datum"       .= (toJSONInput datum),
+        "capture_time".= ct
         ]
 

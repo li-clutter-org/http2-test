@@ -95,6 +95,11 @@ timeForAlarm = 30000000
 timeForGeneralFail :: Int 
 timeForGeneralFail = 105000000
 
+-- For how long the resource-capturing spree should extend, in seconds
+-- and fractions
+presetCaptureTime :: Float
+presetCaptureTime = 5.0
+
 maxInQueue :: Int 
 maxInQueue = 5
 
@@ -325,7 +330,7 @@ researchWorkerComp (input_headers, maybe_source) = do
 
 
                 -- And finally return.
-                let msg = WorkIndication hashid url
+                let msg = WorkIndication hashid url presetCaptureTime
                 return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
                        
             | req_url == "/browserready/StationA" -> do 
@@ -370,7 +375,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                         atomically $ putTMVar kill_tester_browser hashid
                         waitAndResetState comp_state
                     return $ currentAlarm .~ alarm $ a1
-                let msg = WorkIndication hashid https_url
+                let msg = WorkIndication hashid https_url presetCaptureTime
                 return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
 
             | req_url == "/har/", Just source <- maybe_source -> do
