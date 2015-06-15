@@ -33,7 +33,7 @@ CHROME_CGROUP                   = "/sys/fs/cgroup/chrome"
 # Time in seconds to wait
 #KILL_BROWSER_AFTER              = 40
 # Debug time
-KILL_BROWSER_AFTER              = 50
+KILL_BROWSER_AFTER              = 160
 TIMES_TO_CHECK_FOR_CHROME       = 50
 
 

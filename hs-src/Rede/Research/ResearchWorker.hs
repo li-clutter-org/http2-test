@@ -93,12 +93,12 @@ timeForAlarm = 30000000
 
 -- Time to wait before unleashing an alarm for a failed sequence
 timeForGeneralFail :: Int 
-timeForGeneralFail = 105000000
+timeForGeneralFail = 125000000
 
 -- For how long the resource-capturing spree should extend, in seconds
 -- and fractions
 presetCaptureTime :: Float
-presetCaptureTime = 5.0
+presetCaptureTime = 10.0
 
 maxInQueue :: Int 
 maxInQueue = 5
@@ -435,6 +435,9 @@ researchWorkerComp (input_headers, maybe_source) = do
                 unQueueStartBrowser "/startbrowser/StationB" start_tester_browser
 
             | req_url == "/killbrowser/StationB" -> do 
+                -- DEBUG CODE... REMOVE!!!!! IMPORTANT!!!
+                -- liftIO $ threadDelay 120000000
+                --
                 unQueueKillBrowser "/killbrowser/StationB" kill_tester_browser
 
                 -- let endToken = "EAJ"
@@ -763,7 +766,6 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
     infoM "ResearchWorker.SpawnHarServer"  $ ".. Mimic port: " ++ (show port)
     iface <-  getInterfaceName mimic_config_dir
     infoM "ResearchWorker.SpawnHarServer" $ ".. Mimic using interface: " ++ (show iface)
-
 
     let 
         serveWork = do
