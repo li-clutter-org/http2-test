@@ -57,71 +57,70 @@ executable reh-mimic
   -- other-extensions:    
   
   -- Other library packages from which modules are imported.
-  build-depends: base >=4.7 && <4.8
+  build-depends: base >= 4.8
                  , optparse-applicative
                  , aeson >= 0.8
                  , connection >= 0.2 && < 0.3
                  , exceptions >= 0.6
-                 , bytestring == 0.10.4.0
+                 , bytestring >= 0.10.6.0
                  , base64-bytestring >= 1.0
                  , base16-bytestring >= 0.1.1
                  , data-default == 0.5.3
                  , stm-chans >= 3.0
                  , stm >= 2.4
-                 , tls >= 1.2 && < 1.3
+                 -- , tls >= 1.2 && < 1.3
                  , data-default-class == 0.0.1
-                 , network == 2.6.0.2
-                 , x509 == 1.5.0.1
-                 , certificate == 1.3.9
-                 , x509-store ==  1.5.0
-                 , x509-system == 1.5.0
+                 , network >= 2.6.0 && < 2.7
+                 --, x509 == 1.5.0.1
+                 --, certificate >= 1.3.9
+                 -- , x509-store ==  1.5.0
+                 -- , x509-system == 1.5.0
                  , text >= 1.2 && < 1.3
-                 , bitset == 1.4.8
-                 , binary == 0.7.1.0
-                 , pipes == 4.1.4
-                 , containers == 0.5.5.1
-                 , clock == 0.4.1.3
-                 , network-simple == 0.4.0.2
-                 , pipes-concurrency >= 2.0 && < 2.1
-                 , unix == 2.7.0.1
-                 , filepath == 1.3.0.2
-                 , directory == 1.2.1.0
+                 -- , bitset >= 1.4.8 && < 1.6
+                 , binary >= 0.7.1.0
+                 -- , pipes == 4.1.4
+                 , containers >= 0.5.5.1 && < 0.6
+                 , clock >= 0.4.1.3
+                 , network-simple >= 0.4.0
+                 --, pipes-concurrency >= 2.0 && < 2.1
+                 , unix >= 2.7.0 && < 3.0
+                 , filepath >= 1.4.0 && < 1.5
+                 , directory >= 1.2.1.0 && < 1.3
                  , asn1-encoding == 0.9.0
-                 , crypto-pubkey >= 0.2.7 && <0.3
+                 , crypto-pubkey >= 0.2.7 && < 0.3
                  , asn1-types == 0.3.0
-                 , crypto-random == 0.0.8
+                 --, crypto-random == 0.0.8
                  , cryptohash >= 0.11
                  , streaming-commons >= 0.1 && < 0.2
-                 , conduit == 1.2.3.1
-                 , conduit-combinators >= 0.3.0 && < 0.4
+                 , conduit >= 1.2.3.1
+                 --, conduit-combinators >= 0.3.0 && < 0.4
                  , transformers >=0.3 && <= 0.5
                  , mmorph == 1.0.4
-                 , QuickCheck ==  2.7.6
                  , network-uri >= 2.6 && < 2.7
                  , hashtables >= 1.2 && < 1.3
-                 , dequeue == 0.1.5
-                 , lens >= 4.6 && < 4.7
+                 -- , dequeue == 0.1.5
+                 , lens >= 4.6 && < 5.0
                  , base64-bytestring >= 1.0
-                 , http2 >= 0.7
+                 , http2 >= 1.0.2
                  --, hedis == 0.6.5
-                 , blaze-builder >= 0.3.3 &&  < 0.4
+                 --, blaze-builder >= 0.3.3 &&  < 0.4
                  , process >= 1.2 && < 1.3
-                 , void 
+                 , void
                  , random >= 1.0
                  , time
                  , hslogger >= 1.2.6
-                 , hashable == 1.2.3.1
-     -- , asn-data
-  
+                 , hashable >= 1.2.3.1 && < 1.3
+
+
   -- Directories containing source files.
   hs-source-dirs: hs-src
-  
+
   -- Base language which the package is written in.
   default-language: Haskell2010
 
   -- Very specific directory with the version of openssl 
   -- that I'm using. As of February 2015, this one is not 
-  -- commonly installed 
+  -- commonly installed
   include-dirs: /opt/openssl-1.0.2/include
 
   c-sources: cbits/tlsinc.c
@@ -132,9 +131,7 @@ executable reh-mimic
 
   ghc-options: -threaded -eventlog -rtsopts
 
-  extra-libraries: ssl 
+  extra-libraries: ssl
                  , crypto
 
   extra-lib-dirs: /opt/openssl-1.0.2/lib
-  
-

@@ -9,3 +9,4 @@ export PATH=$THIS_DIR/.cabal-sandbox/bin:$PATH
 export PATH=/opt/openssl-1.0.2/bin:$PATH
 # Have a file here in the root with the aws access keys to use.
 source $THIS_DIR/aws_access_keys
+export PATH=/home/alcides/.stack/programs/x86_64-linux/ghc-7.10.1/bin:$PATH
