@@ -55,11 +55,24 @@ import           Rede.HarFiles.ServedEntry       (BadHarFile (..),
                                                   ResolveCenter, allSeenHosts,
                                                   rcName, resolveCenterFromLazyByteString
                                                   )
-import           Rede.Http2.MakeAttendant        (http2Attendant)
-import           Rede.MainLoop.CoherentWorker
+
+import           SecondTransfer.Http2            (http2Attendant)
+import           SecondTransfer.Exception        (StreamCancelledException)
+import           SecondTransfer                  (
+                                                  tlsServeWithALPNAndFinishOnRequest,
+                                                  dropIncomingData,
+                                                  PrincipalStream,
+                                                  InputDataStream,
+                                                  CoherentWorker,
+                                                  Request,
+                                                  FinishRequest (..)
+                                                 )
+
+
+-- import           Rede.MainLoop.CoherentWorker
 import           Rede.MainLoop.ConfigHelp        (configDir, getInterfaceName,
                                                   getMimicPort)
-import           Rede.MainLoop.OpenSSL_TLS       (FinishRequest (..), tlsServeWithALPNAndFinishOnRequest)
+
 import           Rede.Utils.ConcatConduit        (concatConduit)
 import           Rede.Utils.PrintfArgByteString  ()
 import           Rede.Utils.Alarm
@@ -91,17 +104,42 @@ data ReadinessPing = ReadinessPing
 timeForAlarm :: Int
 timeForAlarm = 30000000
 
+
 -- Time to wait before unleashing an alarm for a failed sequence
 timeForGeneralFail :: Int
 timeForGeneralFail = 125000000
+
 
 -- For how long the resource-capturing spree should extend, in seconds
 -- and fractions
 presetCaptureTime :: Float
 presetCaptureTime = 10.0
 
+
 maxInQueue :: Int
 maxInQueue = 5
+
+
+-- | Consumes the request body and returns it.... this can be 
+--   happily done in the threadlets of Haskell without any further
+--   brain-burning.....
+waitRequestBody :: InputDataStream -> IO B.ByteString
+waitRequestBody source =
+  let
+    consumer  b = do
+        maybe_bytes <- await
+        case maybe_bytes of
+
+            Just bytes -> do
+                -- liftIO $ putStrLn $ "Got bytes " ++ (show $ B.length bytes)
+                consumer $ b `M.mappend` (Bu.byteString bytes)
+
+            Nothing -> do
+                -- liftIO $ putStrLn "Finishing"
+                return b
+  in do
+    full_builder <- (source $$ consumer "") :: IO Bu.Builder
+    return $ (LB.toStrict . Bu.toLazyByteString) full_builder
 
 
 -- This state structure follows a given URL analysis.
@@ -501,7 +539,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                 catch
                     (do
                         dnsmasq_contents <- liftIO $ do
-                            waitRequestBody source
+                            dropIncomingData source
                             -- Sends a DNSMASQ file to the test station ("StationB")
                             infoM "ResearchWorker" ".. /dnsmasq/ asked"
                             -- Serve the DNS masq file corresponding to the last .har file

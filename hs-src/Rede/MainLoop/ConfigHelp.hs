@@ -1,21 +1,21 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell, DeriveDataTypeable #-}
 
 module Rede.MainLoop.ConfigHelp(
-	configDir
-	,mimicDataDir
-	,wwwDir
-	,getServedHost
-	,getServedPort
-	,getHostPort
-	,getInterfaceName
-	,getMimicPort
-	,getPrivkeyFilename
-	,getCertFilename
-	,getMimicPostPort
-	,getMimicPostInterface
+        configDir
+        ,mimicDataDir
+        ,wwwDir
+        ,getServedHost
+        ,getServedPort
+        ,getHostPort
+        ,getInterfaceName
+        ,getMimicPort
+        ,getPrivkeyFilename
+        ,getCertFilename
+        ,getMimicPostPort
+        ,getMimicPostInterface
 
-	,HostPort
-	) where 
+        ,HostPort
+        ) where
 
 
 import           Control.Exception
@@ -41,86 +41,85 @@ type HostPort = (String, Int)
 
 
 kelDataDir :: IO FilePath
-kelDataDir = 
-	catch 
-		(getEnv "KEL_DATA_DIR")
-		noEnvErrorHandler
+kelDataDir =
+        catch
+                (getEnv "KEL_DATA_DIR")
+                noEnvErrorHandler
 
 
 mimicDataDir :: IO FilePath
-mimicDataDir = 
-	catch 
-		(getEnv "MIMIC_DATA_DIR")
-		noEnvErrorHandler
+mimicDataDir =
+        catch
+                (getEnv "MIMIC_DATA_DIR")
+                noEnvErrorHandler
 
 
-configDir :: FilePath -> FilePath 
-configDir base_dir = do 
-	base_dir </> "config"
+configDir :: FilePath -> FilePath
+configDir base_dir = do
+        base_dir </> "config"
 
 
 wwwDir :: IO FilePath
-wwwDir = do 
-	data_dir <- kelDataDir 
-	return $ data_dir </> "www"
+wwwDir = do
+        data_dir <- kelDataDir
+        return $ data_dir </> "www"
 
 
-noEnvErrorHandler :: IOError -> IO FilePath 
-noEnvErrorHandler _ = do 
-	putStrLn "NoEnvironment"
-	getCurrentDirectory
+noEnvErrorHandler :: IOError -> IO FilePath
+noEnvErrorHandler _ = do
+        putStrLn "NoEnvironment"
+        getCurrentDirectory
 
 
-getServedHost :: FilePath -> IO String 
-getServedHost config_dir = do 
-	contents <- readFile $ config_dir </> "servedhost.conf"
-	return $ contents
+getServedHost :: FilePath -> IO String
+getServedHost config_dir = do
+        contents <- readFile $ config_dir </> "servedhost.conf"
+        return $ contents
 
 
-getCertFilename :: FilePath -> FilePath 
+getCertFilename :: FilePath -> FilePath
 getCertFilename config_dir = config_dir </> "servercert.pem"
 
 
-getPrivkeyFilename :: FilePath -> FilePath 
+getPrivkeyFilename :: FilePath -> FilePath
 getPrivkeyFilename config_dir = config_dir </> "privkey.pem"
 
 
-getInterfaceName :: FilePath -> IO String 
-getInterfaceName config_dir = do 
-	contents <- readFile $ config_dir </> "useinterface.conf"
-	return $ contents
+getInterfaceName :: FilePath -> IO String
+getInterfaceName config_dir = do
+        contents <- readFile $ config_dir </> "useinterface.conf"
+        return $ contents
 
 
-getServedPort :: FilePath -> IO Int 
-getServedPort config_dir = do 
-	contents <- readFile $ config_dir </> "port.conf"
-	return $ read contents
+getServedPort :: FilePath -> IO Int
+getServedPort config_dir = do
+        contents <- readFile $ config_dir </> "port.conf"
+        return $ read contents
 
 
 getHostPort :: FilePath -> IO HostPort
-getHostPort config_dir = do 
-	served_host <- getServedHost config_dir
-	served_port <- getServedPort config_dir
+getHostPort config_dir = do
+        served_host <- getServedHost config_dir
+        served_port <- getServedPort config_dir
 
-	return (served_host, served_port)
+        return (served_host, served_port)
 
 
 getMimicPort :: IO Int
-getMimicPort = do 
-	mimic_dir <- mimicDataDir
-	let config_dir = configDir mimic_dir
-	contents <- readFile $ config_dir </> "port.conf"
-	return $ read contents
+getMimicPort = do
+        mimic_dir <- mimicDataDir
+        let config_dir = configDir mimic_dir
+        contents <- readFile $ config_dir </> "port.conf"
+        return $ read contents
 
 
 getMimicPostPort :: FilePath -> IO Int
-getMimicPostPort config_dir = do 
-	contents <- readFile $ config_dir </> "post-port.conf"
-	return $  read contents
+getMimicPostPort config_dir = do
+        contents <- readFile $ config_dir </> "post-port.conf"
+        return $  read contents
 
 
 getMimicPostInterface :: FilePath -> IO String
-getMimicPostInterface config_dir = do 
-	contents <-  readFile $ config_dir </> "post-interface.conf"
-	return $ stripString contents
-
+getMimicPostInterface config_dir = do
+        contents <-  readFile $ config_dir </> "post-interface.conf"
+        return $ stripString contents

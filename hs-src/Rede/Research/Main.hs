@@ -21,7 +21,7 @@ import           Rede.MainLoop.OpenSSL_TLS    (tlsServeWithALPN, FinishRequest(.
 import           Rede.Research.ResearchWorker (runResearchWorker,
                                                spawnHarServer)
 
-import           Rede.Http2.MakeAttendant     (http2Attendant)
+import           SecondTransfer.Http2         (http2Attendant)
 import           Rede.HarFiles.ServedEntry    (ResolveCenter)
 
 
