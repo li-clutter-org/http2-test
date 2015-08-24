@@ -3,7 +3,7 @@
 module Rede.Workers.HarWorker(
     harCoherentWorker
 
-    ) where 
+    ) where
 
 
 
@@ -18,15 +18,15 @@ import qualified Data.Set                     as S
 import           Control.Lens                 ((^.))
 -- import qualified Control.Lens                 as L
 import           System.Log.Logger
+
 -- import           Control.Concurrent.MVar
 
 import qualified Network.URI                  as U
 -- import           Text.Printf
 
 
+import           SecondTransfer.Types
 import           Rede.HarFiles.ServedEntry
-import           Rede.MainLoop.CoherentWorker (CoherentWorker, PrincipalStream,
-                                               getHeaderFromFlatList)
 -- import           Rede.MainLoop.StreamWorker   (send404)
 import           Rede.MainLoop.Tokens         (
                                                -- StreamInputToken (..),
@@ -41,7 +41,7 @@ import           Rede.Workers.VeryBasic       (bad404ResponseData,
 
 
 
-adaptHeaders :: Int -> UnpackedNameValueList -> UnpackedNameValueList 
+adaptHeaders :: Int -> UnpackedNameValueList -> UnpackedNameValueList
 adaptHeaders status_code (UnpackedNameValueList raw_headers) = let
     -- Let's remove some headers....
     -- Connection, Host, Keep-Alive, Proxy-Connection, Transfer-Encoding, Accept-Ranges
@@ -68,44 +68,45 @@ adaptHeaders status_code (UnpackedNameValueList raw_headers) = let
         "transfer-encoding",
         "accept-ranges"] :: S.Set B.ByteString
 
-    -- And be sure to put everything lowercase 
-  in 
+    -- And be sure to put everything lowercase
+  in
     UnpackedNameValueList headers_to_send
-    
 
-harCoherentWorker :: ResolveCenter -> CoherentWorker 
-harCoherentWorker resolve_center (input_headers, _ ) = do 
+
+harCoherentWorker :: ResolveCenter -> CoherentWorker
+harCoherentWorker resolve_center (input_headers, _ ) = do
 
     -- liftIO $ putStrLn $ "headers: " ++ (show input_headers)
-    
-    let 
+
+    let
         resolver = resolveFromHar resolve_center
         maybe_served_entry  = resolver resource_handle :: Maybe ServedEntry
-    -- Not pushing any streams now.... 
+    -- Not pushing any streams now....
     let pushed_streams = []
 
-    case maybe_served_entry of 
+    case maybe_served_entry of
 
-        Just served_entry -> let 
+        Just served_entry -> let
                 contents = (served_entry ^. sreContents)
                 UnpackedNameValueList adapted_headers = adaptHeaders (served_entry ^. sreStatus ) (served_entry ^. sreHeaders)
-                contents_stream = do 
+                contents_stream = do
                     -- liftIO $ threadDelay (served_entry ^. artificialDelay)
                     -- Delay a fixed amount of 150ms...
                     liftIO $ threadDelay 150000
                     yield contents
-            in do 
-                liftIO $ 
+                    return []
+            in do
+                liftIO $
                     -- threadDelay additionalDelay
                     liftIO $ infoM "HarWorker" $ " .. HIT " ++ (show resource_handle)
                 return (adapted_headers , pushed_streams, contents_stream)
 
-        Nothing -> do 
+        Nothing -> do
             liftIO $ errorM "HarWorker" $ "  .. resource " ++ (show resource_handle) ++ " not found."
             return bad404PrincipalStream
 
 
-  where 
+  where
     (Just path)                            = getHeaderFromFlatList input_headers ":path"
     (Just host)                            = getHeaderFromFlatList input_headers ":authority"
     Just (U.URI _ _ u_path u_query u_frag) = U.parseURIReference $ unpack path
@@ -113,24 +114,26 @@ harCoherentWorker resolve_center (input_headers, _ ) = do
         U.uriScheme     = "https:"
         ,U.uriAuthority = Just $ U.URIAuth {
             U.uriUserInfo = ""
-            ,U.uriRegName = unpack host 
+            ,U.uriRegName = unpack host
             ,U.uriPort    = ""
             }
         ,U.uriPath      = u_path
-        ,U.uriQuery     = u_query 
-        ,U.uriFragment  = u_frag 
+        ,U.uriQuery     = u_query
+        ,U.uriFragment  = u_frag
       }
 
     -- This string includes the method in front of the schema and everything else...
     resource_handle     = handleFromMethodAndUrl method $ (pack.show) complete_url
-    
+
     (Just method)   = getHeaderFromFlatList input_headers ":method"
 
 
-bad404PrincipalStream :: PrincipalStream 
-bad404PrincipalStream = 
+bad404PrincipalStream :: TupledPrincipalStream
+bad404PrincipalStream =
     (
         bad404ResponseHeaders ,
         [],
-        yield bad404ResponseData
+        do
+            yield bad404ResponseData
+            return []
     )

@@ -67,6 +67,7 @@ import           SecondTransfer                  (
                                                   Request,
                                                   FinishRequest (..)
                                                  )
+import          SecondTransfer.Types
 
 
 -- import           Rede.MainLoop.CoherentWorker
@@ -289,7 +290,7 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
     return $ \request -> runReaderT (researchWorkerComp request) state
 
 
-researchWorkerComp :: Request -> ServiceStateMonad PrincipalStream
+researchWorkerComp :: (Headers, Maybe InputDataStream) -> ServiceStateMonad TupledPrincipalStream
 researchWorkerComp (input_headers, maybe_source) = do
     next_harvest_url              <- L.view nextHarvestUrl
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
@@ -535,11 +536,11 @@ researchWorkerComp (input_headers, maybe_source) = do
                     )
                     on_bad_har_file
 
-            | req_url == "/dnsmasq/" , Just source <- maybe_source  -> do
+            | req_url == "/dnsmasq/"   -> do
                 catch
                     (do
                         dnsmasq_contents <- liftIO $ do
-                            dropIncomingData source
+                            dropIncomingData maybe_source
                             -- Sends a DNSMASQ file to the test station ("StationB")
                             infoM "ResearchWorker" ".. /dnsmasq/ asked"
                             -- Serve the DNS masq file corresponding to the last .har file
@@ -555,7 +556,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                     )
                     on_general_error
 
-            | req_url == "/dnsmasqupdated/",  Just source <- maybe_source -> do
+            | req_url == "/dnsmasqupdated/" , Just source <- maybe_source -> do
                 -- Received  advice that everything is ready to proceed
                 liftIO $ do
                     received_id <- waitRequestBody source
@@ -615,11 +616,11 @@ researchWorkerComp (input_headers, maybe_source) = do
 
 
   where
-    on_bad_har_file :: BadHarFile -> ServiceStateMonad PrincipalStream
+    on_bad_har_file :: BadHarFile -> ServiceStateMonad TupledPrincipalStream
     on_bad_har_file  (BadHarFile _) =
         return $ simpleResponse 500 "BadHarFile"
 
-    on_general_error :: E.SomeException -> ServiceStateMonad PrincipalStream
+    on_general_error :: E.SomeException -> ServiceStateMonad TupledPrincipalStream
     on_general_error e = do
         liftIO $ errorM "ResearchWorker" (show e)
         throwM e
@@ -760,7 +761,7 @@ startNextJobThread = do
     startNextJobThread
 
 
-unQueueStartBrowser :: B.ByteString -> TMVar HashId -> ServiceStateMonad PrincipalStream
+unQueueStartBrowser :: B.ByteString -> TMVar HashId -> ServiceStateMonad TupledPrincipalStream
 unQueueStartBrowser log_url chan_to_read =
   do
     -- Ensure start
@@ -774,7 +775,7 @@ unQueueStartBrowser log_url chan_to_read =
     return $ simpleResponse 200 $ B.append "hashid=" bs_hashid
 
 
-unQueueKillBrowser :: B.ByteString -> TMVar HashId -> ServiceStateMonad PrincipalStream
+unQueueKillBrowser :: B.ByteString -> TMVar HashId -> ServiceStateMonad TupledPrincipalStream
 unQueueKillBrowser log_url chan_to_read = do
     -- StationA refers to the harvester....
     hashid <- liftIO $ do
@@ -804,6 +805,7 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
     infoM "ResearchWorker.SpawnHarServer"  $ ".. Mimic port: " ++ (show port)
     iface <-  getInterfaceName mimic_config_dir
     infoM "ResearchWorker.SpawnHarServer" $ ".. Mimic using interface: " ++ (show iface)
+    sessions_context 
 
     let
         serveWork = do
@@ -836,7 +838,7 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
             infoM "ResearchWorker.SpawnHarServer" $ ".. Starting mimic server"
 
             let
-                http2worker = harCoherentWorker resolve_center
+                http2worker = coherentToAwareWorker $ harCoherentWorker resolve_center
             tlsServeWithALPNAndFinishOnRequest  cert_filename priv_key_filename iface [
                  ("h2-14", http2Attendant http2worker)
 

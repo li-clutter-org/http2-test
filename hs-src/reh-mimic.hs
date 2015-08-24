@@ -21,17 +21,19 @@ import           System.Log.Handler        (setFormatter, LogHandler)
 import           System.Log.Handler.Simple
 import           System.Log.Handler.Syslog (Facility (..), Option (..), openlog)
 import           System.Log.Logger
+import           SecondTransfer
+
 
 -- Imports from other parts of the program
 
 import           Rede.MainLoop.ConfigHelp  (mimicDataDir)
 import           Rede.Research.Main        (research)
-import           Rede.MainLoop.OpenSSL_TLS (ConnectionIOError(..))
+
 
 
 
 -- What is the program going to do?
-data ProgramAction = 
+data ProgramAction =
     ResearchUrl_PA -- Wait for a POST request from the browser
 
 
@@ -53,15 +55,15 @@ programParser = Program <$> (
              ( long "action"
                 <> metavar "ACTION"
                 <> help    "What's the program going to do: only \"research\" is supported now." )
-        )    
+        )
 
 
 main :: IO ()
 main = do
     env_vars <- getEnvironment
-    case find (\ (name, _) -> name == "MIMIC_CONSOLE_LOGGER") env_vars of 
+    case find (\ (name, _) -> name == "MIMIC_CONSOLE_LOGGER") env_vars of
 
-        Nothing                                         -> configureLoggingToSyslog 
+        Nothing                                         -> configureLoggingToSyslog
 
         Just (_, x) | not $ (length x) == 0 || x == "0" -> configureLoggingToConsole
 
@@ -72,21 +74,21 @@ main = do
     infoM "RehMimic" $ printf "Mimic dir: \"%s\"" mimic_dir
     prg   <-  execParser opts_metadata
 
-    catch 
-        (case Main.action prg of 
+    catch
+        (case Main.action prg of
 
-            ResearchUrl_PA       -> do 
+            ResearchUrl_PA       -> do
                 research mimic_dir
         )
         (\ (ConnectionIOError msg) -> errorM "HTTP2.Session" ("ConnectionIOError: " ++ msg)
         )
 
 
-  where 
-    opts_metadata = info 
+  where
+    opts_metadata = info
         ( helper <*> programParser )
-        ( fullDesc 
-            <>  progDesc 
+        ( fullDesc
+            <>  progDesc
                 ( "Mimics web servers. Use environmnet variables MIMIC_DATA_DIR to point to where the scratch directory" ++
                   "of the server is. Use the variable MIMIC_CONSOLE_LOGGER with value 1 to log messages to console; otherwise " ++
                   "they are going to syslog. " )
@@ -96,39 +98,39 @@ main = do
 
 
 configureLoggingToConsole :: IO ()
-configureLoggingToConsole = do 
-    s <- streamHandler stderr DEBUG  >>= 
+configureLoggingToConsole = do
+    s <- streamHandler stderr DEBUG  >>=
         \lh -> return $ setFormatter lh (simpleLogFormatter "[$time : $loggername : $prio] $msg")
     setLoggerLevels s
 
 
 configureLoggingToSyslog :: IO ()
-configureLoggingToSyslog = do 
-    s <- openlog "RehMimic" [PID] DAEMON INFO >>= 
+configureLoggingToSyslog = do
+    s <- openlog "RehMimic" [PID] DAEMON INFO >>=
         \lh -> return $ setFormatter lh (simpleLogFormatter "[$time : $loggername : $prio] $msg")
     setLoggerLevels s
 
 
-setLoggerLevels :: (LogHandler s) => s -> IO () 
+setLoggerLevels :: (LogHandler s) => s -> IO ()
 setLoggerLevels s = do
     updateGlobalLogger rootLoggerName removeHandler
     updateGlobalLogger "HTTP2.Session" (
         setHandlers [s] .  -- Remember that composition works in reverse...
-        setLevel INFO  
+        setLevel INFO
         )
     updateGlobalLogger "OpenSSL" (
         setHandlers [s] .  -- Remember that composition works in reverse...
-        setLevel INFO  
+        setLevel INFO
         )
     updateGlobalLogger "HarWorker" (
         setHandlers [s] .  -- Remember that composition works in reverse...
-        setLevel DEBUG  
+        setLevel DEBUG
         )
     updateGlobalLogger "ResearchWorker" (
         setHandlers [s] .  -- Remember that composition works in reverse...
-        setLevel DEBUG  
+        setLevel DEBUG
         )
     updateGlobalLogger "HTTP2.Framer" (
-        setHandlers [s] . 
+        setHandlers [s] .
         setLevel INFO
         )

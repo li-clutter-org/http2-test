@@ -4,7 +4,7 @@ module Rede.Workers.VeryBasic(
     veryBasic
     ,bad404ResponseData
     ,bad404ResponseHeaders
-    ) where 
+    ) where
 
 
 import qualified Data.ByteString as B
@@ -12,11 +12,10 @@ import           Data.Conduit
 import           Data.ByteString.Char8 (pack)
 
 
+import           SecondTransfer.Types
 
-import Rede.MainLoop.CoherentWorker
 
-
-trivialHeaders :: [(B.ByteString, B.ByteString)] 
+trivialHeaders :: [(B.ByteString, B.ByteString)]
 trivialHeaders = [
     (":status", "200"),
     ("server",  "reh0m")
@@ -24,20 +23,22 @@ trivialHeaders = [
 
 
 veryBasic :: CoherentWorker
-veryBasic (headers, _) = do 
-    let data_and_conclussion = yield "Hello world!"
+veryBasic (headers, _) = do
+    let data_and_conclussion = do
+          yield "Hello world!"
+          return []
 
     putStrLn "Got these headers: "
-    print headers 
+    print headers
 
     return (trivialHeaders, [], data_and_conclussion)
 
 
-bad404ResponseData :: B.ByteString 
+bad404ResponseData :: B.ByteString
 bad404ResponseData = "404: ReH: Didn't find that"
 
 
-bad404ResponseHeaders ::  Headers 
+bad404ResponseHeaders ::  Headers
 bad404ResponseHeaders =  [
                  (":status", "404")
                 ,(":version", "HTTP/1.1")

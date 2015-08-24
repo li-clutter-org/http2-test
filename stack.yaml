@@ -1,7 +1,5 @@
 flags: {}
 packages:
 - '.'
-extra-deps: []
-# - bitset-1.4.8
-# - dequeue-0.1.5
+- './second-transfer'
 resolver: nightly-2015-07-30

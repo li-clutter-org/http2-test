@@ -4,3 +4,6 @@
 [submodule "scripts/StationA/chrome_captures_hars"]
 	path = scripts/StationA/chrome_captures_hars
 	url = ssh://git@gitlab.zunzun.se:10022/http2studytool/chrome_captures_hars.git
+[submodule "second-transfer"]
+	path = second-transfer
+	url = ssh://git@gitlab.zunzun.se:10022/alcides/second-transfer.git

@@ -66,4 +66,7 @@ running Chrome instances.
 Configuration
 =============
 
-_to be written_
+To configure the Haskell code with Cabal while stack is properly working, use the following:
+
+    $ ./cabal_configure_for_emacs.sh
+

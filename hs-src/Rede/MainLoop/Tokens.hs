@@ -1,6 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE FunctionalDependencies, FlexibleInstances  #-} 
+{-# LANGUAGE FunctionalDependencies, FlexibleInstances  #-}
 
 module Rede.MainLoop.Tokens(
 	packHeaderTuples
@@ -15,7 +15,7 @@ module Rede.MainLoop.Tokens(
     ,StreamWorkerClass     (..)
     ,LocalStreamId
     ,GlobalStreamId
-	) where 
+	) where
 
 
 
@@ -50,9 +50,9 @@ type LocalStreamId = Int
 type GlobalStreamId = Int
 
 
-data StreamOutputAction = SendHeaders_SOA UnpackedNameValueList 
+data StreamOutputAction = SendHeaders_SOA UnpackedNameValueList
                         | SendAssociatedHeaders_SOA LocalStreamId UnpackedNameValueList
-                        | SendData_SOA B.ByteString 
+                        | SendData_SOA B.ByteString
                         | SendAssociatedData_SOA LocalStreamId B.ByteString
                         | SendAssociatedFinish_SOA LocalStreamId
                         | Finish_SOA
@@ -63,10 +63,10 @@ actionIsForAssociatedStream :: StreamOutputAction -> Maybe (LocalStreamId, Strea
 actionIsForAssociatedStream (SendAssociatedData_SOA stream_id x    ) = Just (stream_id, SendData_SOA     x)
 actionIsForAssociatedStream (SendAssociatedHeaders_SOA stream_id x ) = Just (stream_id, SendHeaders_SOA  x)
 actionIsForAssociatedStream (SendAssociatedFinish_SOA stream_id    ) = Just (stream_id, Finish_SOA    )
-actionIsForAssociatedStream _                                        = Nothing 
+actionIsForAssociatedStream _                                        = Nothing
 
 
--- | A StreamWorker: a conduit that takes input tokens and answers with output 
+-- | A StreamWorker: a conduit that takes input tokens and answers with output
 --   tokens. It can perform I/O.
 type StreamWorker = Conduit StreamInputToken IO StreamOutputAction
 
@@ -76,7 +76,7 @@ type StreamWorker = Conduit StreamInputToken IO StreamOutputAction
 --
 --   Todo: although this shows a common pattern, I'm not sure how having a class
 --   here helps....
-class StreamWorkerClass serviceParams servicePocket sessionPocket | 
+class StreamWorkerClass serviceParams servicePocket sessionPocket |
         serviceParams -> sessionPocket servicePocket,
         servicePocket -> sessionPocket serviceParams,
         sessionPocket -> servicePocket where
@@ -89,61 +89,61 @@ class StreamWorkerClass serviceParams servicePocket sessionPocket |
 
 
 
- 
-instance Binary UnpackedNameValueList where 
-    put unvl = 
-        do 
+
+instance Binary UnpackedNameValueList where
+    put unvl =
+        do
             putWord32be length32
-            forM_ packed $ \ (h,v) -> do 
+            forM_ packed $ \ (h,v) -> do
                 putWord32be $ fromIntegral (BS.length h)
                 putByteString h
 
                 putWord32be $ fromIntegral (BS.length v)
                 putByteString v
-      where 
-        length32 = (fromIntegral $ length packed)::Word32 
+      where
+        length32 = (fromIntegral $ length packed)::Word32
         packed = packHeaderTuples unvl
 
-    get = 
+    get =
         do
             entry_count    <- getWord32be
-            packed_entries <- replicateM  (fromIntegral entry_count) $ do { 
+            packed_entries <- replicateM  (fromIntegral entry_count) $ do {
                 name_length    <- getWord32be
                 ; name         <- getByteString (fromIntegral name_length)
-                ; value_length <- getWord32be 
+                ; value_length <- getWord32be
                 ; value        <- getByteString (fromIntegral value_length)
                 ; return (name, value) }
-            return $ unpackHeaderTuples packed_entries     
+            return $ unpackHeaderTuples packed_entries
 
 
 -- Just puts them together, as per the spec
 packHeaderTuples ::  UnpackedNameValueList -> [(BS.ByteString, BS.ByteString)]
 packHeaderTuples (UnpackedNameValueList uvl) = let
     sortFun (h1, _) (h2, _) = compare h1 h2
-    sorted_uvl                = sortBy sortFun uvl 
+    sorted_uvl                = sortBy sortFun uvl
     sameName []               = []
-    sameName ((h, v):rest)      = let 
+    sameName ((h, v):rest)      = let
         (cousins,nocousins) = span (\ (hh, _) -> hh == h ) rest
         cousings_value = BS.intercalate "\0" $ v:(map snd cousins)
-      in 
+      in
         (h, cousings_value):(sameName nocousins)
-  in 
+  in
     sameName sorted_uvl
 
 
--- And unputs them together 
+-- And unputs them together
 unpackHeaderTuples :: [(BS.ByteString, BS.ByteString)] -> UnpackedNameValueList
 unpackHeaderTuples [] = UnpackedNameValueList []
 unpackHeaderTuples vl  =    UnpackedNameValueList $ step vl
-  where  
+  where
     valueSplit v = BS.split 0 v
     step [] = []
-    step ((h,v):rest) = [ (h,vv) | vv <- valueSplit v ] ++ (step rest) 
+    step ((h,v):rest) = [ (h,vv) | vv <- valueSplit v ] ++ (step rest)
 
 
 getHeader :: UnpackedNameValueList -> BS.ByteString -> Maybe BS.ByteString
-getHeader (UnpackedNameValueList unvl) bs = 
+getHeader (UnpackedNameValueList unvl) bs =
     case find (\ (x,_) -> x==bs ) unvl of
-        Just (_, found_value)  -> Just found_value 
+        Just (_, found_value)  -> Just found_value
 
-        Nothing                -> Nothing  
+        Nothing                -> Nothing
