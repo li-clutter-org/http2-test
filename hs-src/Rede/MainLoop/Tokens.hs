@@ -3,20 +3,19 @@
 {-# LANGUAGE FunctionalDependencies, FlexibleInstances  #-}
 
 module Rede.MainLoop.Tokens(
-	packHeaderTuples
-	,unpackHeaderTuples
+    packHeaderTuples
+    ,unpackHeaderTuples
     ,getHeader
     ,actionIsForAssociatedStream
 
-	,UnpackedNameValueList (..)
-	,StreamInputToken      (..)
-	,StreamOutputAction    (..)
-	,StreamWorker
+    ,UnpackedNameValueList (..)
+    ,StreamInputToken      (..)
+    ,StreamOutputAction    (..)
+    ,StreamWorker
     ,StreamWorkerClass     (..)
     ,LocalStreamId
     ,GlobalStreamId
-	) where
-
+    ) where
 
 
 import           Control.Monad   (forM_, replicateM)

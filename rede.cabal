@@ -53,6 +53,24 @@ executable reh-mimic
   -- Write here "reh.hs" to get back to compiling the FS webserver
   main-is: reh-mimic.hs
 
+  other-modules:
+      Rede.HarFiles.DnsMasq
+      Rede.HarFiles.JSONDataStructure
+      Rede.HarFiles.ServedEntry
+      Rede.MainLoop.ConfigHelp
+      Rede.MainLoop.Tokens
+      Rede.Research.JSONMessages
+      Rede.Research.JobId
+      Rede.Research.Main
+      Rede.Research.ResearchWorker
+      Rede.Utils
+      Rede.Utils.Alarm
+      Rede.Utils.ConcatConduit
+      Rede.Utils.PrintfArgByteString
+      Rede.Workers.HarWorker
+      Rede.Workers.ResponseFragments
+      Rede.Workers.VeryBasic
+
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:
 
@@ -124,13 +142,11 @@ executable reh-mimic
   -- commonly installed
   include-dirs: /opt/openssl-1.0.2/include
 
-  c-sources: cbits/tlsinc.c
-
   cc-options: -fPIC -pthread -g -O0
 
   -- cc-options: -g3 -O0
 
-  ghc-options: -threaded -eventlog -rtsopts
+  ghc-options: -threaded -rtsopts
 
   extra-libraries: ssl
                  , crypto

@@ -21,7 +21,9 @@ import           System.Log.Handler        (setFormatter, LogHandler)
 import           System.Log.Handler.Simple
 import           System.Log.Handler.Syslog (Facility (..), Option (..), openlog)
 import           System.Log.Logger
+
 import           SecondTransfer
+import           SecondTransfer.Exception  (IOProblem(..))
 
 
 -- Imports from other parts of the program
@@ -80,7 +82,7 @@ main = do
             ResearchUrl_PA       -> do
                 research mimic_dir
         )
-        (\ (ConnectionIOError msg) -> errorM "HTTP2.Session" ("ConnectionIOError: " ++ msg)
+        (\ (IOProblem msg) -> errorM "HTTP2.Session" ("ConnectionIOError: " ++ show msg)
         )
 
 

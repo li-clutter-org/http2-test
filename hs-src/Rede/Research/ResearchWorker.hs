@@ -58,6 +58,7 @@ import           Rede.HarFiles.ServedEntry       (BadHarFile (..),
 
 import           SecondTransfer.Http2            (http2Attendant)
 import           SecondTransfer.Exception        (StreamCancelledException)
+import           SecondTransfer.Sessions         (makeDefaultSessionsContext)
 import           SecondTransfer                  (
                                                   tlsServeWithALPNAndFinishOnRequest,
                                                   dropIncomingData,
@@ -805,7 +806,7 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
     infoM "ResearchWorker.SpawnHarServer"  $ ".. Mimic port: " ++ (show port)
     iface <-  getInterfaceName mimic_config_dir
     infoM "ResearchWorker.SpawnHarServer" $ ".. Mimic using interface: " ++ (show iface)
-    sessions_context 
+    sessions_context <- makeDefaultSessionsContext
 
     let
         serveWork = do
@@ -840,8 +841,7 @@ spawnHarServer mimic_dir resolve_center_chan finish_request_chan = do
             let
                 http2worker = coherentToAwareWorker $ harCoherentWorker resolve_center
             tlsServeWithALPNAndFinishOnRequest  cert_filename priv_key_filename iface [
-                 ("h2-14", http2Attendant http2worker)
-
+                 ("h2-14", http2Attendant sessions_context http2worker)
                 ] port finish_request_mvar
             --
             infoM "ResearchWorker.SpawnHarServer" $ printf ".. FINISH for resolve center %s" (show $ resolve_center ^. rcName)
