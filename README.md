@@ -38,6 +38,12 @@ Installation
     
 That's it!
 
+## Installing by parts
+
+To install only the comparison engine, use the following:
+
+        $ fab BeefyRehMimic
+
 ## The long version 
 
 The ReH server is written in Haskell, which is a very decent functional and
