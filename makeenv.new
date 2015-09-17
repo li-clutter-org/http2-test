@@ -6,6 +6,7 @@ export MIMIC_CONSOLE_LOGGER=1
 export LD_LIBRARY_PATH=/opt/openssl-1.0.2/lib:$LD_LIBRARY_PATH
 export PATH=$(stack path --local-install-root)/bin:$(stack path --bin-path):$PATH
 export PATH=/opt/openssl-1.0.2/bin:$PATH
+export PATH=${THIS_DIR}/realvnc:$PATH
 # Have a file here in the root with the aws access keys to use.
 source $THIS_DIR/aws_access_keys
 export PATH=/home/alcides/.stack/programs/x86_64-linux/ghc-7.10.1/bin:$PATH
