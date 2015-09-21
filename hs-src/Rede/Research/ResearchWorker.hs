@@ -425,6 +425,7 @@ researchWorkerComp (input_headers, maybe_source) = do
                 catch
                     (do
                         (resolve_center, har_file_contents) <- liftIO $ output_computation source
+                        liftIO . infoM "ResearchWorker" $ "Seen the following hosts: " ++ (show . L.view  allSeenHosts $ resolve_center)
                         let
                             -- test_url = resolve_center ^. rcOriginalUrl
                             use_text = "Response processed"
