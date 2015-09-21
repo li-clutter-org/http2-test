@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings, TemplateHaskell, ImplicitParams #-}
 module Rede.Research.ResearchWorker(
     runResearchWorker
     ,spawnHarServer
@@ -89,13 +89,27 @@ import           Debug.Trace (trace)
 
 type HashTable k v = H.CuckooHashTable k v
 
+
 data CurrentAnalysisStage =
-    AnalysisRequested_CAS
-    |SentToHarvester_CAS
-    |ReceivedFromHarvester_CAS
-    |SentToTest_CAS
-    |SystemCancelled_CAS
-    |Done_CAS
+    |WaitingForActivateStationA_CAS
+    |WaitingForBrowserReadyStationA_CAS
+    |WaitingForHarvestStationToQueryNextUrl_CAS
+    |WaitingForHarvestStationToDeliverHAR_CAS
+    |WaitingForDNSMaskToAskConfig_CAS
+    |WaitingForDNSMaskToConfirm_CAS
+    |WaitingForActivateStationB_CAS
+    |WaitingForBrowserReadyStationB_CAS
+    |WaitingForTestStationToQueryNextUrl_CAS
+    |WaitingForTestStationToDeliverHAR_CAS
+    deriving (Eq, Show, Enum, Ord)
+
+
+data ReportedAnalysisStage =
+    Queued_RAS
+    | Processing_RAS CurrentAnalysisStage
+    | Failed_RAS
+    | Done_RAS
+    deriving (Eq, Show)
 
 
 -- TODO: Check that we really don't need the hashid at this stage...
@@ -122,35 +136,12 @@ maxInQueue :: Int
 maxInQueue = 5
 
 
--- | Consumes the request body and returns it.... this can be 
---   happily done in the threadlets of Haskell without any further
---   brain-burning.....
-waitRequestBody :: InputDataStream -> IO B.ByteString
-waitRequestBody source =
-  let
-    consumer  b = do
-        maybe_bytes <- await
-        case maybe_bytes of
-
-            Just bytes -> do
-                -- liftIO $ putStrLn $ "Got bytes " ++ (show $ B.length bytes)
-                consumer $ b `M.mappend` (Bu.byteString bytes)
-
-            Nothing -> do
-                -- liftIO $ putStrLn "Finishing"
-                return b
-  in do
-    full_builder <- (source $$ consumer "") :: IO Bu.Builder
-    return $ (LB.toStrict . Bu.toLazyByteString) full_builder
-
-
 -- This state structure follows a given URL analysis.
 -- You can find a dictionary of these in the structure below...
 data UrlState = UrlState {
-    _urlHashId        :: HashId
-    ,_analysisStage   :: CurrentAnalysisStage
-    ,_jobOriginalUrl  :: B.ByteString
-    ,_currentAlarm    :: Alarm ()
+    _urlHashId                   :: HashId
+    ,_jobOriginalUrl             :: B.ByteString
+    ,_currentAnalysisStage       :: CurrentAnalysisStage
     }
 
 
@@ -168,7 +159,7 @@ data JobDescr = JobDescr HashId B.ByteString
 
 data ServiceState = ServiceState {
     -- Put one here, let it run through the pipeline...
-    _nextHarvestUrl              :: TMVar HashId
+    _nextHarvestUrl              :: TMVar B.ByteString
 
     ,_nextJobDescr               :: T.TBChan JobDescr
 
@@ -189,28 +180,11 @@ data ServiceState = ServiceState {
 
     , _finishRequestChan         :: TMVar FinishRequest
 
-    -- Goes between the browser resetter and the next url call.
-    -- We pass the url to load through here just to be sure....
-    -- This is to avoid uncertainty with Chrome.
-    -- The logic for "starts" is that we write to it when we want
-    -- the browser started, then we read from it to start it, and
-    -- then put the url in the next step.
-    , _startHarvesterBrowserChan :: TMVar HashId
-
     -- Order sent to the browser resetter of anyquilating the current
     -- Chrome instance. We write to this one as soon as we want to kill
     -- the browser, and then read from it when we are ready to go to the
     -- next step.
-    , _killHarvesterBrowserChan  :: TMVar HashId
-
     , _startTesterBrowserChan    :: TMVar HashId
-
-    , _killTesterBrowserChan     :: TMVar HashId
-
-    -- TODO: Is this the best idiom to use?
-    , _testerReadyChan           :: TMVar ReadinessPing
-
-    , _harvesterReadyChan        :: TMVar ReadinessPing
 
     -- The "Research dir" is the "hars" subdirectory of the mimic
     -- scratch directory.
@@ -219,8 +193,9 @@ data ServiceState = ServiceState {
     -- The IP address that StationB needs to connect
     , _useAddressForStationB     :: B.ByteString
 
-    -- The state of each URL
-    , _urlState                  :: HashTable HashId UrlState
+    -- The state of the currently processing URL
+    , _urlState                  :: TMVar UrlState
+
     }
 
 
@@ -228,6 +203,13 @@ L.makeLenses ''ServiceState
 
 
 type ServiceStateMonad = ReaderT ServiceState IO
+
+type ServiceHandler =
+    (
+      ?input_headers::Headers,
+      ?maybe_source::Maybe InputDataStream,
+      ?url_state::UrlState
+    ) => ServiceStateMonad TupledPrincipalStream
 
 
 runResearchWorker ::
@@ -293,6 +275,24 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
 
 researchWorkerComp :: (Headers, Maybe InputDataStream) -> ServiceStateMonad TupledPrincipalStream
 researchWorkerComp (input_headers, maybe_source) = do
+    url_state_tmvar               <- L.view urlState
+
+    -- The entire thing, a few functions need it.
+    comp_state                    <- ask
+
+    url_state_maybe               <- liftIO . atomically $ tryReadTMVar url_state_tmvar
+
+    case url_state_maybe of
+
+        Just url_state ->
+            handleWithUrlStateCases input_headers maybe_source
+
+        Nothing ->
+            _handleWithoutUrlStateCases
+
+
+handleWithUrlStateCases :: (Headers, Maybe InputDataStream) -> UrlState -> ServiceStateMonad TupledPrincipalStream
+handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
     next_harvest_url              <- L.view nextHarvestUrl
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
     next_test_url_chan            <- L.view nextTestUrl
@@ -313,158 +313,43 @@ researchWorkerComp (input_headers, maybe_source) = do
     next_job_descr                <- L.view nextJobDescr
 
     -- The entire thing, a few functions need it.
-    comp_state <- ask
+    comp_state                    <- ask
 
 
     let
         method = getMethodFromHeaders input_headers
         req_url  = getUrlFromHeaders input_headers
+        reject_request :: ServiceStateMonad TupledPrincipalStream
+        reject_request = return $ simpleResponse 500 "bad-stage"
 
-    case method of
+    let
+       ?analysis_stage = analysis_stage
+       ?input_headers = input_headers
+       ?maybe_source = maybe_source
+       ?url_state = url_state
+      in case method of
 
         -- Most requests are served by POST to emphasize that a request changes
         -- the state of this program...
         Post_RM
-            | req_url == "/nexturl/" -> do
-                -- Starts harvesting of a resource... this request is made by StationA.
-                --
-                -- Notice the complex interleaving with the real world. I could put
-                -- more things in a transaction, but then I wouldn't see anything in
-                -- the logs...TODO
-                liftIO $ do
-                    infoM "ResearchWorker" ".. /nexturl/ asked, won't touch anything yet "
+            | req_url == "/nexturl/"  && (correctStage WaitingForHarvestStationToQueryNextUrl_CAS)  ->
+                handle_nexturl_H
 
-                    -- Wait for a notification about the browser being ready, this one
-                    -- is sent by an independent script
-                    atomically $ takeTMVar harvester_ready
+            | req_url == "/browserready/StationA" && (correctStage WaitingForBrowserReadyStationA_CAS) -> do
+                handle_browserready_Station_H harvesterReadyChan
 
-                liftIO $ infoM "ResearchWorker" "..harvester browser ok, mutations to proceed"
+            | req_url == "/browserready/StationB" && (correctStage WaitingForBrowserReadyStationB_CAS) -> do
+                handle_browserready_Station_H testerReadyChan
 
-                hashid <-
-                    catch
-                        (liftIO $ do
-                            hashid <- atomically . takeTMVar $ next_harvest_url
-                            infoM "ResearchWorker" " .. got next harvest url"
-                            return hashid
-                        )
-                        on_url_wait_interrupted
-                url <- urlFromHashId hashid
-                liftIO $ infoM "ResearchWorker" .  builderToString $ "..  /nexturl/" `mappend` " answer " `mappend` (Bu.byteString url) `mappend` " "
-                liftIO $ markAnalysisStage hashid SentToHarvester_CAS base_research_dir
-
-                -- Mark it as sent...
-                modifyUrlState hashid $ \ old_state -> do
-                    -- Set an alarm here also...this alarm should be disabled when a .har file comes....
-                    liftIO $ cancelAlarm $ old_state ^. currentAlarm
-                    let
-                        a1 = analysisStage .~ SentToHarvester_CAS $ old_state
-                    alarm <- liftIO $ newAlarm timeForAlarm $ do
-                        markAnalysisStage hashid SystemCancelled_CAS base_research_dir
-                        errorM "ResearchWorker" . builderToString $ " failed harvesting " `mappend` (Bu.byteString req_url) `mappend` " (timeout) "
-                        atomically $ putTMVar kill_harvester_browser hashid
-                        errorM "ResearchWorker" " ... harvester browser asked killed "
-                        waitAndResetState comp_state
-                    let
-                        a2 = currentAlarm .~ alarm $ a1
-                    return a2
-
-
-                -- And finally return.
-                let msg = WorkIndication hashid url presetCaptureTime
-                return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
-
-            | req_url == "/browserready/StationA" -> do
-                -- Check when we can proceed
-                liftIO $ do
-                    infoM "ResearchWorker" ".. /browserready/StationA/"
-                    threadDelay 1000000
-                    atomically $ putTMVar harvester_ready ReadinessPing
-                return $ simpleResponse 200 "Ok"
-
-            | req_url == "/browserready/StationB" -> do
-                -- Check when we can proceed
-                liftIO $ do
-                    infoM "ResearchWorker" ".. /browserready/StationB/"
-                    threadDelay 1000000
-                    atomically $ putTMVar tester_ready ReadinessPing
-                return $ simpleResponse 200 "Ok"
-
-            | req_url == "/testurl/" -> do
+            | req_url == "/testurl/" && (correctState WaitingForTestStationToQueryNextUrl_CAS) -> do
                 -- Sends the next test url to the Chrome extension, this starts processing by
                 -- StationB... the request is started by StationB and we send the url in the response...
-                liftIO $ infoM "ResearchWorker" ".. /testurl/ asked"
-                hashid <- liftIO . atomically $ do
-                        takeTMVar tester_ready
-                        -- And then snatch the url....
-                        takeTMVar next_test_url_chan
-                anyschema_url <-  urlFromHashId hashid
-                let https_url = urlToHTTPSScheme anyschema_url
-                liftIO $ do
-                    infoM "ResearchWorker" . builderToString $ "..  /testurl/ answered with " `mappend` (Bu.byteString https_url)
-                    -- Mark the new stage
-                    markAnalysisStage hashid SentToTest_CAS base_research_dir
+                handle_testurl_H
 
-                modifyUrlState hashid $ \ old_state -> do
-                    -- This alarm should be disabled by the http2har file
-                    liftIO $ cancelAlarm $ old_state ^. currentAlarm
-                    let
-                        a1 = analysisStage .~ SentToTest_CAS $ old_state
-
-                    alarm <- liftIO $ newAlarm 15000000 $ do
-                        errorM "ResearchWorker" . builderToString $ " failed testing " `mappend` (Bu.byteString https_url)
-                        atomically $ putTMVar kill_tester_browser hashid
-                        waitAndResetState comp_state
-                    return $ currentAlarm .~ alarm $ a1
-                let msg = WorkIndication hashid https_url presetCaptureTime
-                return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
-
-            | req_url == "/har/", Just source <- maybe_source -> do
+            | req_url == "/har/" && (correctStage WaitingForHarvestStationToDeliverHAR_CAS),  Just source <- maybe_source -> do
                 -- Receives a .har object from the harvest station ("StationA"), and
                 -- makes all the arrangements for it to be tested using HTTP 2
-                liftIO $ infoM "ResearchWorker" "..  /har/"
-                catch
-                    (do
-                        (resolve_center, har_file_contents) <- liftIO $ output_computation source
-                        liftIO . infoM "ResearchWorker" $ "Seen the following hosts: " ++ (show . L.view  allSeenHosts $ resolve_center)
-                        let
-                            -- test_url = resolve_center ^. rcOriginalUrl
-                            use_text = "Response processed"
-                            hashid = resolve_center ^. rcName
-
-                        modifyUrlState hashid $ \ old_state -> do
-                            liftIO $ cancelAlarm $ old_state ^. currentAlarm
-                            -- TODO: An alarm must be set here, but we also need to cancel the alarm
-                            -- at some point, and so far that has not worked.
-                            return  old_state
-
-                        -- Mark the state
-                        liftIO $ markAnalysisStage hashid ReceivedFromHarvester_CAS base_research_dir
-
-
-                        -- Create the contents to go in the dnsmasq file, and queue them
-                        let
-                            all_seen_hosts = resolve_center ^. allSeenHosts
-                            dnsmasq_contents = dnsMasqFileContentsToIp use_address_for_station_b all_seen_hosts
-
-                        liftIO $ do
-                            infoM "ResearchWorker" "BeforeHARBlock"
-                            atomically $ do
-                                putTMVar next_dnsmasq_chan $! DnsMasqConfig hashid dnsmasq_contents
-                                -- We also need to queue the url somewhere to be checked by the dnsmasqupdated entrypoint
-                                putTMVar kill_harvester_browser hashid
-                                -- And the resolve center to be used by the serving side
-                                putTMVar resolve_center_chan resolve_center
-                            -- We can also use this opportunity to create a folder for this research
-                            -- project
-                            let
-                                scratch_folder = (base_research_dir) </> (unpack . unHashId $ hashid)
-                                har_filename = scratch_folder </> "harvested.har"
-                            createDirectoryIfMissing True scratch_folder
-                            LB.writeFile har_filename har_file_contents
-
-                        return $ simpleResponse 200 use_text
-                    )
-                    on_bad_har_file
+                handle_harvesterhar_H source
 
             | req_url == "/startbrowser/StationA" ->
                 unQueueStartBrowser "/startbrowser/StationA" start_harvester_browser
@@ -610,17 +495,15 @@ researchWorkerComp (input_headers, maybe_source) = do
                   else
                     return $ simpleResponse 505 "QueueFull"
 
-            | otherwise     -> do
-                return $ simpleResponse 500 "Can't handle url and method"
+            | otherwise     ->
+                reject_request
 
-        _ -> do
-                return $ simpleResponse 500 "Can't handle url and method"
+        _ ->
+            reject_request
 
 
   where
-    on_bad_har_file :: BadHarFile -> ServiceStateMonad TupledPrincipalStream
-    on_bad_har_file  (BadHarFile _) =
-        return $ simpleResponse 500 "BadHarFile"
+
 
     on_general_error :: E.SomeException -> ServiceStateMonad TupledPrincipalStream
     on_general_error e = do
@@ -632,24 +515,125 @@ researchWorkerComp (input_headers, maybe_source) = do
         liftIO $ warningM "ResearchWorker" "Post wait interrupted"
         throwM e
 
-    output_computation :: InputDataStream -> IO (ResolveCenter,  LB.ByteString)
-    output_computation source = do
-        full_builder <- source $$ consumer ""
-        let
-            lb  = Bu.toLazyByteString full_builder
-            rc = resolveCenterFromLazyByteString lb
-        return (rc, lb)
-    consumer  b = do
-        maybe_bytes <- await
-        case maybe_bytes of
 
-            Just bytes -> do
-                -- liftIO $ putStrLn $ "Got bytes " ++ (show $ B.length bytes)
-                consumer $ b `M.mappend` (Bu.byteString bytes)
 
-            Nothing -> do
-                -- liftIO $ putStrLn "Finishing"
-                return b
+handle_nexturl_H :: ServiceHandler
+handle_nexturl_H = do
+    harvester_ready               <- L.view harvesterReadyChan
+    next_harvest_url              <- L.view nextHarvestUrl
+    base_research_dir             <- L.view researchDir
+
+    let
+        hashid = ?url_state ^. urlHashId
+
+    -- Starts harvesting of a resource... this request is made by StationA.
+    --
+    maybe_url <- liftIO . atomically $ do
+        harvester_ready_maybe <- tryTakeTMVar harvester_ready
+        nexturl_maybe <- tryTakeTMVar next_harvest_url
+        case (harvester_ready_maybe, nexturl_maybe) of
+          (Just _, Just nexturl_maybe) -> return $ Just nexturl_maybe
+
+    case maybe_url of
+        Nothing ->
+            return $ simpleResponse 500 "bad-stage"
+
+        Just url -> do
+            markAnalysisStageAndAdvance
+            let msg = WorkIndication hashid url presetCaptureTime
+            return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
+
+
+handle_browserready_Station_H :: _ -> ServiceHandler
+handle_browserready_Station_H tmvar_getter = do
+    harvester_ready <- L.view tmvar_getter
+    liftIO . atomically $ putTMVar harvester_ready ReadinessPing
+    markAnalysisStageAndAdvance
+    return $ simpleResponse 200 "Ok"
+
+
+handle_testurl_H :: ServiceHandler
+handle_testurl_H = do
+    liftIO $ infoM "ResearchWorker" ".. /testurl/ asked"
+    let
+        hashid       = ?url_state ^. urlHashId
+        anyschema_url = ?url_state ^. jobOriginalUrl
+
+    let https_url = urlToHTTPSScheme anyschema_url
+
+    liftIO . infoM "ResearchWorker" . builderToString $ "..  /testurl/ answered with " `mappend` (Bu.byteString https_url)
+
+    let msg = WorkIndication hashid https_url presetCaptureTime
+    return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
+
+
+handle_harvesterhar_H :: _ -> ServiceHandler
+handle_harvesterhar_H source = do
+    base_research_dir             <- L.view researchDir
+    next_dnsmasq_chan             <- L.view nextDNSMasqFile
+    kill_harvester_browser        <- L.view killHarvesterBrowserChan
+    resolve_center_chan           <- L.view resolveCenterChan
+
+    let
+
+        output_computation :: InputDataStream -> IO (ResolveCenter,  LB.ByteString)
+        output_computation source = do
+            full_builder <- source $$ consumer ""
+            let
+                lb  = Bu.toLazyByteString full_builder
+                rc = resolveCenterFromLazyByteString lb
+            return (rc, lb)
+
+        consumer  b = do
+            maybe_bytes <- await
+            case maybe_bytes of
+
+                Just bytes -> do
+                    -- liftIO $ putStrLn $ "Got bytes " ++ (show $ B.length bytes)
+                    consumer $ b `M.mappend` (Bu.byteString bytes)
+
+                Nothing -> do
+                    -- liftIO $ putStrLn "Finishing"
+                    return b
+
+        hashid  = ?url_state ^. urlHashId
+
+    liftIO $ infoM "ResearchWorker" "..  /har/"
+    catch
+        (do
+            (resolve_center, har_file_contents) <- liftIO $ output_computation source
+            liftIO . infoM "ResearchWorker" $ "Seen the following hosts: " ++ (show . L.view  allSeenHosts $ resolve_center)
+            let
+                -- test_url = resolve_center ^. rcOriginalUrl
+                use_text = "Response processed"
+
+            -- Create the contents to go in the dnsmasq file, and queue them
+            let
+                all_seen_hosts = resolve_center ^. allSeenHosts
+                dnsmasq_contents = dnsMasqFileContentsToIp use_address_for_station_b all_seen_hosts
+
+            liftIO $ do
+                infoM "ResearchWorker" "BeforeHARBlock"
+                atomically $ do
+                    putTMVar next_dnsmasq_chan $! DnsMasqConfig hashid dnsmasq_contents
+                    -- And the resolve center to be used by the serving side
+                    putTMVar resolve_center_chan resolve_center
+                -- We can also use this opportunity to create a folder for this research
+                -- project
+                let
+                    scratch_folder = (base_research_dir) </> (unpack . unHashId $ hashid)
+                    har_filename = scratch_folder </> "harvested.har"
+                createDirectoryIfMissing True scratch_folder
+                LB.writeFile har_filename har_file_contents
+
+            return $ simpleResponse 200 use_text
+        )
+        onBadHarFile
+
+
+onBadHarFile :: BadHarFile -> ServiceStateMonad TupledPrincipalStream
+onBadHarFile  (BadHarFile _) =
+    return $ simpleResponse 500 "BadHarFile"
 
 
 sayIfFull :: MonadIO m => String -> TMVar b -> m ()
@@ -659,7 +643,6 @@ sayIfFull msg tmvar = do
         if isJust r
             then putStrLn $ msg ++ (" is full")
             else putStrLn $ msg ++ (" is empty")
-
 
 
 -- External thread in charge of pushing jobs
@@ -789,13 +772,6 @@ unQueueKillBrowser log_url chan_to_read = do
 
     return $ simpleResponse 200 $ B.append "hashid=" (unHashId hashid)
 
-
-urlFromHashId :: HashId -> ServiceStateMonad B.ByteString
-urlFromHashId hashid = do
-    url_state_hashtable <- L.view urlState
-    -- Pattern matching fails here and we are in deep trouble...
-    Just state <- liftIO $ H.lookup url_state_hashtable hashid
-    return $ state ^. jobOriginalUrl
 
 
 -- And here for when we need to fork a server to load the .har file from
@@ -957,42 +933,55 @@ builderToString :: Bu.Builder -> String
 builderToString =  Lch.unpack . Bu.toLazyByteString
 
 
-modifyUrlState :: HashId -> (UrlState -> ServiceStateMonad UrlState) -> ServiceStateMonad ()
-modifyUrlState key mutator = do
-    h  <- L.view urlState
-    vv <- liftIO $ H.lookup h key
-    case vv  of
-        Just v -> do
-            new_value <- mutator v
-            liftIO $ H.insert h key new_value
-
-        Nothing -> do
-            -- Can this even happen by accident?
-            liftIO
-                $ warningM "ResearchWorker"
-                $ builderToString
-                $ "Trying to modify state of non-seen url job " `mappend`
-                  (Bu.byteString . unHashId $ key)
-
-
-markAnalysisStage :: HashId -> CurrentAnalysisStage -> FilePath -> IO ()
-markAnalysisStage url_hash current_analysis_stage research_dir = do
+markReportedAnalysisStage :: HashId -> ReportedAnalysisStage -> FilePath -> IO ()
+markReportedAnalysisStage hashid reported_analysis_stage research_dir = do
+    research_dir <- L.view researchDir
     let
-        hash_bs = unHashId url_hash
+        hash_bs = unHashId hashid
         scratch_dir = research_dir </> (unpack hash_bs)
     createDirectoryIfMissing True scratch_dir
     eraseStatusFiles url_hash research_dir
     let
         percent:: Int
-        (status_fname, percent) = case current_analysis_stage of
-            AnalysisRequested_CAS      -> ("status.processing", 5)
-            SentToHarvester_CAS        -> ("status.processing", 20)
-            ReceivedFromHarvester_CAS  -> ("status.processing", 45)
-            SentToTest_CAS             -> ("status.processing", 65)
-            SystemCancelled_CAS        -> ("status.failed", 0)
-            Done_CAS                   -> ("status.done", 100)
+        (status_fname, percent) = case reported_analysis_stage of
+            Queued_RAS                 -> ("status.queued",0)
+
+            Processing_RAS current_analysis_stage  ->
+                let
+                    percent_real :: Double
+                    percent_real = fromRational $ (fromEnum  current_analysis_stage) / 7.0
+                in ("status.processing", round precent_real)
+
+            Done_RAS                   -> ("status.done", 100)
+            Failed_RAS                 -> ("status.failed", 100)
+
+            -- Here down: just as a way to not crash the program.
+            -- TODO: include all the states
+            _                          -> ("status.processing",0)
         file_location = scratch_dir  </> status_fname
     (withFile file_location WriteMode $ \ handle -> hPutStr handle (show percent))
+
+
+markAnalysisStageAndAdvance :: (?url_state::UrlState) => ServiceStateMonad ()
+markAnalysisStageAndAdvance current_analysis_stage = do
+    let
+        analysis_stage = ?url_state ^. currentAnalysisStage
+        hashid = ?url_state ^. urlHashId
+        new_analysis_stage = shiftAnalysisStage analysis_stage
+
+    research_dir  <- L.view researchDir
+    url_state_tmvar <- L.view urlState
+
+    liftIO $ do
+        atomically $ do
+            url_state <- takeTMVar url_state_tmvar
+            let
+                new_url_state = L.set currentAnalysisStage url_state new_analysis_stage
+            putTMVar url_state_tmvar new_url_state
+
+        markReportedAnalysisStage hashid (Processing_RAS new_analysis_stage)  research_dir
+
+        infoM "ResearchWorker" $ "Went from " ++ (show current_analysis_stage) ++ " to " ++ (show new_analysis_stage)
 
 
 eraseStatusFiles :: HashId -> FilePath -> IO ()
@@ -1046,6 +1035,7 @@ resetState state =
     return ()
 
 
+
 waitAndResetState :: ServiceState -> IO ()
 waitAndResetState state = do
     -- Trigger stopping the mirror service, if needs come
@@ -1060,3 +1050,37 @@ waitAndResetState state = do
     threadDelay 1000000
     -- and then reset the state
     resetState state
+
+
+-- | Consumes the request body and returns it.... this can be 
+--   happily done in the threadlets of Haskell without any further
+--   brain-burning.....
+waitRequestBody :: InputDataStream -> IO B.ByteString
+waitRequestBody source =
+  let
+    consumer  b = do
+        maybe_bytes <- await
+        case maybe_bytes of
+
+            Just bytes -> do
+                -- liftIO $ putStrLn $ "Got bytes " ++ (show $ B.length bytes)
+                consumer $ b `M.mappend` (Bu.byteString bytes)
+
+            Nothing -> do
+                -- liftIO $ putStrLn "Finishing"
+                return b
+  in do
+    full_builder <- (source $$ consumer "") :: IO Bu.Builder
+    return $ (LB.toStrict . Bu.toLazyByteString) full_builder
+
+
+shiftAnalysisStage :: CurrentAnalysisStage -> CurrentAnalysisStage
+shiftAnalysisStage = toEnum . ( + 1) . fromEnum
+
+
+correctStage :: (?analysis_stage :: CurrentAnalysisStage ) => CurrentAnalysisStage ->  Bool
+correctStage expected_stage = expected_stage == ?analysis_stage
+
+
+incorrectStage :: (?analysis_stage :: CurrentAnalysisStage ) => CurrentAnalysisStage -> Bool
+incorrectStage expected_stage = expected_stage /= ?analysis_stage
