@@ -91,7 +91,7 @@ type HashTable k v = H.CuckooHashTable k v
 
 
 data CurrentAnalysisStage =
-    |WaitingForActivateStationA_CAS
+    WaitingForActivateStationA_CAS
     |WaitingForBrowserReadyStationA_CAS
     |WaitingForHarvestStationToQueryNextUrl_CAS
     |WaitingForHarvestStationToDeliverHAR_CAS
@@ -206,6 +206,7 @@ L.makeLenses ''ServiceState
 
 type ServiceStateMonad = ReaderT ServiceState IO
 
+
 type ServiceHandler =
     (
       ?input_headers::Headers,
@@ -232,18 +233,17 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
     next_test_url_to_check_chan   <- atomically $ newEmptyTMVar -- <-- Goes to the dnsmasq response handler
     next_dns_masq_file            <- atomically $ newEmptyTMVar
 
-    start_harvester_browser       <- atomically $ newEmptyTMVar
-    kill_harvester_browser        <- atomically $ newEmptyTMVar
+    -- start_harvester_browser       <- atomically $ newEmptyTMVar
+    -- kill_harvester_browser        <- atomically $ newEmptyTMVar
 
-    start_tester_browser          <- atomically $ newEmptyTMVar
-    kill_tester_browser           <- atomically $ newEmptyTMVar
+    -- start_tester_browser          <- atomically $ newEmptyTMVar
+    -- kill_tester_browser           <- atomically $ newEmptyTMVar
 
     harvester_ready               <- atomically $ newEmptyTMVar
     tester_ready                  <- atomically $ newEmptyTMVar
     ready_to_go                   <- atomically $ newTMVar (Ready_RTG 0)
     next_job_descr                <- atomically $ T.newTBChan maxInQueue
-
-    new_url_state  <- H.new
+    new_url_state                 <- atomically $ newEmptyTMVar
 
     let
         state = ServiceState {
@@ -259,13 +259,13 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
             ,_useAddressForStationB       = use_address_for_station_b
             ,_urlState                    = new_url_state
 
-            ,_startHarvesterBrowserChan   = start_harvester_browser
-            ,_killHarvesterBrowserChan    = kill_harvester_browser
-            ,_startTesterBrowserChan      = start_tester_browser
-            ,_killTesterBrowserChan       = kill_tester_browser
+--            ,_startHarvesterBrowserChan   = start_harvester_browser
+--            ,_killHarvesterBrowserChan    = kill_harvester_browser
+--            ,_startTesterBrowserChan      = start_tester_browser
+--            ,_killTesterBrowserChan       = kill_tester_browser
 
-            ,_testerReadyChan             = tester_ready
-            ,_harvesterReadyChan          = harvester_ready
+--            ,_testerReadyChan             = tester_ready
+--            ,_harvesterReadyChan          = harvester_ready
             }
 
     -- Let's create the job-pusher thread
@@ -294,7 +294,7 @@ researchWorkerComp (input_headers, maybe_source) = do
 
 
 handleWithoutUrlStateCases :: (Headers, Maybe InputDataStream) -> ServiceStateMonad TupledPrincipalStream
-handleWithoutUrlStateCases (headers, maybe_source) =  do
+handleWithoutUrlStateCases (input_headers, maybe_source) =  do
     next_harvest_url              <- L.view nextHarvestUrl
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
     next_test_url_chan            <- L.view nextTestUrl
@@ -305,18 +305,17 @@ handleWithoutUrlStateCases (headers, maybe_source) =  do
     use_address_for_station_b     <- L.view useAddressForStationB
     -- url_state_hashtable           <- L.view urlState
 
-    start_harvester_browser       <- L.view startHarvesterBrowserChan
-    kill_harvester_browser        <- L.view killHarvesterBrowserChan
-    start_tester_browser          <- L.view startTesterBrowserChan
-    kill_tester_browser           <- L.view killTesterBrowserChan
-    tester_ready                  <- L.view testerReadyChan
-    harvester_ready               <- L.view harvesterReadyChan
-    ready_to_go                   <- L.view readyToGo
+--    start_harvester_browser       <- L.view startHarvesterBrowserChan
+--    kill_harvester_browser        <- L.view killHarvesterBrowserChan
+--    start_tester_browser          <- L.view startTesterBrowserChan
+--    kill_tester_browser           <- L.view killTesterBrowserChan
+--    tester_ready                  <- L.view testerReadyChan
+--    harvester_ready               <- L.view harvesterReadyChan
+--    ready_to_go                   <- L.view readyToGo
     next_job_descr                <- L.view nextJobDescr
 
     -- The entire thing, a few functions need it.
     comp_state                    <- ask
-
 
     let
         method = getMethodFromHeaders input_headers
@@ -344,15 +343,31 @@ handleWithoutUrlStateCases (headers, maybe_source) =  do
                 url_job_id <- liftIO $ jobIdFromUrl url_to_analyze
                 let hashid = hashidFromJobId url_job_id
 
-                -- Are we allowed to queue this task? That depends on having enough space
-                -- in the queue....
-                could_write <- liftIO . atomically $
-                                    T.tryWriteTBChan next_job_descr $ JobDescr hashid url_to_analyze
+                -- Let's make a UrlState for this
+                let
+                    url_state = UrlState {
+                        _urlHashId            = hashid,
+                        _jobOriginalUrl       = url_to_analyze,
+                        _currentAnalysisStage = WaitingForActivateStationA_CAS
+                        }
+
+                -- And then we set the tmvar to this new url state, in an atomic transaction with
+                -- the write below.
+                url_state_tmvar <- L.view urlState
+
+                -- Let's go atomic
+                could_write <- liftIO . atomically $ do
+                    -- Empty the tmvar
+                    tryTakeTMVar url_state_tmvar
+                    -- And then put the new value
+                    putTMVar url_state_tmvar url_state
+                    -- Next step is to queue this in a queue ....
+                    T.tryWriteTBChan next_job_descr $ JobDescr hashid url_to_analyze
 
                 if could_write
-                  then do
-                    liftIO $ infoM "ResearchWorker" "After /setnexturl/ queueing"
-                    liftIO $ markAnalysisStage hashid AnalysisRequested_CAS base_research_dir
+                  then liftIO $ do
+                    infoM "ResearchWorker" "After /setnexturl/ queueing"
+                    markReportedAnalysisStage hashid Queued_RAS base_research_dir
                     return $ simpleResponse 200 (unHashId hashid)
                   else
                     return $ simpleResponse 505 "QueueFull"
@@ -368,16 +383,17 @@ handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
     finish_chan                   <- L.view finishRequestChan
     base_research_dir             <- L.view researchDir
     use_address_for_station_b     <- L.view useAddressForStationB
-    -- url_state_hashtable           <- L.view urlState
 
-    start_harvester_browser       <- L.view startHarvesterBrowserChan
-    kill_harvester_browser        <- L.view killHarvesterBrowserChan
-    start_tester_browser          <- L.view startTesterBrowserChan
-    kill_tester_browser           <- L.view killTesterBrowserChan
-    tester_ready                  <- L.view testerReadyChan
-    harvester_ready               <- L.view harvesterReadyChan
-    ready_to_go                   <- L.view readyToGo
-    next_job_descr                <- L.view nextJobDescr
+    url_state                     <- L.view urlState
+
+    -- start_harvester_browser       <- L.view startHarvesterBrowserChan
+    -- kill_harvester_browser        <- L.view killHarvesterBrowserChan
+    -- start_tester_browser          <- L.view startTesterBrowserChan
+    -- kill_tester_browser           <- L.view killTesterBrowserChan
+    -- tester_ready                  <- L.view testerReadyChan
+    -- harvester_ready               <- L.view harvesterReadyChan
+    -- ready_to_go                   <- L.view readyToGo
+    -- next_job_descr                <- L.view nextJobDescr
 
     -- The entire thing, a few functions need it.
     comp_state                    <- ask
@@ -388,22 +404,24 @@ handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
         req_url  = getUrlFromHeaders input_headers
         reject_request :: ServiceStateMonad TupledPrincipalStream
         reject_request = return $ simpleResponse 500 "bad-stage"
+        analysis_stage = url_state ^. currentAnalysisStage
+ 
 
     let
         ?analysis_stage = analysis_stage
-        ?input_headers = input_headers
-        ?maybe_source = maybe_source
-        ?url_state = url_state
+        ?input_headers  = input_headers
+        ?maybe_source   = maybe_source
+        ?url_state      = url_state
       in case method of
 
         -- Most requests are served by POST to emphasize that a request changes
         -- the state of this program...
         Post_RM
             | req_url == "/startbrowser/StationA" && (correctStage WaitingForActivateStationA_CAS)  ->
-                unQueueStartBrowser "/startbrowser/StationA" start_harvester_browser
+                unQueueStartBrowser "/startbrowser/StationA"
 
             | req_url == "/browserready/StationA" && (correctStage WaitingForBrowserReadyStationA_CAS) -> do
-                handle_browserready_Station_H harvesterReadyChan
+                handle_browserready_Station_H 
 
             | req_url == "/nexturl/"  && (correctStage WaitingForHarvestStationToQueryNextUrl_CAS)  ->
                 handle_nexturl_H
@@ -413,8 +431,8 @@ handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
                 -- makes all the arrangements for it to be tested using HTTP 2
                 handle_harvesterhar_H source
 
-            | req_url == "/killbrowser/StationA" && (correctStage WaitingForKillingSationA_CAS) -> do
-                unQueueKillBrowser "/killbrowser/StationA" kill_harvester_browser
+            | req_url == "/killbrowser/StationA" && (correctStage WaitingForKillingStationA_CAS) -> do
+                unQueueKillBrowser "/killbrowser/StationA"
 
             | req_url == "/dnsmasq/" && (correctStage WaitingForDNSMaskToAskConfig_CAS) -> do
                 handle_dnsmasq_H maybe_source
@@ -423,12 +441,12 @@ handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
                 handle_dnsmasqupdated_H source
 
             | req_url == "/startbrowser/StationB" && (correctStage WaitingForActivateStationB_CAS) -> do
-                unQueueStartBrowser "/startbrowser/StationB" start_tester_browser
+                unQueueStartBrowser "/startbrowser/StationB"
 
             | req_url == "/browserready/StationB" && (correctStage WaitingForBrowserReadyStationB_CAS) -> do
-                handle_browserready_Station_H testerReadyChan
+                handle_browserready_Station_H
 
-            | req_url == "/testurl/" && (correctState WaitingForTestStationToQueryNextUrl_CAS) -> do
+            | req_url == "/testurl/" && (correctStage WaitingForTestStationToQueryNextUrl_CAS) -> do
                 -- Sends the next test url to the Chrome extension, this starts processing by
                 -- StationB... the request is started by StationB and we send the url in the response...
                 handle_testurl_H
@@ -439,7 +457,7 @@ handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
                 handle_testerhar_H source
 
             | req_url == "/killbrowser/StationB" && (correctStage WaitingForKillingStationB_CAS) -> do
-                unQueueKillBrowser "/killbrowser/StationB" kill_tester_browser
+                unQueueKillBrowser "/killbrowser/StationB" 
 
 
             | otherwise     ->
@@ -454,24 +472,23 @@ handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
 
     on_url_wait_interrupted :: StreamCancelledException -> ServiceStateMonad a
     on_url_wait_interrupted e = do
-        liftIO $ warningM "ResearchWorker" "Post wait interrupted"
+        warningM "ResearchWorker" "Post wait interrupted"
         throwM e
 
 
 
 handle_nexturl_H :: ServiceHandler
 handle_nexturl_H = do
-    harvester_ready               <- L.view harvesterReadyChan
     next_harvest_url              <- L.view nextHarvestUrl
     base_research_dir             <- L.view researchDir
 
     let
         hashid = ?url_state ^. urlHashId
+        url = ?url_state ^. jobOriginalUrl
 
     -- Starts harvesting of a resource... this request is made by StationA.
     --
     maybe_url <- liftIO . atomically $ do
-        harvester_ready_maybe <- tryTakeTMVar harvester_ready
         nexturl_maybe <- tryTakeTMVar next_harvest_url
         case (harvester_ready_maybe, nexturl_maybe) of
           (Just _, Just nexturl_maybe) -> return $ Just nexturl_maybe
@@ -486,22 +503,21 @@ handle_nexturl_H = do
             return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
 
 
-handle_browserready_Station_H :: _ -> ServiceHandler
-handle_browserready_Station_H tmvar_getter = do
-    harvester_ready <- L.view tmvar_getter
-    liftIO . atomically $ putTMVar harvester_ready ReadinessPing
+handle_browserready_Station_H :: ServiceHandler
+handle_browserready_Station_H = do
     markAnalysisStageAndAdvance
     return $ simpleResponse 200 "Ok"
 
 
 handle_testurl_H :: ServiceHandler
 handle_testurl_H = do
-    liftIO $ infoM "ResearchWorker" ".. /testurl/ asked"
+    infoM "ResearchWorker" ".. /testurl/ asked"
     let
         hashid       = ?url_state ^. urlHashId
         anyschema_url = ?url_state ^. jobOriginalUrl
 
     let https_url = urlToHTTPSScheme anyschema_url
+    markAnalysisStageAndAdvance
 
     liftIO . infoM "ResearchWorker" . builderToString $ "..  /testurl/ answered with " `mappend` (Bu.byteString https_url)
 
@@ -514,14 +530,15 @@ outputComputation source =  do
     full_builder <- source $$ consumer ""
     let
         lb = Bu.toLazyByteString full_builder
-        rc = resolveCenterF
+        rc = resolveCenterFromLazyByteString lb
+    return (rc,lb)
   where
      consumer  b = do
          maybe_bytes <- await
          case maybe_bytes of
 
              Just bytes -> do
-                 -- liftIO $ putStrLn $ "Got bytes " ++ (show $ B.length bytes)
+                 -- putStrLn $ "Got bytes " ++ (show $ B.length bytes)
                  consumer $ b `M.mappend` (Bu.byteString bytes)
 
              Nothing -> do
@@ -575,7 +592,7 @@ handle_harvesterhar_H source = do
 
 
 handle_dnsmasq_H :: _ -> ServiceHandler
-handle_dnsmasq_H maybe_source =
+handle_dnsmasq_H maybe_source = do
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
     catch
         (do
@@ -600,7 +617,7 @@ handle_dnsmasq_H maybe_source =
 
 
 handle_dnsmasqupdated_H :: _ -> ServiceHandler
-handle_dnsmasqupdated_H source  =
+handle_dnsmasqupdated_H source  = do
     -- Received  advice that everything is ready to proceed
     liftIO $ do
         received_id <- waitRequestBody source
@@ -608,7 +625,7 @@ handle_dnsmasqupdated_H source  =
         threadDelay 2000000
         markAnalysisStageAndAdvance
         infoM "ResearchWorker" $ "When receiving dnsmasqupdated, proceed = " ++ (show proceed)
-    return $ simpleResponse 200 $ "ok"
+    return . simpleResponse 200 $ "ok"
 
 
 handle_testerhar_H :: _ -> ServiceHandler
@@ -769,14 +786,13 @@ startNextJobThread = do
 
 
 
-unQueueStartBrowser :: B.ByteString -> TMVar HashId -> ServiceHandler
-unQueueStartBrowser log_url chan_to_read = do
+unQueueStartBrowser :: B.ByteString -> ServiceHandler
+unQueueStartBrowser log_url = do
     let
       hashid = ?url_state ^. urlHashId
 
     bs_hashid <- liftIO $ do
         infoM "ResearchWorker" (unpack $ B.append "start browser asked .. " log_url)
-        hashid <- atomically $ takeTMVar chan_to_read
         let bs_hashid = unHashId hashid
         infoM "ResearchWorker" (unpack $ B.concat ["start browser delivered .. ", log_url, " ", bs_hashid ])
         return bs_hashid
@@ -786,8 +802,8 @@ unQueueStartBrowser log_url chan_to_read = do
     return $ simpleResponse 200 $ B.append "hashid=" bs_hashid
 
 
-unQueueKillBrowser :: B.ByteString -> TMVar HashId -> ServiceHandler
-unQueueKillBrowser log_url chan_to_read = do
+unQueueKillBrowser :: B.ByteString -> ServiceHandler
+unQueueKillBrowser log_url = do
     let
       hashid = ?url_state ^. urlHashId
     liftIO $ do
@@ -975,7 +991,7 @@ markReportedAnalysisStage hashid reported_analysis_stage research_dir = do
             Processing_RAS current_analysis_stage  ->
                 let
                     percent_real :: Double
-                    percent_real = fromRational $ (fromEnum  current_analysis_stage) / 7.0
+                    percent_real = fromRational $ (fromEnum  current_analysis_stage) / (maxBound :: CurrentAnalysisStage)
                 in ("status.processing", round precent_real)
 
             Done_RAS                   -> ("status.done", 100)
