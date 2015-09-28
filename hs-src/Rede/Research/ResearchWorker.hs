@@ -273,7 +273,7 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
 
 
 researchWorkerComp :: (Headers, Maybe InputDataStream) -> ServiceStateMonad TupledPrincipalStream
-researchWorkerComp (input_headers, maybe_source) = do
+researchWorkerComp forward@(input_headers, maybe_source) = do
     url_state_tmvar               <- L.view urlState
 
     -- The entire thing, a few functions need it.
@@ -284,10 +284,10 @@ researchWorkerComp (input_headers, maybe_source) = do
     case url_state_maybe of
 
         Just url_state ->
-            handleWithUrlStateCases input_headers maybe_source
+            handleWithUrlStateCases forward url_state
 
         Nothing ->
-            _handleWithoutUrlStateCases input_headers
+            handleWithoutUrlStateCases forward
 
 
 handleWithoutUrlStateCases :: (Headers, Maybe InputDataStream) -> ServiceStateMonad TupledPrincipalStream
@@ -381,7 +381,7 @@ handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
     base_research_dir             <- L.view researchDir
     use_address_for_station_b     <- L.view useAddressForStationB
 
-    url_state                     <- L.view urlState
+    url_state_tmvar               <- L.view urlState
 
     -- start_harvester_browser       <- L.view startHarvesterBrowserChan
     -- kill_harvester_browser        <- L.view killHarvesterBrowserChan
@@ -395,6 +395,8 @@ handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
     -- The entire thing, a few functions need it.
     comp_state                    <- ask
 
+    url_state <- liftIO . atomically $ readTMVar url_state_tmvar
+
 
     let
         method = getMethodFromHeaders input_headers
@@ -402,7 +404,6 @@ handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
         reject_request :: ServiceStateMonad TupledPrincipalStream
         reject_request = return $ simpleResponse 500 "bad-stage"
         analysis_stage = url_state ^. currentAnalysisStage
- 
 
     let
         ?analysis_stage = analysis_stage
@@ -454,7 +455,7 @@ handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
                 handle_testerhar_H source
 
             | req_url == "/killbrowser/StationB" && (correctStage WaitingForKillingStationB_CAS) -> do
-                unQueueKillBrowser "/killbrowser/StationB" 
+                unQueueKillBrowser "/killbrowser/StationB"
 
 
             | otherwise     ->
@@ -469,7 +470,7 @@ handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
 
     on_url_wait_interrupted :: StreamCancelledException -> ServiceStateMonad a
     on_url_wait_interrupted e = do
-        warningM "ResearchWorker" "Post wait interrupted"
+        liftIO . warningM "ResearchWorker" $ "Post wait interrupted"
         throwM e
 
 
@@ -506,7 +507,7 @@ handle_browserready_Station_H = do
 
 handle_testurl_H :: ServiceHandler
 handle_testurl_H = do
-    infoM "ResearchWorker" ".. /testurl/ asked"
+    liftIO . infoM "ResearchWorker" $ ".. /testurl/ asked"
     let
         hashid       = ?url_state ^. urlHashId
         anyschema_url = ?url_state ^. jobOriginalUrl
@@ -541,11 +542,12 @@ outputComputation source =  do
                  return b
 
 
-handle_harvesterhar_H :: _ -> _ -> ServiceHandler
-handle_harvesterhar_H source use_address_for_station_b = do
+handle_harvesterhar_H :: InputDataStream ->  ServiceHandler
+handle_harvesterhar_H source  = do
     base_research_dir             <- L.view researchDir
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
     resolve_center_chan           <- L.view resolveCenterChan
+    use_address_for_station_b     <- L.view useAddressForStationB
 
     let
         hashid  = ?url_state ^. urlHashId
@@ -585,7 +587,7 @@ handle_harvesterhar_H source use_address_for_station_b = do
         onBadHarFile
 
 
-handle_dnsmasq_H :: _ -> ServiceHandler
+handle_dnsmasq_H :: Maybe InputDataStream -> ServiceHandler
 handle_dnsmasq_H maybe_source = do
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
     catch
@@ -610,19 +612,19 @@ handle_dnsmasq_H maybe_source = do
         onGeneralError
 
 
-handle_dnsmasqupdated_H :: _ -> ServiceHandler
+handle_dnsmasqupdated_H :: InputDataStream -> ServiceHandler
 handle_dnsmasqupdated_H source  = do
     -- Received  advice that everything is ready to proceed
     liftIO $ do
         received_id <- waitRequestBody source
         -- Ensure any in-system changes get enough time to propagate
         threadDelay 2000000
-        markAnalysisStageAndAdvance
-        infoM "ResearchWorker" $ "Dnsmasqupdated" 
+    markAnalysisStageAndAdvance
+    liftIO . infoM "ResearchWorker" $ "Dnsmasqupdated"
     return . simpleResponse 200 $ "ok"
 
 
-handle_testerhar_H :: _ -> ServiceHandler
+handle_testerhar_H :: InputDataStream -> ServiceHandler
 handle_testerhar_H source = do
     base_research_dir             <- L.view researchDir
     finish_chan                   <- L.view finishRequestChan
@@ -869,7 +871,6 @@ builderToString =  Lch.unpack . Bu.toLazyByteString
 
 markReportedAnalysisStage :: HashId -> ReportedAnalysisStage -> FilePath -> IO ()
 markReportedAnalysisStage hashid reported_analysis_stage research_dir = do
-    research_dir <- L.view researchDir
     let
         hash_bs = unHashId hashid
         scratch_dir = research_dir </> (unpack hash_bs)
@@ -883,7 +884,10 @@ markReportedAnalysisStage hashid reported_analysis_stage research_dir = do
             Processing_RAS current_analysis_stage  ->
                 let
                     percent_real :: Double
-                    percent_real = fromRational $ (fromEnum  current_analysis_stage) / (maxBound :: CurrentAnalysisStage)
+                    percent_real =
+                        (fromIntegral . fromEnum $ current_analysis_stage :: Double)
+                        /
+                        (fromIntegral . fromEnum $ (maxBound :: CurrentAnalysisStage) :: Double)
                 in ("status.processing", round percent_real)
 
             Done_RAS                   -> ("status.done", 100)
@@ -910,7 +914,7 @@ markAnalysisStageAndAdvance  = do
         atomically $ do
             url_state <- takeTMVar url_state_tmvar
             let
-                new_url_state = L.set currentAnalysisStage url_state new_analysis_stage
+                new_url_state = L.set currentAnalysisStage new_analysis_stage url_state
             putTMVar url_state_tmvar new_url_state
 
         markReportedAnalysisStage hashid (Processing_RAS new_analysis_stage)  research_dir
