@@ -145,6 +145,7 @@ data UrlState = UrlState {
     ,_jobOriginalUrl             :: B.ByteString
     ,_currentAnalysisStage       :: CurrentAnalysisStage
     }
+    deriving (Eq, Show)
 
 
 L.makeLenses ''UrlState
@@ -268,8 +269,34 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
 --            ,_harvesterReadyChan          = harvester_ready
             }
 
+    -- Keep the monitor running
+    forkIO $ runReaderT monitorState state
+
     -- And return the worker
     return $ \request -> runReaderT (researchWorkerComp request) state
+
+
+-- The monitorState function works by checking how things are going every few seconds.
+monitorState :: ServiceStateMonad ()
+monitorState = do
+    url_state_tmvar <- L.view urlState
+    run_monitor url_state_tmvar Nothing
+  where
+    run_monitor url_state_tmvar maybe_old_state = do
+        (cause_for_concern, url_state_maybe) <- liftIO . atomically $ do
+            url_state_maybe <- tryReadTMVar url_state_tmvar
+            let
+                cfc =
+                    case (url_state_maybe, maybe_old_state) of
+                        (Just a, Just b) | a == b    -> True
+                                         | otherwise -> False
+                        _                            -> False
+            return (cfc, url_state_maybe)
+        liftIO $ if cause_for_concern then
+            putStrLn "Stuck at maybe_old_state"
+          else
+            return ()
+        run_monitor  url_state_tmvar url_state_maybe
 
 
 researchWorkerComp :: (Headers, Maybe InputDataStream) -> ServiceStateMonad TupledPrincipalStream
@@ -375,16 +402,6 @@ handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
 
     url_state_tmvar               <- L.view urlState
 
-    -- start_harvester_browser       <- L.view startHarvesterBrowserChan
-    -- kill_harvester_browser        <- L.view killHarvesterBrowserChan
-    -- start_tester_browser          <- L.view startTesterBrowserChan
-    -- kill_tester_browser           <- L.view killTesterBrowserChan
-    -- tester_ready                  <- L.view testerReadyChan
-    -- harvester_ready               <- L.view harvesterReadyChan
-    -- ready_to_go                   <- L.view readyToGo
-    -- next_job_descr                <- L.view nextJobDescr
-
-    -- The entire thing, a few functions need it.
     comp_state                    <- ask
 
     url_state <- liftIO . atomically $ readTMVar url_state_tmvar
