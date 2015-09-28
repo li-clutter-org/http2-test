@@ -300,15 +300,7 @@ handleWithoutUrlStateCases (input_headers, maybe_source) =  do
     finish_chan                   <- L.view finishRequestChan
     base_research_dir             <- L.view researchDir
     use_address_for_station_b     <- L.view useAddressForStationB
-    -- url_state_hashtable           <- L.view urlState
 
---    start_harvester_browser       <- L.view startHarvesterBrowserChan
---    kill_harvester_browser        <- L.view killHarvesterBrowserChan
---    start_tester_browser          <- L.view startTesterBrowserChan
---    kill_tester_browser           <- L.view killTesterBrowserChan
---    tester_ready                  <- L.view testerReadyChan
---    harvester_ready               <- L.view harvesterReadyChan
---    ready_to_go                   <- L.view readyToGo
     next_job_descr                <- L.view nextJobDescr
 
     -- The entire thing, a few functions need it.
@@ -419,7 +411,7 @@ handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
                 unQueueStartBrowser "/startbrowser/StationA"
 
             | req_url == "/browserready/StationA" && (correctStage WaitingForBrowserReadyStationA_CAS) -> do
-                handle_browserready_Station_H 
+                handle_browserready_Station_H
 
             | req_url == "/nexturl/"  && (correctStage WaitingForHarvestStationToQueryNextUrl_CAS)  ->
                 handle_nexturl_H
