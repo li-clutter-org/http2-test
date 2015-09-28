@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, TemplateHaskell, ImplicitParams #-}
+{-# LANGUAGE OverloadedStrings, TemplateHaskell, ImplicitParams, RankNTypes #-}
 module Rede.Research.ResearchWorker(
     runResearchWorker
     ,spawnHarServer
@@ -268,9 +268,6 @@ runResearchWorker resolve_center_chan finish_request_chan research_dir use_addre
 --            ,_harvesterReadyChan          = harvester_ready
             }
 
-    -- Let's create the job-pusher thread
-    forkIO $ runReaderT startNextJobThread state
-
     -- And return the worker
     return $ \request -> runReaderT (researchWorkerComp request) state
 
@@ -489,9 +486,7 @@ handle_nexturl_H = do
     -- Starts harvesting of a resource... this request is made by StationA.
     --
     maybe_url <- liftIO . atomically $ do
-        nexturl_maybe <- tryTakeTMVar next_harvest_url
-        case (harvester_ready_maybe, nexturl_maybe) of
-          (Just _, Just nexturl_maybe) -> return $ Just nexturl_maybe
+        tryTakeTMVar next_harvest_url
 
     case maybe_url of
         Nothing ->
@@ -546,11 +541,10 @@ outputComputation source =  do
                  return b
 
 
-handle_harvesterhar_H :: _ -> ServiceHandler
-handle_harvesterhar_H source = do
+handle_harvesterhar_H :: _ -> _ -> ServiceHandler
+handle_harvesterhar_H source use_address_for_station_b = do
     base_research_dir             <- L.view researchDir
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
-    kill_harvester_browser        <- L.view killHarvesterBrowserChan
     resolve_center_chan           <- L.view resolveCenterChan
 
     let
@@ -624,13 +618,14 @@ handle_dnsmasqupdated_H source  = do
         -- Ensure any in-system changes get enough time to propagate
         threadDelay 2000000
         markAnalysisStageAndAdvance
-        infoM "ResearchWorker" $ "When receiving dnsmasqupdated, proceed = " ++ (show proceed)
+        infoM "ResearchWorker" $ "Dnsmasqupdated" 
     return . simpleResponse 200 $ "ok"
 
 
 handle_testerhar_H :: _ -> ServiceHandler
 handle_testerhar_H source = do
     base_research_dir             <- L.view researchDir
+    finish_chan                   <- L.view finishRequestChan
 
     let
         hashid  = ?url_state ^. urlHashId
@@ -651,7 +646,7 @@ handle_testerhar_H source = do
             liftIO . atomically $ do
                 -- Ends the mimic serving of resources
                 putTMVar finish_chan FinishRequest
-                putTMVar kill_tester_browser hashid
+                --putTMVar kill_tester_browser hashid
             -- liftIO $ threadDelay 10000000 -- <-- Remove this!!
 
             -- Mark the state
@@ -681,109 +676,6 @@ sayIfFull msg tmvar = do
         if isJust r
             then putStrLn $ msg ++ (" is full")
             else putStrLn $ msg ++ (" is empty")
-
-
--- External thread in charge of pushing jobs
--- (Also register the new hashid to url mapping...). It reads from
--- the nextJobDescr field of the ServiceStateMonad
-startNextJobThread :: ServiceStateMonad ()
-startNextJobThread = do
-    next_harvest_url              <- L.view nextHarvestUrl
-    -- next_dnsmasq_chan             <- L.view nextDNSMasqFile
-    -- next_test_url_chan            <- L.view nextTestUrl
-    next_test_url_to_check_chan   <- L.view nextTestUrlToCheck
-    -- resolve_center_chan           <- L.view resolveCenterChan
-    -- finish_chan                   <- L.view finishRequestChan
-    -- base_research_dir             <- L.view researchDir
-    -- use_address_for_station_b     <- L.view useAddressForStationB
-    url_state_hashtable           <- L.view urlState
-
-    start_harvester_browser       <- L.view startHarvesterBrowserChan
-    -- kill_harvester_browser        <- L.view killHarvesterBrowserChan
-    -- start_tester_browser          <- L.view startTesterBrowserChan
-    -- kill_tester_browser           <- L.view killTesterBrowserChan
-    -- tester_ready                  <- L.view testerReadyChan
-    -- harvester_ready               <- L.view harvesterReadyChan
-    ready_to_go                   <- L.view readyToGo
-    next_job_descr                <- L.view nextJobDescr
-
-    -- The entire thing, a few functions need it.
-    comp_state <- ask
-
-    -- This op will be retried until we can get a ready on the
-    -- rtg_state
-    (jobseq_id, hashid, url_to_analyze) <- liftIO $ do
-        infoM "ResearchWorker" "Before startNextJobThread block"
-        data_out <- atomically $ do
-
-            -- Debug code ....
-            ready_to_go_is <- isEmptyTMVar ready_to_go
-            start_harvester_browser_is <- isEmptyTMVar start_harvester_browser
-            next_test_url_to_check_chan_is <- isEmptyTMVar next_test_url_to_check_chan
-            next_harvest_url_is <- isEmptyTMVar next_harvest_url
-            next_job_descr_is <-T.isEmptyTBChan next_job_descr
-            let
-                c = trace (
-                    printf " *** %d %d %d %d %d"
-                        (fromEnum ready_to_go_is)
-                        (fromEnum start_harvester_browser_is)
-                        (fromEnum next_test_url_to_check_chan_is)
-                        (fromEnum next_harvest_url_is)
-                        (fromEnum next_job_descr_is)
-                    )
-                d = trace "rtg ready "
-                e = trace "rtg busy"
-            -- End debug code
-
-            rtg_state <- c $ takeTMVar ready_to_go
-            JobDescr hashid url <- T.readTBChan next_job_descr
-            case rtg_state of
-                Ready_RTG n -> d $ do
-                    putTMVar ready_to_go $ Processing_RTG n
-                    putTMVar start_harvester_browser hashid
-                    putTMVar next_test_url_to_check_chan  hashid
-                    putTMVar next_harvest_url hashid
-                    return (n,hashid,url)
-                _ -> e $ retry
-        infoM "ResearchWorker" "After startNextJobThread block"
-        return data_out
-
-    -- Just complain
-    alarm <- liftIO $ newAlarm 65000000 $ do
-        errorM "ResearchWorker" . builderToString $
-            "Job for url " `mappend` (Bu.byteString url_to_analyze) `mappend` " still waiting... "
-
-    let
-        new_url_state = UrlState hashid AnalysisRequested_CAS url_to_analyze alarm
-
-    liftIO $ do
-        H.insert
-            url_state_hashtable hashid new_url_state
-        infoM "ResearchWorker" . builderToString $
-            ".. <<processing new job>> asked " `mappend` (Bu.byteString url_to_analyze)
-
-    -- The system may fail to complete the whole task, and then
-
-    -- we will be stuck and blocked... what to do in this situation?
-    -- Well, in that case have all the pipes emptied and start again...
-    liftIO $ newAlarm timeForGeneralFail $ do
-        failed <- atomically $ do
-            rtg_state <- readTMVar ready_to_go
-            case rtg_state of
-                Processing_RTG nn | nn == jobseq_id -> return True
-                                  | otherwise       -> return False
-                _                                   -> return False
-        if failed
-          then do
-            errorM "ResearchWorker" " .. General fail triggered "
-            waitAndResetState comp_state
-          else do
-            infoM "ResearchWorker" " .. (harmless alarm went off).. "
-            return ()
-
-    startNextJobThread
-
-
 
 
 unQueueStartBrowser :: B.ByteString -> ServiceHandler
@@ -982,7 +874,7 @@ markReportedAnalysisStage hashid reported_analysis_stage research_dir = do
         hash_bs = unHashId hashid
         scratch_dir = research_dir </> (unpack hash_bs)
     createDirectoryIfMissing True scratch_dir
-    eraseStatusFiles url_hash research_dir
+    eraseStatusFiles hashid research_dir
     let
         percent:: Int
         (status_fname, percent) = case reported_analysis_stage of
@@ -992,7 +884,7 @@ markReportedAnalysisStage hashid reported_analysis_stage research_dir = do
                 let
                     percent_real :: Double
                     percent_real = fromRational $ (fromEnum  current_analysis_stage) / (maxBound :: CurrentAnalysisStage)
-                in ("status.processing", round precent_real)
+                in ("status.processing", round percent_real)
 
             Done_RAS                   -> ("status.done", 100)
             Failed_RAS                 -> ("status.failed", 100)
@@ -1023,7 +915,7 @@ markAnalysisStageAndAdvance  = do
 
         markReportedAnalysisStage hashid (Processing_RAS new_analysis_stage)  research_dir
 
-        infoM "ResearchWorker" $ "Went from " ++ (show current_analysis_stage) ++ " to " ++ (show new_analysis_stage)
+        infoM "ResearchWorker" $ "Went from " ++ (show analysis_stage) ++ " to " ++ (show new_analysis_stage)
 
 
 eraseStatusFiles :: HashId -> FilePath -> IO ()
@@ -1066,14 +958,6 @@ resetState state =
         tryTakeTMVar $ state ^. nextDNSMasqFile
         tryTakeTMVar $ state ^. resolveCenterChan
         tryTakeTMVar $ state ^. finishRequestChan
-        tryTakeTMVar $ state ^. startHarvesterBrowserChan
-        tryTakeTMVar $ state ^. killHarvesterBrowserChan
-        tryTakeTMVar $ state ^. startTesterBrowserChan
-        tryTakeTMVar $ state ^. killTesterBrowserChan
-        tryTakeTMVar $ state ^. testerReadyChan
-        tryTakeTMVar $ state ^. harvesterReadyChan
-        tryTakeTMVar $ (state ^. readyToGo)
-        tryPutTMVar (state ^. readyToGo) (Ready_RTG 0)
     return ()
 
 
