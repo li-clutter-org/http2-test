@@ -490,7 +490,6 @@ handleWithUrlStateCases  (input_headers, maybe_source) = do
         throwM e
 
 
-
 handle_nexturl_H :: ServiceHandler
 handle_nexturl_H = do
     next_harvest_url              <- L.view nextHarvestUrl
@@ -500,19 +499,9 @@ handle_nexturl_H = do
         hashid = ?url_state ^. urlHashId
         url = ?url_state ^. jobOriginalUrl
 
-    -- Starts harvesting of a resource... this request is made by StationA.
-    --
-    maybe_url <- liftIO . atomically $ do
-        tryTakeTMVar next_harvest_url
-
-    case maybe_url of
-        Nothing ->
-            return $ simpleResponse 500 "bad-stage"
-
-        Just url -> do
-            markAnalysisStageAndAdvance
-            let msg = WorkIndication hashid url presetCaptureTime
-            return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
+    markAnalysisStageAndAdvance
+    let msg = WorkIndication hashid url presetCaptureTime
+    return $ simpleResponse 200 $ LB.toStrict $ Da.encode msg
 
 
 handle_browserready_Station_H :: ServiceHandler
