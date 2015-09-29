@@ -164,10 +164,10 @@ class BrowserKillWatch(object):
                 # Well, well met
                 break
             try:
-                logger.info("Executing: %s", " ".join(args_get))
+                logger.debug("Executing: %s", " ".join(args_get))
                 process_output = sp.check_output(args_get)
             except sp.CalledProcessError as e:
-                logger.error(" .... Err in curl, returncode: %d ", e.returncode)
+                logger.debug(" .... Err in curl, returncode: %d ", e.returncode)
                 # Sleep a little bit
                 time.sleep(3.0)
             else:
@@ -214,7 +214,7 @@ def work():
          "-X", "POST", "--http2", DEFAULT_POLL_ENDPOINT+station_name
          ]    
     try:
-        logger.info("Executing: %s", " ".join(args_get))
+        logger.debug("Executing: %s", " ".join(args_get))
         process_output = sp.check_output(args_get)
     except sp.CalledProcessError as e:
         logger.error(" .... Err in curl, returncode: %d ", e.returncode)
@@ -238,7 +238,7 @@ def work():
             # And now just wait for the watcher before doing anything...
             watch.join()
         else:
-            logger.error("Invalid status code in HTTP response: %s", status_code )
+            logger.debug("Invalid status code in HTTP response: %s", status_code )
             time.sleep(3.0)
 
 
