@@ -304,12 +304,14 @@ researchWorkerComp forward@(input_headers, maybe_source) = do
 
     url_state_maybe               <- liftIO . atomically $ tryReadTMVar url_state_tmvar
 
-    case url_state_maybe of
+    let
+        req_url  = getUrlFromHeaders input_headers
 
-        Just url_state ->
-            handleWithUrlStateCases forward url_state
+    --liftIO . infoM "ResearchWorker" $ "A request was received: " ++ show input_headers
 
-        Nothing ->
+    if req_url /= "/setnexturl/" && req_url /= "/startbrowser/StationA" then
+            handleWithUrlStateCases forward
+        else
             handleWithoutUrlStateCases forward
 
 
@@ -333,7 +335,9 @@ handleWithoutUrlStateCases (input_headers, maybe_source) =  do
         method = getMethodFromHeaders input_headers
         req_url  = getUrlFromHeaders input_headers
         reject_request :: ServiceStateMonad TupledPrincipalStream
-        reject_request = return $ simpleResponse 500 "bad-stage"
+        reject_request = do
+            -- liftIO . infoM "ResearchWorker" $ "Rejecting stateless request"
+            return $ simpleResponse 500 "bad-stage"
 
     case method of
 
@@ -380,9 +384,16 @@ handleWithoutUrlStateCases (input_headers, maybe_source) =  do
                   else
                     return $ simpleResponse 505 "QueueFull"
 
+              | req_url == "/startbrowser/StationA"   ->
+                unQueueStartBrowser "/startbrowser/StationA"
 
-handleWithUrlStateCases :: (Headers, Maybe InputDataStream) -> UrlState -> ServiceStateMonad TupledPrincipalStream
-handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
+              | otherwise -> reject_request
+
+        _ -> reject_request
+
+
+handleWithUrlStateCases :: (Headers, Maybe InputDataStream) ->  ServiceStateMonad TupledPrincipalStream
+handleWithUrlStateCases  (input_headers, maybe_source) = do
     next_harvest_url              <- L.view nextHarvestUrl
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
     next_test_url_chan            <- L.view nextTestUrl
@@ -396,74 +407,78 @@ handleWithUrlStateCases  (input_headers, maybe_source) url_state = do
 
     comp_state                    <- ask
 
-    url_state <- liftIO . atomically $ readTMVar url_state_tmvar
-
+    url_state_maybe               <- liftIO . atomically $ tryReadTMVar url_state_tmvar
 
     let
-        method = getMethodFromHeaders input_headers
-        req_url  = getUrlFromHeaders input_headers
         reject_request :: ServiceStateMonad TupledPrincipalStream
-        reject_request = return $ simpleResponse 500 "bad-stage"
-        analysis_stage = url_state ^. currentAnalysisStage
+        reject_request = do
+            liftIO . infoM "ResearchWorker" $ "Rejected handleWithUrlStateCases"
+            return $ simpleResponse 500 "bad-stage"
 
-    let
-        ?analysis_stage = analysis_stage
-        ?input_headers  = input_headers
-        ?maybe_source   = maybe_source
-        ?url_state      = url_state
-      in case method of
+    case url_state_maybe of
 
-        -- Most requests are served by POST to emphasize that a request changes
-        -- the state of this program...
-        Post_RM
-            | req_url == "/startbrowser/StationA" && (correctStage WaitingForActivateStationA_CAS)  ->
-                unQueueStartBrowser "/startbrowser/StationA"
+        Nothing -> reject_request
 
-            | req_url == "/browserready/StationA" && (correctStage WaitingForBrowserReadyStationA_CAS) -> do
-                handle_browserready_Station_H
+        Just url_state ->
+            let
+                method = getMethodFromHeaders input_headers
+                req_url  = getUrlFromHeaders input_headers
+                analysis_stage = url_state ^. currentAnalysisStage
+            in let
+                ?analysis_stage = analysis_stage
+                ?input_headers  = input_headers
+                ?maybe_source   = maybe_source
+                ?url_state      = url_state
+              in case method of
 
-            | req_url == "/nexturl/"  && (correctStage WaitingForHarvestStationToQueryNextUrl_CAS)  ->
-                handle_nexturl_H
+                -- Most requests are served by POST to emphasize that a request changes
+                -- the state of this program...
+                Post_RM
+                    | req_url == "/browserready/StationA" && (correctStage WaitingForBrowserReadyStationA_CAS) -> do
+                        handle_browserready_Station_H
 
-            | req_url == "/har/" && (correctStage WaitingForHarvestStationToDeliverHAR_CAS),  Just source <- maybe_source -> do
-                -- Receives a .har object from the harvest station ("StationA"), and
-                -- makes all the arrangements for it to be tested using HTTP 2
-                handle_harvesterhar_H source
+                    | req_url == "/nexturl/"  && (correctStage WaitingForHarvestStationToQueryNextUrl_CAS)  ->
+                        handle_nexturl_H
 
-            | req_url == "/killbrowser/StationA" && (correctStage WaitingForKillingStationA_CAS) -> do
-                unQueueKillBrowser "/killbrowser/StationA"
+                    | req_url == "/har/" && (correctStage WaitingForHarvestStationToDeliverHAR_CAS),  Just source <- maybe_source -> do
+                        -- Receives a .har object from the harvest station ("StationA"), and
+                        -- makes all the arrangements for it to be tested using HTTP 2
+                        handle_harvesterhar_H source
 
-            | req_url == "/dnsmasq/" && (correctStage WaitingForDNSMaskToAskConfig_CAS) -> do
-                handle_dnsmasq_H maybe_source
+                    | req_url == "/killbrowser/StationA" && (correctStage WaitingForKillingStationA_CAS) -> do
+                        unQueueKillBrowser "/killbrowser/StationA"
 
-            | req_url == "/dnsmasqupdated/" && (correctStage WaitingForDNSMaskToConfirm_CAS) , Just source <- maybe_source -> do
-                handle_dnsmasqupdated_H source
+                    | req_url == "/dnsmasq/" && (correctStage WaitingForDNSMaskToAskConfig_CAS) -> do
+                        handle_dnsmasq_H maybe_source
 
-            | req_url == "/startbrowser/StationB" && (correctStage WaitingForActivateStationB_CAS) -> do
-                unQueueStartBrowser "/startbrowser/StationB"
+                    | req_url == "/dnsmasqupdated/" && (correctStage WaitingForDNSMaskToConfirm_CAS) , Just source <- maybe_source -> do
+                        handle_dnsmasqupdated_H source
 
-            | req_url == "/browserready/StationB" && (correctStage WaitingForBrowserReadyStationB_CAS) -> do
-                handle_browserready_Station_H
+                    | req_url == "/startbrowser/StationB" && (correctStage WaitingForActivateStationB_CAS) -> do
+                        unQueueStartBrowser "/startbrowser/StationB"
 
-            | req_url == "/testurl/" && (correctStage WaitingForTestStationToQueryNextUrl_CAS) -> do
-                -- Sends the next test url to the Chrome extension, this starts processing by
-                -- StationB... the request is started by StationB and we send the url in the response...
-                handle_testurl_H
+                    | req_url == "/browserready/StationB" && (correctStage WaitingForBrowserReadyStationB_CAS) -> do
+                        handle_browserready_Station_H
 
-            | req_url == "/http2har/" && (correctStage WaitingForTestStationToDeliverHAR_CAS), Just source <- maybe_source -> do
-                -- Receives a .har object from the harvest station ("StationA"), and
-                -- makes all the arrangements for it to be tested using HTTP 2
-                handle_testerhar_H source
+                    | req_url == "/testurl/" && (correctStage WaitingForTestStationToQueryNextUrl_CAS) -> do
+                        -- Sends the next test url to the Chrome extension, this starts processing by
+                        -- StationB... the request is started by StationB and we send the url in the response...
+                        handle_testurl_H
 
-            | req_url == "/killbrowser/StationB" && (correctStage WaitingForKillingStationB_CAS) -> do
-                unQueueKillBrowser "/killbrowser/StationB"
+                    | req_url == "/http2har/" && (correctStage WaitingForTestStationToDeliverHAR_CAS), Just source <- maybe_source -> do
+                        -- Receives a .har object from the harvest station ("StationA"), and
+                        -- makes all the arrangements for it to be tested using HTTP 2
+                        handle_testerhar_H source
+
+                    | req_url == "/killbrowser/StationB" && (correctStage WaitingForKillingStationB_CAS) -> do
+                        unQueueKillBrowser "/killbrowser/StationB"
 
 
-            | otherwise     ->
-                reject_request
+                    | otherwise     ->
+                        reject_request
 
-        _ ->
-            reject_request
+                _ ->
+                    reject_request
 
 
   where
@@ -686,7 +701,9 @@ unQueueStartBrowser log_url = do
 
     let
         reject_request :: ServiceStateMonad TupledPrincipalStream
-        reject_request = return $ simpleResponse 500 "bad-stage"
+        reject_request = do
+            liftIO . infoM "ResearchWorker" $ "rejected startbrowser"
+            return $ simpleResponse 500 "bad-stage"
 
     -- log_url is just something used for logging
     next_job_descr <- L.view nextJobDescr
