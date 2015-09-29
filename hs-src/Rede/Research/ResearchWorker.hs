@@ -156,15 +156,11 @@ data ReadyToGo =
     |Processing_RTG Int
 
 
--- The id and the url
-data JobDescr = JobDescr HashId B.ByteString
-
-
 data ServiceState = ServiceState {
     -- Put one here, let it run through the pipeline...
     _nextHarvestUrl              :: TMVar B.ByteString
 
-    ,_nextJobDescr               :: T.TBChan JobDescr
+    ,_nextJobDescr               :: T.TBChan UrlState
 
     -- Busy: we will wait on this before doing anything
     ,_readyToGo                  :: TMVar ReadyToGo
@@ -374,11 +370,7 @@ handleWithoutUrlStateCases (input_headers, maybe_source) =  do
                 -- Let's go atomic
                 could_write <- liftIO . atomically $ do
                     -- Empty the tmvar
-                    tryTakeTMVar url_state_tmvar
-                    -- And then put the new value
-                    putTMVar url_state_tmvar url_state
-                    -- Next step is to queue this in a queue ....
-                    T.tryWriteTBChan next_job_descr $ JobDescr hashid url_to_analyze
+                    T.tryWriteTBChan next_job_descr $ url_state
 
                 if could_write
                   then liftIO $ do
@@ -689,20 +681,53 @@ sayIfFull msg tmvar = do
             else putStrLn $ msg ++ (" is empty")
 
 
-unQueueStartBrowser :: B.ByteString -> ServiceHandler
+unQueueStartBrowser :: B.ByteString -> ServiceStateMonad TupledPrincipalStream
 unQueueStartBrowser log_url = do
+
     let
-      hashid = ?url_state ^. urlHashId
+        reject_request :: ServiceStateMonad TupledPrincipalStream
+        reject_request = return $ simpleResponse 500 "bad-stage"
 
-    bs_hashid <- liftIO $ do
-        infoM "ResearchWorker" (unpack $ B.append "start browser asked .. " log_url)
-        let bs_hashid = unHashId hashid
-        infoM "ResearchWorker" (unpack $ B.concat ["start browser delivered .. ", log_url, " ", bs_hashid ])
-        return bs_hashid
+    -- log_url is just something used for logging
+    next_job_descr <- L.view nextJobDescr
+    url_state_tmvar <- L.view urlState
+    maybe_next_job_descr <- liftIO . atomically $ do
+        url_state_maybe <- tryReadTMVar url_state_tmvar
+        case url_state_maybe of
+            -- No more state
+            Nothing  -> do
+                r <- T.tryReadTBChan next_job_descr
+                case r of
+                    Just url_state -> do
+                        putTMVar url_state_tmvar url_state
+                        return r
 
-    markAnalysisStageAndAdvance
+                    Nothing ->
+                        return Nothing
 
-    return $ simpleResponse 200 $ B.append "hashid=" bs_hashid
+            Just _ ->
+                return Nothing
+
+    case maybe_next_job_descr of
+
+        Just url_state -> do
+            let
+              hashid = url_state ^. urlHashId
+
+            bs_hashid <- liftIO $ do
+                infoM "ResearchWorker" (unpack $ B.append "start browser asked .. " log_url)
+                let bs_hashid = unHashId hashid
+                infoM "ResearchWorker" (unpack $ B.concat ["start browser delivered .. ", log_url, " ", bs_hashid ])
+                return bs_hashid
+
+            let
+              ?url_state = url_state
+              in markAnalysisStageAndAdvance
+
+            return $ simpleResponse 200 $ B.append "hashid=" bs_hashid
+
+        Nothing -> do
+            reject_request
 
 
 unQueueKillBrowser :: B.ByteString -> ServiceHandler
