@@ -279,6 +279,7 @@ monitorState = do
     run_monitor url_state_tmvar Nothing
   where
     run_monitor url_state_tmvar maybe_old_state = do
+        research_dir <- L.view researchDir
         (cause_for_concern, url_state_maybe) <- liftIO . atomically $ do
             url_state_maybe <- tryReadTMVar url_state_tmvar
             let
@@ -288,11 +289,19 @@ monitorState = do
                                          | otherwise -> False
                         _                            -> False
             return (cfc, url_state_maybe)
-        liftIO $ if cause_for_concern then
+        liftIO $ if cause_for_concern then do
             errorM "ResearchWorker" $ "Stuck at " ++ (show maybe_old_state)
+            -- And while we are at that, reset the thing
+            atomically $ do
+                takeTMVar url_state_tmvar
+            let
+                Just url_state = url_state_maybe
+                hashid = url_state ^. urlHashId
+
+            markReportedAnalysisStage hashid  Failed_RAS  research_dir
           else
             return ()
-        liftIO . threadDelay $ 5000000
+        liftIO . threadDelay $ 15000000
         run_monitor  url_state_tmvar url_state_maybe
 
 
@@ -313,8 +322,8 @@ researchWorkerComp forward@(input_headers, maybe_source) = do
 
 
 handleFrontEndRequests :: (Headers, Maybe InputDataStream) -> ServiceStateMonad TupledPrincipalStream
-handleFrontEndReque (input_headers, maybe_source) =  do
-    next_harvest_ur              <- L.view nextHarvestUrl
+handleFrontEndRequests (input_headers, maybe_source) =  do
+    next_harvest_url             <- L.view nextHarvestUrl
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
     next_test_url_chan            <- L.view nextTestUrl
     next_test_url_to_check_chan   <- L.view nextTestUrlToCheck
@@ -469,11 +478,13 @@ handleWithUrlStateCases  (input_headers, maybe_source) = do
 
                     | req_url == "/http2har/" && (correctStage WaitingForTestStationToDeliverHAR_CAS), Just source <- maybe_source -> do
                         -- Receives a .har object from the harvest station ("StationA"), and
-                        -- makes all the arrangements for it to be tested using HTTP 2
+                        -- makes all the arrangements for it to be tested using HTTP/2
                         handle_testerhar_H source
 
                     | req_url == "/killbrowser/StationB" && (correctStage WaitingForKillingStationB_CAS) -> do
-                        unQueueKillBrowser "/killbrowser/StationB"
+                        response <- unQueueKillBrowser "/killbrowser/StationB"
+                        finishCycle
+                        return response
 
                     | otherwise     ->
                         reject_request_specific
@@ -658,7 +669,8 @@ handle_testerhar_H source = do
             -- liftIO $ threadDelay 10000000 -- <-- Remove this!!
 
             -- Mark the state
-            liftIO $ markReportedAnalysisStage hashid Done_RAS base_research_dir
+            -- liftIO $ markReportedAnalysisStage hashid Done_RAS base_research_dir
+            markAnalysisStageAndAdvance
             liftIO $ infoM "ResearchWorker" "Just after setting status to \"done\""
 
             return $ simpleResponse 200 use_text
@@ -955,6 +967,7 @@ markReportedAnalysisStage hashid reported_analysis_stage research_dir = do
     let
         percent:: Int
         (status_fname, percent) = case reported_analysis_stage of
+
             Queued_RAS                 -> ("status.queued",0)
 
             Processing_RAS current_analysis_stage  ->
@@ -967,10 +980,9 @@ markReportedAnalysisStage hashid reported_analysis_stage research_dir = do
                 in ("status.processing", round percent_real)
 
             Done_RAS                   -> ("status.done", 100)
+
             Failed_RAS                 -> ("status.failed", 100)
 
-            -- Here down: just as a way to not crash the program.
-            -- TODO: include all the states
             _                          -> ("status.processing",0)
         file_location = scratch_dir  </> status_fname
     (withFile file_location WriteMode $ \ handle -> hPutStr handle (show percent))
@@ -981,7 +993,7 @@ markAnalysisStageAndAdvance  = do
     let
         analysis_stage = ?url_state ^. currentAnalysisStage
         hashid = ?url_state ^. urlHashId
-        new_analysis_stage = shiftAnalysisStage analysis_stage
+        new_analysis_stage_maybe = shiftAnalysisStage analysis_stage
 
     research_dir  <- L.view researchDir
     url_state_tmvar <- L.view urlState
@@ -989,14 +1001,24 @@ markAnalysisStageAndAdvance  = do
     liftIO $ do
         atomically $ do
             url_state <- takeTMVar url_state_tmvar
-            let
-                new_url_state = L.set currentAnalysisStage new_analysis_stage url_state
-            putTMVar url_state_tmvar new_url_state
+            case new_analysis_stage_maybe of
 
-        markReportedAnalysisStage hashid (Processing_RAS new_analysis_stage)  research_dir
+                Just new_analysis_stage -> do
+                    let
+                        new_url_state = L.set currentAnalysisStage new_analysis_stage url_state
+                    putTMVar url_state_tmvar new_url_state
 
-        infoM "ResearchWorker" $ "Went from " ++ (show analysis_stage) ++ " to " ++ (show new_analysis_stage)
+                Nothing ->
+                    return ()
 
+        case new_analysis_stage_maybe of
+
+            Just new_analysis_stage -> do
+                markReportedAnalysisStage hashid (Processing_RAS new_analysis_stage)  research_dir
+                infoM "ResearchWorker" $ "Went from " ++ (show analysis_stage) ++ " to " ++ (show new_analysis_stage)
+
+            Nothing ->
+                markReportedAnalysisStage hashid Done_RAS research_dir
 
 eraseStatusFiles :: HashId -> FilePath -> IO ()
 eraseStatusFiles url_hash research_dir = do
@@ -1009,6 +1031,15 @@ eraseStatusFiles url_hash research_dir = do
             removeIfExists complete_name
         )
         fileNames
+
+
+finishCycle :: ServiceStateMonad ()
+finishCycle = do
+    liftIO . infoM "ResearchWorker" $ "Cycle finished"
+    url_state_tmvar <- L.view urlState
+    liftIO . atomically $ do
+        tryTakeTMVar url_state_tmvar
+    return ()
 
 
 fileNames :: [ FilePath ]
@@ -1080,8 +1111,10 @@ waitRequestBody source =
     return $ (LB.toStrict . Bu.toLazyByteString) full_builder
 
 
-shiftAnalysisStage :: CurrentAnalysisStage -> CurrentAnalysisStage
-shiftAnalysisStage = toEnum . ( + 1) . fromEnum
+shiftAnalysisStage :: CurrentAnalysisStage -> Maybe CurrentAnalysisStage
+shiftAnalysisStage x | x < maxBound  = Just . toEnum . ( + 1) . fromEnum $ x
+                     | otherwise     = Nothing
+
 
 
 correctStage :: (?analysis_stage :: CurrentAnalysisStage ) => CurrentAnalysisStage ->  Bool
