@@ -289,9 +289,10 @@ monitorState = do
                         _                            -> False
             return (cfc, url_state_maybe)
         liftIO $ if cause_for_concern then
-            putStrLn "Stuck at maybe_old_state"
+            errorM "ResearchWorker" $ "Stuck at " ++ (show maybe_old_state)
           else
             return ()
+        liftIO . threadDelay $ 5000000
         run_monitor  url_state_tmvar url_state_maybe
 
 
@@ -385,7 +386,7 @@ handleWithoutUrlStateCases (input_headers, maybe_source) =  do
                     return $ simpleResponse 505 "QueueFull"
 
               | req_url == "/startbrowser/StationA"   ->
-                unQueueStartBrowser "/startbrowser/StationA"
+                unQueueStartBrowserA "/startbrowser/StationA"
 
               | otherwise -> reject_request
 
@@ -412,7 +413,7 @@ handleWithUrlStateCases  (input_headers, maybe_source) = do
     let
         reject_request :: ServiceStateMonad TupledPrincipalStream
         reject_request = do
-            liftIO . infoM "ResearchWorker" $ "Rejected handleWithUrlStateCases"
+            -- liftIO . infoM "ResearchWorker" $ "Rejected handleWithUrlStateCases"
             return $ simpleResponse 500 "bad-stage"
 
     case url_state_maybe of
@@ -424,6 +425,11 @@ handleWithUrlStateCases  (input_headers, maybe_source) = do
                 method = getMethodFromHeaders input_headers
                 req_url  = getUrlFromHeaders input_headers
                 analysis_stage = url_state ^. currentAnalysisStage
+                reject_request_specific :: ServiceStateMonad TupledPrincipalStream
+                reject_request_specific  = do
+                    -- liftIO . infoM "ResearchWorker" $ "specifically rejected " ++ (show req_url)
+                    return $ simpleResponse 500 "bad-stage"
+
             in let
                 ?analysis_stage = analysis_stage
                 ?input_headers  = input_headers
@@ -455,7 +461,7 @@ handleWithUrlStateCases  (input_headers, maybe_source) = do
                         handle_dnsmasqupdated_H source
 
                     | req_url == "/startbrowser/StationB" && (correctStage WaitingForActivateStationB_CAS) -> do
-                        unQueueStartBrowser "/startbrowser/StationB"
+                        unQueueStartBrowserB "/startbrowser/StationB"
 
                     | req_url == "/browserready/StationB" && (correctStage WaitingForBrowserReadyStationB_CAS) -> do
                         handle_browserready_Station_H
@@ -475,10 +481,10 @@ handleWithUrlStateCases  (input_headers, maybe_source) = do
 
 
                     | otherwise     ->
-                        reject_request
+                        reject_request_specific
 
                 _ ->
-                    reject_request
+                    reject_request_specific
 
 
   where
@@ -685,8 +691,8 @@ sayIfFull msg tmvar = do
             else putStrLn $ msg ++ (" is empty")
 
 
-unQueueStartBrowser :: B.ByteString -> ServiceStateMonad TupledPrincipalStream
-unQueueStartBrowser log_url = do
+unQueueStartBrowserA :: B.ByteString -> ServiceStateMonad TupledPrincipalStream
+unQueueStartBrowserA log_url = do
 
     let
         reject_request :: ServiceStateMonad TupledPrincipalStream
@@ -713,6 +719,41 @@ unQueueStartBrowser log_url = do
 
             Just _ ->
                 return Nothing
+
+    case maybe_next_job_descr of
+
+        Just url_state -> do
+            let
+              hashid = url_state ^. urlHashId
+
+            bs_hashid <- liftIO $ do
+                infoM "ResearchWorker" (unpack $ B.append "start browser asked .. " log_url)
+                let bs_hashid = unHashId hashid
+                infoM "ResearchWorker" (unpack $ B.concat ["start browser delivered .. ", log_url, " ", bs_hashid ])
+                return bs_hashid
+
+            let
+              ?url_state = url_state
+              in markAnalysisStageAndAdvance
+
+            return $ simpleResponse 200 $ B.append "hashid=" bs_hashid
+
+        Nothing -> do
+            reject_request
+
+
+unQueueStartBrowserB :: B.ByteString -> ServiceStateMonad TupledPrincipalStream
+unQueueStartBrowserB log_url = do
+
+    let
+        reject_request :: ServiceStateMonad TupledPrincipalStream
+        reject_request = do
+            liftIO . infoM "ResearchWorker" $ "rejected startbrowser"
+            return $ simpleResponse 500 "bad-stage"
+
+    -- log_url is just something used for logging
+    url_state_tmvar <- L.view urlState
+    maybe_next_job_descr <- liftIO . atomically $ tryReadTMVar url_state_tmvar
 
     case maybe_next_job_descr of
 

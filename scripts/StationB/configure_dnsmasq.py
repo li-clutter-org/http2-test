@@ -62,26 +62,30 @@ def work():
         time.sleep(3.0)
     else:
         # Got a config_file?
-        print("GOT A FILE!")
         if len(config_file) > 5:
-            obj = json.loads( config_file )
-            analysis_id = obj["analysis_id"]
-            dnsmasq_contents = obj["config_file"]
-            args_update_completed = curl_arguments(NOTIFY_UPDATE_COMPLETE_ENDPOINT, data_binary=analysis_id)
-            # Seems like so.... pass on to
-            with open(DNSMASQ_CONFIG_PLACE, "w") as out:
-                out.write(dnsmasq_contents)
-            print(".newconfig written to file")
-            # Now restart dnsmasq... here is why I need elevated privileges....
-            sp.check_call(shlex.split("/etc/init.d/dnsmasq restart"))
-            # And issue a new call to the Haskell server to let it know 
-            # that the new dnsmasq setting has taken effect
             try:
-                print("Executing: ", " ".join(args_update_completed))
-                output = sp.check_output(args_update_completed, stderr = sp.STDOUT)
-            except sp.CalledProcessError as e:
-                print(".... Err in curl, returncode: ", e.returncode, file = sys.stderr)
-                print("....     returned result was: ", output, file = sys.stderr)
+                obj = json.loads( config_file )
+            except ValueError:
+                # Can happen when a 500 error is returned
+                time.sleep(1.0)
+            else:
+                analysis_id = obj["analysis_id"]
+                dnsmasq_contents = obj["config_file"]
+                args_update_completed = curl_arguments(NOTIFY_UPDATE_COMPLETE_ENDPOINT, data_binary=analysis_id)
+                # Seems like so.... pass on to
+                with open(DNSMASQ_CONFIG_PLACE, "w") as out:
+                    out.write(dnsmasq_contents)
+                print(".newconfig written to file")
+                # Now restart dnsmasq... here is why I need elevated privileges....
+                sp.check_call(shlex.split("/etc/init.d/dnsmasq restart"))
+                # And issue a new call to the Haskell server to let it know
+                # that the new dnsmasq setting has taken effect
+                try:
+                    print("Executing: ", " ".join(args_update_completed))
+                    output = sp.check_output(args_update_completed, stderr = sp.STDOUT)
+                except sp.CalledProcessError as e:
+                    print(".... Err in curl, returncode: ", e.returncode, file = sys.stderr)
+                    print("....     returned result was: ", output, file = sys.stderr)
         else:
             print("FILE IS EMPTY: ", config_file)
             print(os.environ["PATH"])
