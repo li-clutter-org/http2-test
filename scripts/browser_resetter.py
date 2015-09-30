@@ -179,9 +179,10 @@ class BrowserKillWatch(object):
                         self.log_and_kill_the_browser()
                         break
                     else:
-                        logger.warning("Expected hashid=%s and received hashid was %s, will keep waiting",
-                                     hashid, returned_hash_id )
-                        # self.log_and_kill_the_browser()
+                        # logger.warning("Expected hashid=%s and received hashid was %s, will keep waiting",
+                        #              hashid, returned_hash_id )
+                        # Assume nobody is waiting.
+                        self.log_and_kill_the_browser()
                         break
                 else:
                     logger.error("When-to-kill returned non 200 status code: %s", status_code )
