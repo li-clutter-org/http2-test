@@ -313,11 +313,11 @@ researchWorkerComp forward@(input_headers, maybe_source) = do
     if req_url /= "/setnexturl/" && req_url /= "/startbrowser/StationA" then
             handleWithUrlStateCases forward
         else
-            handleWithoutUrlStateCases forward
+            handleFrontEndRequests forward
 
 
-handleWithoutUrlStateCases :: (Headers, Maybe InputDataStream) -> ServiceStateMonad TupledPrincipalStream
-handleWithoutUrlStateCases (input_headers, maybe_source) =  do
+handleFrontEndRequests :: (Headers, Maybe InputDataStream) -> ServiceStateMonad TupledPrincipalStream
+handleFrontEndRequests (input_headers, maybe_source) =  do
     next_harvest_url              <- L.view nextHarvestUrl
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
     next_test_url_chan            <- L.view nextTestUrl
@@ -478,7 +478,6 @@ handleWithUrlStateCases  (input_headers, maybe_source) = do
 
                     | req_url == "/killbrowser/StationB" && (correctStage WaitingForKillingStationB_CAS) -> do
                         unQueueKillBrowser "/killbrowser/StationB"
-
 
                     | otherwise     ->
                         reject_request_specific
@@ -697,7 +696,7 @@ unQueueStartBrowserA log_url = do
     let
         reject_request :: ServiceStateMonad TupledPrincipalStream
         reject_request = do
-            liftIO . infoM "ResearchWorker" $ "rejected startbrowser"
+            -- liftIO . infoM "ResearchWorker" $ "rejected startbrowser"
             return $ simpleResponse 500 "bad-stage"
 
     -- log_url is just something used for logging
@@ -748,7 +747,7 @@ unQueueStartBrowserB log_url = do
     let
         reject_request :: ServiceStateMonad TupledPrincipalStream
         reject_request = do
-            liftIO . infoM "ResearchWorker" $ "rejected startbrowser"
+            -- liftIO . infoM "ResearchWorker" $ "rejected startbrowser"
             return $ simpleResponse 500 "bad-stage"
 
     -- log_url is just something used for logging
