@@ -299,10 +299,6 @@ monitorState = do
 researchWorkerComp :: (Headers, Maybe InputDataStream) -> ServiceStateMonad TupledPrincipalStream
 researchWorkerComp forward@(input_headers, maybe_source) = do
     url_state_tmvar               <- L.view urlState
-
-    -- The entire thing, a few functions need it.
-    comp_state                    <- ask
-
     url_state_maybe               <- liftIO . atomically $ tryReadTMVar url_state_tmvar
 
     let
@@ -317,8 +313,8 @@ researchWorkerComp forward@(input_headers, maybe_source) = do
 
 
 handleFrontEndRequests :: (Headers, Maybe InputDataStream) -> ServiceStateMonad TupledPrincipalStream
-handleFrontEndRequests (input_headers, maybe_source) =  do
-    next_harvest_url              <- L.view nextHarvestUrl
+handleFrontEndReque (input_headers, maybe_source) =  do
+    next_harvest_ur              <- L.view nextHarvestUrl
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
     next_test_url_chan            <- L.view nextTestUrl
     next_test_url_to_check_chan   <- L.view nextTestUrlToCheck
