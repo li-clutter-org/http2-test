@@ -974,7 +974,7 @@ markReportedAnalysisStage hashid reported_analysis_stage research_dir = do
                 let
                     percent_real :: Double
                     percent_real =
-                        (fromIntegral . fromEnum $ current_analysis_stage :: Double)
+                        100.0 * (fromIntegral . fromEnum $ current_analysis_stage :: Double)
                         /
                         (fromIntegral . fromEnum $ (maxBound :: CurrentAnalysisStage) :: Double)
                 in ("status.processing", round percent_real)
