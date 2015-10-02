@@ -54,6 +54,7 @@ setupAndRun mimic_dir mimic_config_dir resolve_center_chan finish_request_chan =
         cert_filename  = getCertFilename mimic_config_dir
         research_dir = mimic_dir </> "hars/"
 
+
     http2worker <-  runResearchWorker
                        resolve_center_chan
                        finish_request_chan
@@ -62,6 +63,12 @@ setupAndRun mimic_dir mimic_config_dir resolve_center_chan finish_request_chan =
 
     sessions_context <- makeDefaultSessionsContext
 
+    let
+        attendant = http2Attendant sessions_context  $ coherentToAwareWorker http2worker
+
     tlsServeWithALPN  cert_filename priv_key_filename iface [
-         ("h2-14", http2Attendant sessions_context  $ coherentToAwareWorker http2worker)
+         ("h2-14", attendant),
+         ("h2-10", attendant),
+         ("h2-11", attendant),
+         ("h2", attendant)
         ] post_port
