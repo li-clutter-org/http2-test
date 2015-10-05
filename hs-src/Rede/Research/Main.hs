@@ -34,18 +34,20 @@ research mimic_dir  = do
         mimic_config_dir = configDir mimic_dir
     resolve_center_chan <- atomically $ newEmptyTMVar
     finish_request_chan <- atomically $ newEmptyTMVar
+    resolve_center_deployed_chan <- atomically $ newEmptyTMVar
 
-    forkIO $ spawnHarServer mimic_dir resolve_center_chan finish_request_chan
+    forkIO $ spawnHarServer mimic_dir resolve_center_chan resolve_center_deployed_chan finish_request_chan
 
     setupAndRun
         mimic_dir
         mimic_config_dir
         resolve_center_chan
+        resolve_center_deployed_chan
         finish_request_chan
 
 
-setupAndRun :: FilePath -> FilePath -> TMVar ResolveCenter -> TMVar FinishRequest -> IO ()
-setupAndRun mimic_dir mimic_config_dir resolve_center_chan finish_request_chan = do
+setupAndRun :: FilePath -> FilePath -> TMVar ResolveCenter -> TMVar () -> TMVar FinishRequest -> IO ()
+setupAndRun mimic_dir mimic_config_dir resolve_center_chan resolve_center_deployed_chan finish_request_chan = do
     post_port <- getMimicPostPort mimic_config_dir
     infoM "ResearchWorker" $ "Control port: " ++ (show post_port)
     iface <- getMimicPostInterface mimic_config_dir
@@ -57,6 +59,7 @@ setupAndRun mimic_dir mimic_config_dir resolve_center_chan finish_request_chan =
 
     http2worker <-  runResearchWorker
                        resolve_center_chan
+                       resolve_center_deployed_chan
                        finish_request_chan
                        research_dir
                        (pack iface)

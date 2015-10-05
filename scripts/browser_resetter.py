@@ -33,7 +33,7 @@ CHROME_CGROUP                   = "/sys/fs/cgroup/chrome"
 # Time in seconds to wait
 #KILL_BROWSER_AFTER              = 40
 # Debug time
-KILL_BROWSER_AFTER              = 160
+KILL_BROWSER_AFTER              = 60
 TIMES_TO_CHECK_FOR_CHROME       = 50
 
 
@@ -158,7 +158,8 @@ class BrowserKillWatch(object):
             "--data-binary", END_TOKEN.encode('ascii'),
              # I don't think any data needs to be submitted
              "-X", "POST", "--http2", NOTIFY_UPDATE_COMPLETE_ENDPOINT+station_name
-             ]        
+             ]
+        enter_time = time.time()
         while True:
             if self._browser_already_killed.is_set():
                 # Well, well met
@@ -185,8 +186,7 @@ class BrowserKillWatch(object):
                         self.log_and_kill_the_browser()
                         break
                 else:
-                    logger.error("When-to-kill returned non 200 status code: %s", status_code )
-                    print(os.environ["PATH"])
+                    logger.error("When-to-kill returned NOOK status code: %s", status_code )
                     time.sleep(3.0)
                     
     def timed_kill(self):
