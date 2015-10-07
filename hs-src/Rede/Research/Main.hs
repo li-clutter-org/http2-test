@@ -19,7 +19,10 @@ import           Rede.MainLoop.ConfigHelp     (getCertFilename,
                                                getPrivkeyFilename)
 
 import           Rede.Research.ResearchWorker (runResearchWorker,
-                                               spawnHarServer)
+                                               spawnHarServer,
+                                               newHarServerControlPad,
+                                               HarServerControlPad(..)
+                                              )
 
 import           SecondTransfer.Http2         (http2Attendant)
 import           SecondTransfer
@@ -32,22 +35,18 @@ research :: FilePath -> IO ()
 research mimic_dir  = do
     let
         mimic_config_dir = configDir mimic_dir
-    resolve_center_chan <- atomically $ newEmptyTMVar
-    finish_request_chan <- atomically $ newEmptyTMVar
-    resolve_center_deployed_chan <- atomically $ newEmptyTMVar
+    hscp <- newHarServerControlPad
 
-    forkIO $ spawnHarServer mimic_dir resolve_center_chan resolve_center_deployed_chan finish_request_chan
+    forkIO $ spawnHarServer mimic_dir hscp
 
     setupAndRun
         mimic_dir
         mimic_config_dir
-        resolve_center_chan
-        resolve_center_deployed_chan
-        finish_request_chan
+        hscp
 
 
-setupAndRun :: FilePath -> FilePath -> TMVar ResolveCenter -> TMVar () -> TMVar FinishRequest -> IO ()
-setupAndRun mimic_dir mimic_config_dir resolve_center_chan resolve_center_deployed_chan finish_request_chan = do
+setupAndRun :: FilePath -> FilePath -> HarServerControlPad -> IO ()
+setupAndRun mimic_dir mimic_config_dir hscp = do
     post_port <- getMimicPostPort mimic_config_dir
     infoM "ResearchWorker" $ "Control port: " ++ (show post_port)
     iface <- getMimicPostInterface mimic_config_dir
@@ -58,9 +57,7 @@ setupAndRun mimic_dir mimic_config_dir resolve_center_chan resolve_center_deploy
 
 
     http2worker <-  runResearchWorker
-                       resolve_center_chan
-                       resolve_center_deployed_chan
-                       finish_request_chan
+                       hscp
                        research_dir
                        (pack iface)
 

@@ -2,6 +2,12 @@
 module Rede.Research.ResearchWorker(
     runResearchWorker
     ,spawnHarServer
+    ,HarServerControlPad(..)
+    ,newHarServerControlPad
+
+    ,resolveCenter_CP
+    ,deployed_CP
+    ,finish_CP
     ) where
 
 
@@ -85,7 +91,7 @@ import           Rede.Research.JobId             (HashId(..), jobIdFromUrl, hash
 import           Rede.Research.JSONMessages      (SetNextUrl(..), DnsMasqConfig(..), WorkIndication(..))
 
 
-import           Debug.Trace (trace)
+import           Debug.Trace                     (trace)
 
 
 type HashTable k v = H.CuckooHashTable k v
@@ -157,6 +163,17 @@ data ReadyToGo =
     |Processing_RTG Int
 
 
+data HarServerControlPad = HarServerControlPad {
+    _resolveCenter_CP    :: TMVar ResolveCenter
+    ,_deployed_CP        :: TMVar ()
+    ,_finish_CP          :: TMVar FinishRequest
+    ,_reset_CP           :: TMVar ()
+    }
+
+
+L.makeLenses ''HarServerControlPad
+
+
 data ServiceState = ServiceState {
     -- Put one here, let it run through the pipeline...
     _nextHarvestUrl              :: TMVar B.ByteString
@@ -176,10 +193,7 @@ data ServiceState = ServiceState {
     -- Files to be handed out to DNSMasq
     , _nextDNSMasqFile           :: TMVar DnsMasqConfig
 
-    , _resolveCenterChan         :: TMVar ResolveCenter
-    , _centerDeployedChan        :: TMVar ()
-
-    , _finishRequestChan         :: TMVar FinishRequest
+    , _harServerControlPad       :: HarServerControlPad
 
     -- The "Research dir" is the "hars" subdirectory of the mimic
     -- scratch directory.
@@ -208,13 +222,11 @@ type ServiceHandler =
 
 
 runResearchWorker ::
-    TMVar ResolveCenter
-    -> TMVar ()
-    -> TMVar FinishRequest
+    HarServerControlPad
     -> FilePath                -- Research dir
     -> B.ByteString
     -> IO CoherentWorker
-runResearchWorker resolve_center_chan center_deployed_chan finish_request_chan research_dir use_address_for_station_b = do
+runResearchWorker hscp research_dir use_address_for_station_b = do
 
     liftIO $ debugM "ResearchWorker" "(on research worker)"
 
@@ -226,18 +238,11 @@ runResearchWorker resolve_center_chan center_deployed_chan finish_request_chan r
     next_test_url_to_check_chan   <- atomically $ newEmptyTMVar -- <-- Goes to the dnsmasq response handler
     next_dns_masq_file            <- atomically $ newEmptyTMVar
 
-    -- start_harvester_browser       <- atomically $ newEmptyTMVar
-    -- kill_harvester_browser        <- atomically $ newEmptyTMVar
-
-    -- start_tester_browser          <- atomically $ newEmptyTMVar
-    -- kill_tester_browser           <- atomically $ newEmptyTMVar
-
     harvester_ready               <- atomically $ newEmptyTMVar
     tester_ready                  <- atomically $ newEmptyTMVar
     ready_to_go                   <- atomically $ newTMVar (Ready_RTG 0)
     next_job_descr                <- atomically $ T.newTBChan maxInQueue
     new_url_state                 <- atomically $ newEmptyTMVar
-
 
     let
         state = ServiceState {
@@ -247,20 +252,10 @@ runResearchWorker resolve_center_chan center_deployed_chan finish_request_chan r
             ,_nextTestUrl                       = next_test_url_chan
             ,_nextTestUrlToCheck                = next_test_url_to_check_chan
             ,_nextDNSMasqFile                   = next_dns_masq_file
-            ,_resolveCenterChan                 = resolve_center_chan
-            ,_centerDeployedChan                = center_deployed_chan
-            ,_finishRequestChan                 = finish_request_chan
             ,_researchDir                       = research_dir
             ,_useAddressForStationB             = use_address_for_station_b
             ,_urlState                          = new_url_state
-
---            ,_startHarvesterBrowserChan   = start_harvester_browser
---            ,_killHarvesterBrowserChan    = kill_harvester_browser
---            ,_startTesterBrowserChan      = start_tester_browser
---            ,_killTesterBrowserChan       = kill_tester_browser
-
---            ,_testerReadyChan             = tester_ready
---            ,_harvesterReadyChan          = harvester_ready
+            ,_harServerControlPad               = hscp
             }
 
     -- Keep the monitor running
@@ -322,12 +317,12 @@ researchWorkerComp forward@(input_headers, maybe_source) = do
 
 handleFrontEndRequests :: (Headers, Maybe InputDataStream) -> ServiceStateMonad TupledPrincipalStream
 handleFrontEndRequests (input_headers, maybe_source) =  do
-    next_harvest_url             <- L.view nextHarvestUrl
+    next_harvest_url              <- L.view nextHarvestUrl
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
     next_test_url_chan            <- L.view nextTestUrl
     next_test_url_to_check_chan   <- L.view nextTestUrlToCheck
-    resolve_center_chan           <- L.view resolveCenterChan
-    finish_chan                   <- L.view finishRequestChan
+    resolve_center_chan           <- L.view (harServerControlPad . resolveCenter_CP)
+    finish_chan                   <- L.view (harServerControlPad . finish_CP)
     base_research_dir             <- L.view researchDir
     use_address_for_station_b     <- L.view useAddressForStationB
 
@@ -403,8 +398,8 @@ handleWithUrlStateCases  (input_headers, maybe_source) = do
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
     next_test_url_chan            <- L.view nextTestUrl
     next_test_url_to_check_chan   <- L.view nextTestUrlToCheck
-    resolve_center_chan           <- L.view resolveCenterChan
-    finish_chan                   <- L.view finishRequestChan
+    resolve_center_chan           <- L.view (harServerControlPad . resolveCenter_CP )
+    finish_chan                   <- L.view (harServerControlPad . finish_CP )
     base_research_dir             <- L.view researchDir
     use_address_for_station_b     <- L.view useAddressForStationB
 
@@ -491,10 +486,7 @@ handleWithUrlStateCases  (input_headers, maybe_source) = do
                 _ ->
                     reject_request_specific
 
-
   where
-
-
     on_url_wait_interrupted :: StreamCancelledException -> ServiceStateMonad a
     on_url_wait_interrupted e = do
         liftIO . warningM "ResearchWorker" $ "Post wait interrupted"
@@ -524,7 +516,7 @@ handle_browserready_Station_H = do
 handle_testurl_H :: ServiceHandler
 handle_testurl_H = do
     liftIO . infoM "ResearchWorker" $ ".. /testurl/ asked"
-    center_deployed_chan <- L.view centerDeployedChan
+    center_deployed_chan <- L.view ( harServerControlPad . deployed_CP )
     let
         hashid       = ?url_state ^. urlHashId
         anyschema_url = ?url_state ^. jobOriginalUrl
@@ -567,7 +559,7 @@ handle_harvesterhar_H :: InputDataStream ->  ServiceHandler
 handle_harvesterhar_H source  = do
     base_research_dir             <- L.view researchDir
     next_dnsmasq_chan             <- L.view nextDNSMasqFile
-    resolve_center_chan           <- L.view resolveCenterChan
+    resolve_center_chan           <- L.view (harServerControlPad . resolveCenter_CP)
     use_address_for_station_b     <- L.view useAddressForStationB
 
     let
@@ -648,7 +640,7 @@ handle_dnsmasqupdated_H source  = do
 handle_testerhar_H :: InputDataStream -> ServiceHandler
 handle_testerhar_H source = do
     base_research_dir             <- L.view researchDir
-    finish_chan                   <- L.view finishRequestChan
+    finish_chan                   <- L.view (harServerControlPad . finish_CP )
 
     let
         hashid  = ?url_state ^. urlHashId
@@ -802,9 +794,40 @@ unQueueKillBrowser log_url = do
     return $ simpleResponse 200 $ B.append "hashid=" (unHashId hashid)
 
 
+newHarServerControlPad :: IO HarServerControlPad
+newHarServerControlPad = atomically $ do
+    resolve_center_tmv <- newEmptyTMVar
+    deployed_tmv       <- newEmptyTMVar
+    finish_tmv         <- newEmptyTMVar
+    reset_tmv          <- newEmptyTMVar
+    return $ HarServerControlPad {
+        _resolveCenter_CP  = resolve_center_tmv
+       ,_deployed_CP       = deployed_tmv
+       ,_finish_CP         = finish_tmv
+       ,_reset_CP          = reset_tmv
+    }
+
+
+resetHSCP :: HarServerControlPad -> STM ()
+resetHSCP hscp = do
+    tryTakeTMVar $ hscp ^. resolveCenter_CP
+    tryTakeTMVar $ hscp ^. deployed_CP
+    tryTakeTMVar $ hscp ^. finish_CP
+    return ()
+
+
+resetAfterNewResolveCenter :: HarServerControlPad -> STM ()
+resetAfterNewResolveCenter hscp = do
+    tryTakeTMVar $ hscp ^. deployed_CP
+    tryTakeTMVar $ hscp ^. finish_CP
+    -- The other one may also come here, but doesn't seem needed
+    -- just now.
+    return ()
+
+
 -- And here for when we need to fork a server to load the .har file from
-spawnHarServer :: FilePath -> TMVar ResolveCenter -> TMVar () -> TMVar  FinishRequest -> IO ()
-spawnHarServer mimic_dir resolve_center_chan center_deployed_chan  finish_request_chan = do
+spawnHarServer :: FilePath -> HarServerControlPad -> IO ()
+spawnHarServer mimic_dir hscp = do
     let
         mimic_config_dir = configDir mimic_dir
     port  <-  getMimicPort
@@ -814,22 +837,42 @@ spawnHarServer mimic_dir resolve_center_chan center_deployed_chan  finish_reques
     sessions_context <- makeDefaultSessionsContext
 
     finish_request_mvar <- newEmptyMVar
+    currently_working_tmvar <- atomically $ newTMVar False
+
+    let
+        finish_request_chan    = hscp ^. finish_CP
+        resolve_center_chan    = hscp ^. resolveCenter_CP
+        center_deployed_chan   = hscp ^. deployed_CP
+        reset_chan             = hscp ^. reset_CP
 
     let
 
         watcher = do
-            r <- atomically $ takeTMVar finish_request_chan
-            infoM "ResearchWorker.SpawnHarServer" $ " .. Finishing mimic service  "
-            putMVar finish_request_mvar r
+            must_shutdown <- atomically $ do
+                r' <- tryTakeTMVar finish_request_chan
+                s' <- tryTakeTMVar reset_chan
+                case (r', s') of
+                    (Nothing, Nothing) -> retry
+                    _ -> do
+                        currently_working <- swapTMVar currently_working_tmvar False
+                        resetHSCP hscp
+                        return currently_working
+
+            if must_shutdown
+              then do
+                infoM "ResearchWorker.SpawnHarServer" $ " .. Finishing mimic service"
+                putMVar finish_request_mvar FinishRequest
+              else
+                infoM "ResearchWorker.SpawnHarServer" "Finish or reset is empty"
+
             watcher
 
         serveWork = do
-
-
-            atomically . tryTakeTMVar $ finish_request_chan
-
             infoM "ResearchWorker.SpawnHarServer" "Waiting for next assignment"
-            resolve_center <- atomically $ takeTMVar resolve_center_chan
+            resolve_center <- atomically $ do
+                rc' <- takeTMVar resolve_center_chan
+                resetAfterNewResolveCenter hscp
+                return rc'
 
             infoM "ResearchWorker.SpawnHarServer" $ printf ".. START for resolve center %s" (show $ resolve_center ^. rcName)
 
@@ -848,12 +891,14 @@ spawnHarServer mimic_dir resolve_center_chan center_deployed_chan  finish_reques
 
             let
                 http2worker = coherentToAwareWorker $ harCoherentWorker resolve_center
-            atomically $ putTMVar center_deployed_chan ()
+            atomically $ do
+                putTMVar center_deployed_chan ()
+                swapTMVar currently_working_tmvar True
             tlsServeWithALPNAndFinishOnRequest  cert_filename priv_key_filename iface [
                  ("h2-14", http2Attendant sessions_context http2worker)
                 ] port finish_request_mvar
-
-
+            atomically $ do
+                swapTMVar currently_working_tmvar False
 
             --
             infoM "ResearchWorker.SpawnHarServer" $ printf ".. FINISH for resolve center %s" (show $ resolve_center ^. rcName)
@@ -1083,9 +1128,7 @@ removeIfExists fileName = removeFile fileName `catch` handleExists
 resetState :: ServiceState -> IO ()
 resetState state =
   do
-    atomically $ do
-        tryPutTMVar (state ^. finishRequestChan) FinishRequest
-        tryPutTMVar (state ^. centerDeployedChan) ()
+    atomically $ putTMVar  (state  ^. (harServerControlPad . reset_CP) )  ()
     threadDelay 100000
     atomically $ do
         tryTakeTMVar $ state ^. urlState
@@ -1093,24 +1136,11 @@ resetState state =
         tryTakeTMVar $ state ^. nextTestUrlToCheck
         tryTakeTMVar $ state ^. nextHarvestUrl
         tryTakeTMVar $ state ^. nextDNSMasqFile
-        tryTakeTMVar $ state ^. resolveCenterChan
-        tryTakeTMVar $ state ^. finishRequestChan
-        tryTakeTMVar $ state ^. centerDeployedChan
     return ()
-
 
 
 waitAndResetState :: ServiceState -> IO ()
 waitAndResetState state = do
-    -- Trigger stopping the mirror service, if needs come
-    atomically $ tryPutTMVar (state ^. finishRequestChan) FinishRequest
-    -- Not need to trigger kill-browsers, the resetter kills them
-    -- automatically after a time.
-
-    -- If the mimic server was not running before, the state of the
-    -- finishRequestChan will be reset anyway....
-
-    -- and then reset the state
     resetState state
 
 
