@@ -149,46 +149,49 @@ class BrowserKillWatch(object):
         self.run()
 
     def on_browser_should_finish(self):
-        undaemon_instance, hashid = self._undaemon_instance, self._hashid
-        args_get = [
-            "curl", 
-            "-s",  # Silent mode
-            "-w", "status=%{http_code}",
-            "-m", str(KILL_BROWSER_AFTER), # Establish a timeout
-            "--data-binary", END_TOKEN.encode('ascii'),
-             # I don't think any data needs to be submitted
-             "-X", "POST", "--http2", NOTIFY_UPDATE_COMPLETE_ENDPOINT+station_name
-             ]
-        enter_time = time.time()
-        while True:
-            if self._browser_already_killed.is_set():
-                # Well, well met
-                break
-            try:
-                logger.debug("Executing: %s", " ".join(args_get))
-                process_output = sp.check_output(args_get)
-            except sp.CalledProcessError as e:
-                logger.debug(" .... Err in curl, returncode: %d ", e.returncode)
-                # Sleep a little bit
-                time.sleep(3.0)
-            else:
-                status_code, returned_hash_id = token_and_status_from_curl_output(process_output)
-                logger.info("For killing, just obtained status_code %s and hash  %s", status_code, returned_hash_id)
-                # Got a token?
-                if status_code=="200":
-                    if returned_hash_id == hashid :
-                        self.log_and_kill_the_browser()
-                        break
-                    else:
-                        # logger.warning("Expected hashid=%s and received hashid was %s, will keep waiting",
-                        #              hashid, returned_hash_id )
-                        # Assume nobody is waiting.
-                        self.log_and_kill_the_browser()
-                        break
-                else:
-                    logger.error("When-to-kill returned NOOK status code: %s", status_code )
+        try:
+            undaemon_instance, hashid = self._undaemon_instance, self._hashid
+            args_get = [
+                "curl",
+                "-s",  # Silent mode
+                "-w", "status=%{http_code}",
+                "-m", str(KILL_BROWSER_AFTER), # Establish a timeout
+                "--data-binary", END_TOKEN.encode('ascii'),
+                 # I don't think any data needs to be submitted
+                 "-X", "POST", "--http2", NOTIFY_UPDATE_COMPLETE_ENDPOINT+station_name
+                 ]
+            enter_time = time.time()
+            while True:
+                if self._browser_already_killed.is_set():
+                    # Well, well met
+                    break
+                try:
+                    logger.debug("Executing: %s", " ".join(args_get))
+                    process_output = sp.check_output(args_get)
+                except sp.CalledProcessError as e:
+                    logger.debug(" .... Err in curl, returncode: %d ", e.returncode)
+                    # Sleep a little bit
                     time.sleep(3.0)
-                    
+                else:
+                    status_code, returned_hash_id = token_and_status_from_curl_output(process_output)
+                    logger.info("For killing, just obtained status_code %s and hash  %s", status_code, returned_hash_id)
+                    # Got a token?
+                    if status_code=="200":
+                        if returned_hash_id == hashid :
+                            self.log_and_kill_the_browser()
+                            break
+                        else:
+                            # logger.warning("Expected hashid=%s and received hashid was %s, will keep waiting",
+                            #              hashid, returned_hash_id )
+                            # Assume nobody is waiting.
+                            self.log_and_kill_the_browser()
+                            break
+                    else:
+                        logger.error("When-to-kill returned NOOK status code: %s", status_code )
+                        time.sleep(3.0)
+        except Exception as e:
+            logger.error("Exception in on_browser_should_finish: %s", repr(e))
+
     def timed_kill(self):
         if not self._browser_already_killed.is_set():
             logger.info("Attemping timed kill of the browser")
@@ -222,7 +225,11 @@ def work():
         # Sleep a little bit
         time.sleep(3.0)
     else:
-        status_code, hashid = token_and_status_from_curl_output(process_output)
+        try:
+            status_code, hashid = token_and_status_from_curl_output(process_output)
+        except (AttributeError,ValueError,re.error):
+            status_code = "501"
+            hashid = "error-calling-curl"
         logger.info("Start browser, status_code=%s, hashid=%s", status_code, hashid)
         if "200" in status_code:
             chrome_process = chrome_run()
