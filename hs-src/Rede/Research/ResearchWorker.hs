@@ -127,7 +127,7 @@ data ReadinessPing = ReadinessPing
 
 -- Time to wait before unleashing an alarm for a failed step
 timeForAlarm :: Int
-timeForAlarm = 20000000
+timeForAlarm = 25000000
 
 
 -- Time to wait before unleashing an alarm for a failed sequence
@@ -380,6 +380,7 @@ handleFrontEndRequests (input_headers, maybe_source) =  do
                   then liftIO $ do
                     infoM "ResearchWorker" "After /setnexturl/ queueing"
                     markReportedAnalysisStage hashid Queued_RAS base_research_dir
+                    infoM "ResearchWorker" "After initial mark"
                     return $ simpleResponse 200 (unHashId hashid)
                   else
                     return $ simpleResponse 505 "QueueFull"

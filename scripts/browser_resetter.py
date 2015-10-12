@@ -31,9 +31,9 @@ START_TOKEN                     = "KDDFQ"
 END_TOKEN                       = "EAJ"
 CHROME_CGROUP                   = "/sys/fs/cgroup/chrome"
 # Time in seconds to wait
-#KILL_BROWSER_AFTER              = 40
+KILL_BROWSER_AFTER              = 40
 # Debug time
-KILL_BROWSER_AFTER              = 60
+#KILL_BROWSER_AFTER              = 60
 TIMES_TO_CHECK_FOR_CHROME       = 50
 
 
@@ -102,7 +102,10 @@ def main():
     os.environ["LD_LIBRARY_PATH"] = LD_LIBRARY_PATH
     set_signal_handlers()
     while True:
-        work()
+        try:
+            work()
+        except Exception as e:
+            logger.error("Got exception: %s", str(e))
         
         
 current_kill_watch = None
@@ -155,6 +158,7 @@ class BrowserKillWatch(object):
                 "curl",
                 "-s",  # Silent mode
                 "-w", "status=%{http_code}",
+                "--max-time", "1",
                 "-m", str(KILL_BROWSER_AFTER), # Establish a timeout
                 "--data-binary", END_TOKEN.encode('ascii'),
                  # I don't think any data needs to be submitted
@@ -168,28 +172,21 @@ class BrowserKillWatch(object):
                 try:
                     logger.debug("Executing: %s", " ".join(args_get))
                     process_output = sp.check_output(args_get)
-                except sp.CalledProcessError as e:
-                    logger.debug(" .... Err in curl, returncode: %d ", e.returncode)
+                except Exception as e:
+                    logger.debug(" .... Err invoking curl,  %d ", repr(e))
                     # Sleep a little bit
-                    time.sleep(3.0)
+                    time.sleep(1.0)
                 else:
                     status_code, returned_hash_id = token_and_status_from_curl_output(process_output)
                     logger.info("For killing, just obtained status_code %s and hash  %s", status_code, returned_hash_id)
                     # Got a token?
                     if status_code=="200":
-                        if returned_hash_id == hashid :
-                            self.log_and_kill_the_browser()
-                            break
-                        else:
-                            # logger.warning("Expected hashid=%s and received hashid was %s, will keep waiting",
-                            #              hashid, returned_hash_id )
-                            # Assume nobody is waiting.
-                            self.log_and_kill_the_browser()
-                            break
+                        self.log_and_kill_the_browser()
                     else:
                         logger.error("When-to-kill returned NOOK status code: %s", status_code )
-                        time.sleep(3.0)
+                        time.sleep(1.0)
         except Exception as e:
+            self.log_and_kill_the_browser()
             logger.error("Exception in on_browser_should_finish: %s", repr(e))
 
     def timed_kill(self):
@@ -213,6 +210,7 @@ def work():
         "curl", 
         "-s",  # Silent mode
         "-w", "status=%{http_code}",
+        "--max-time", "1",
         "--data-binary", START_TOKEN.encode('ascii'),
          # I don't think any data needs to be submitted
          "-X", "POST", "--http2", DEFAULT_POLL_ENDPOINT+station_name
@@ -232,7 +230,11 @@ def work():
             hashid = "error-calling-curl"
         logger.info("Start browser, status_code=%s, hashid=%s", status_code, hashid)
         if "200" in status_code:
-            chrome_process = chrome_run()
+            try:
+                chrome_process = chrome_run()
+            except Exception as e:
+                logger.error("Chrome run: %s", str(e))
+                return
             args_ready = curl_arguments(NOTIFY_READY+station_name, data_binary=START_TOKEN)
             # The daemon needs to know when the browser is ready to deliver the url, otherwise
             # the url can be delivered too early ..... 
@@ -245,9 +247,11 @@ def work():
 
             # And now just wait for the watcher before doing anything...
             watch.join()
+
+            # And then, exit and re-spawn (not that this may solve the problem)
         else:
             logger.debug("Invalid status code in HTTP response: %s", status_code )
-            time.sleep(3.0)
+            time.sleep(1.0)
 
 
 def token_and_status_from_curl_output(process_output):
@@ -289,7 +293,7 @@ def restore_chrome_profile():
 def chrome_run():
     restore_chrome_profile()
     chrome_process = Undaemon(
-        shlex.split("google-chrome --disable-gpu"),
+        shlex.split("google-chrome --disable-gpu --disable-async-dns --dns-prefetch-disable --disable-web-security --disable-seccomp-filter-sandbox --disable-preconnect --disable-offline-auto-reload "),
         user=1000,
         undaemon_cgroup_path = CHROME_CGROUP
         )
@@ -328,7 +332,7 @@ def chrome_run():
 
     # Get chrome as full-screen, so to make taking screenshots easier.
     tool("xdotool key --window {0} \"F11\"".format(winid))
-    logger.info("Waiting for Chrome process to exit")
+    logger.info("Starting wait for Chrome process to exit")
 
     return chrome_process
 

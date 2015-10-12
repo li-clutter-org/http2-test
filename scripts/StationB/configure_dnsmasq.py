@@ -38,7 +38,7 @@ MY_VERSION = "2015-04-01--12:32:00"
 
 def curl_arguments(endpoint, data_binary=""):
     return [
-        "curl", "-sS", "-k", "--data-binary", '{0}'.format(data_binary.encode('ascii')), # I don't think any data needs to be submitted
+        "curl", "--max-time", "1", "-sS", "-k", "--data-binary", '{0}'.format(data_binary.encode('ascii')), # I don't think any data needs to be submitted
         "-X", "POST", "--http2", endpoint
     ]
 
@@ -48,18 +48,22 @@ def main():
     os.environ["PATH"] = os.path.join(AUX_SSL_PATH, "bin/") + ":" + os.environ["PATH"]
     os.environ["LD_LIBRARY_PATH"] = LD_LIBRARY_PATH
     while True:
-        work()
+        try:
+            work()
+        except Exception as e:
+            print("Got exception: ", e)
+            # Trigger a re-spawn
+            exit(1)
 
 
 def work():
     args_get = curl_arguments(DEFAULT_POLL_ENDPOINT, data_binary=MY_VERSION)
     try:
-        print("Executing: ", " ".join(args_get))
         config_file = sp.check_output(args_get)
     except sp.CalledProcessError as e:
         print(" .... Err in curl, returncode: ", e.returncode, file=sys.stderr)
         # Sleep a little bit
-        time.sleep(3.0)
+        time.sleep(1.0)
     else:
         # Got a config_file?
         if len(config_file) > 5:
@@ -81,7 +85,7 @@ def work():
                 # And issue a new call to the Haskell server to let it know
                 # that the new dnsmasq setting has taken effect
                 try:
-                    print("Executing: ", " ".join(args_update_completed))
+                    # print("Executing: ", " ".join(args_update_completed))
                     output = sp.check_output(args_update_completed, stderr = sp.STDOUT)
                 except sp.CalledProcessError as e:
                     print(".... Err in curl, returncode: ", e.returncode, file = sys.stderr)
@@ -89,7 +93,7 @@ def work():
         else:
             print("FILE IS EMPTY: ", config_file)
             print(os.environ["PATH"])
-            time.sleep(3.0)
+            time.sleep(1.0)
 
 
 
