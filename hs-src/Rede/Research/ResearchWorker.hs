@@ -36,7 +36,7 @@ import           Data.Foldable                   (foldMap)
 import           Data.Monoid                     (mappend)
 import qualified Data.Monoid                     as M
 import qualified Data.Aeson                      as Da(decode, encode)
-import           Data.Maybe                      (isJust)
+import           Data.Maybe                      (isJust, isNothing)
 
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Reader      (ReaderT (..), runReaderT)
@@ -110,6 +110,10 @@ data CurrentAnalysisStage =
     |WaitingForTestStationToQueryNextUrl_CAS
     |WaitingForTestStationToDeliverHAR_CAS
     |WaitingForKillingStationB_CAS
+
+    -- Non-linears
+    |KillA_CAS
+    |KillB_CAS
     deriving (Eq, Show, Bounded, Enum, Ord)
 
 
@@ -271,6 +275,7 @@ monitorState = do
     url_state_tmvar <- L.view urlState
     run_monitor url_state_tmvar Nothing
   where
+    run_monitor :: TMVar UrlState -> Maybe UrlState -> ServiceStateMonad ()
     run_monitor url_state_tmvar maybe_old_state = do
         research_dir <- L.view researchDir
         state <- ask
@@ -284,15 +289,44 @@ monitorState = do
                                          | otherwise -> False
                         _                            -> False
             return (cfc, url_state_maybe)
-        liftIO $ if cause_for_concern then do
-            errorM "ResearchWorker" $ "Stuck at " ++ (show maybe_old_state)
-            -- And while we are at that, reset the thing
-            waitAndResetState state
+        if cause_for_concern then do
             let
-                Just url_state = url_state_maybe
-                hashid = url_state ^. urlHashId
+                Just old_state = maybe_old_state
+                old_stage = old_state ^. currentAnalysisStage
+            liftIO . errorM "ResearchWorker" $ "Stuck at " ++ (show old_state)
+            case old_stage of
+                WaitingForHarvestStationToQueryNextUrl_CAS   -> let
+                      ?url_state = old_state
+                    in do
+                      -- It usually fails here, for unknown reasons :-(
+                      -- let's just retry
+                      markAnalysisStageAndMoveTo KillA_CAS
 
-            markReportedAnalysisStage hashid  Failed_RAS  research_dir
+                WaitingForTestStationToQueryNextUrl_CAS   -> let
+                      ?url_state = old_state
+                    in do
+                      -- It usually fails here, for unknown reasons :-(
+                      -- let's just retry
+                      markAnalysisStageAndMoveTo KillB_CAS
+
+                WaitingForBrowserReadyStationA_CAS -> let
+                      ?url_state = old_state
+                    in do
+                      markAnalysisStageAndMoveTo WaitingForActivateStationA_CAS
+
+                WaitingForBrowserReadyStationB_CAS -> let
+                      ?url_state = old_state
+                    in do
+                      markAnalysisStageAndMoveTo WaitingForActivateStationB_CAS
+
+                otherwise -> do
+                    -- And while we are at that, reset the thing
+                    liftIO $ waitAndResetState state
+                    let
+                        Just url_state = url_state_maybe
+                        hashid = url_state ^. urlHashId
+
+                    liftIO $ markReportedAnalysisStage hashid  Failed_RAS  research_dir
           else
             return ()
         liftIO . threadDelay $ timeForAlarm
@@ -309,10 +343,11 @@ researchWorkerComp forward@(input_headers, maybe_source) = do
 
     --liftIO . infoM "ResearchWorker" $ "A request was received: " ++ show input_headers
 
-    if req_url /= "/setnexturl/" && req_url /= "/startbrowser/StationA" then
-            handleWithUrlStateCases forward
-        else
+    if req_url == "/setnexturl/" || (req_url == "/startbrowser/StationA" && isNothing url_state_maybe) then
             handleFrontEndRequests forward
+        else
+            handleWithUrlStateCases forward
+            
 
 
 handleFrontEndRequests :: (Headers, Maybe InputDataStream) -> ServiceStateMonad TupledPrincipalStream
@@ -440,16 +475,40 @@ handleWithUrlStateCases  (input_headers, maybe_source) = do
                 -- Most requests are served by POST to emphasize that a request changes
                 -- the state of this program...
                 Post_RM
+                    | req_url == "/startbrowser/StationA" && (correctStage WaitingForActivateStationA_CAS) -> do
+                        -- This route is only triggered "with state", that is, here, after a KillA state, but then it
+                        -- needs to be handled.
+                        handle_startbrowser_afterkillA_H
+
+                    | req_url == "/startbrowser/StationA" && (correctStage KillA_CAS) -> do
+                        -- This route is only triggered "with state", that is, here, after a KillA state, but then it
+                        -- needs to be handled.
+                        handle_startbrowser_afterkillA_H
+
                     | req_url == "/browserready/StationA" && (correctStage WaitingForBrowserReadyStationA_CAS) -> do
                         handle_browserready_Station_H
 
+                    -- Handle the case where a vnc reset sits in the middle
+                    | req_url == "/browserready/StationA" && (correctStage KillA_CAS) -> do
+                        handle_browserready_AfterKillA_H
+
                     | req_url == "/nexturl/"  && (correctStage WaitingForHarvestStationToQueryNextUrl_CAS)  ->
                         handle_nexturl_H
+
+                    -- | req_url == "/nexturl/"   -> do
+                    --     liftIO . infoM "ResearchWorker" $ "Rejected /nexturl/ :-( "
+                    --     reject_request_specific
 
                     | req_url == "/har/" && (correctStage WaitingForHarvestStationToDeliverHAR_CAS),  Just source <- maybe_source -> do
                         -- Receives a .har object from the harvest station ("StationA"), and
                         -- makes all the arrangements for it to be tested using HTTP 2
                         handle_harvesterhar_H source
+
+                    | req_url == "/killbrowser/StationA" && (correctStage WaitingForKillingStationA_CAS) -> do
+                        unQueueKillBrowser "/killbrowser/StationA"
+
+                    | req_url == "/killbrowser/StationA" && (correctStage KillA_CAS) -> do
+                        handle_killbrowser_onkillA_H
 
                     | req_url == "/killbrowser/StationA" && (correctStage WaitingForKillingStationA_CAS) -> do
                         unQueueKillBrowser "/killbrowser/StationA"
@@ -463,6 +522,9 @@ handleWithUrlStateCases  (input_headers, maybe_source) = do
                     | req_url == "/startbrowser/StationB" && (correctStage WaitingForActivateStationB_CAS) -> do
                         unQueueStartBrowserB "/startbrowser/StationB"
 
+                    | req_url == "/startbrowser/StationB" && (correctStage KillB_CAS) -> do
+                        handle_startbrowserb_onkillb 
+
                     | req_url == "/browserready/StationB" && (correctStage WaitingForBrowserReadyStationB_CAS) -> do
                         handle_browserready_Station_H
 
@@ -470,6 +532,10 @@ handleWithUrlStateCases  (input_headers, maybe_source) = do
                         -- Sends the next test url to the Chrome extension, this starts processing by
                         -- StationB... the request is started by StationB and we send the url in the response...
                         handle_testurl_H
+
+                    -- | req_url == "/testurl/"   -> do
+                    --     liftIO . infoM "ResearchWorker" $ "Rejected /testurl/ :-( "
+                    --     reject_request_specific
 
                     | req_url == "/http2har/" && (correctStage WaitingForTestStationToDeliverHAR_CAS), Just source <- maybe_source -> do
                         -- Receives a .har object from the harvest station ("StationA"), and
@@ -480,6 +546,9 @@ handleWithUrlStateCases  (input_headers, maybe_source) = do
                         response <- unQueueKillBrowser "/killbrowser/StationB"
                         finishCycle
                         return response
+
+                    | req_url == "/killbrowser/StationB" && (correctStage KillB_CAS) -> do
+                        unQueueKillBrowserJ WaitingForActivateStationB_CAS  "/killbrowser/StationB"
 
                     | otherwise     ->
                         reject_request_specific
@@ -511,6 +580,18 @@ handle_nexturl_H = do
 handle_browserready_Station_H :: ServiceHandler
 handle_browserready_Station_H = do
     markAnalysisStageAndAdvance
+    return $ simpleResponse 200 "Ok"
+
+
+handle_browserready_AfterKillA_H :: ServiceHandler
+handle_browserready_AfterKillA_H = do
+    markAnalysisStageAndMoveTo WaitingForHarvestStationToQueryNextUrl_CAS
+    return $ simpleResponse 200 "Ok"
+
+
+handle_killbrowser_onkillA_H :: ServiceHandler
+handle_killbrowser_onkillA_H = do
+    markAnalysisStageAndMoveTo WaitingForActivateStationA_CAS
     return $ simpleResponse 200 "Ok"
 
 
@@ -746,6 +827,12 @@ unQueueStartBrowserA log_url = do
             reject_request
 
 
+handle_startbrowser_afterkillA_H :: ServiceHandler
+handle_startbrowser_afterkillA_H = do
+    markAnalysisStageAndMoveTo WaitingForBrowserReadyStationA_CAS
+    return $ simpleResponse 200 "Ok"
+
+
 unQueueStartBrowserB :: B.ByteString -> ServiceStateMonad TupledPrincipalStream
 unQueueStartBrowserB log_url = do
 
@@ -781,6 +868,10 @@ unQueueStartBrowserB log_url = do
             reject_request
 
 
+handle_startbrowserb_onkillb :: ServiceHandler
+handle_startbrowserb_onkillb = unQueueStartBrowserB "broserBAfterKillB"
+
+
 unQueueKillBrowser :: B.ByteString -> ServiceHandler
 unQueueKillBrowser log_url = do
     let
@@ -791,6 +882,20 @@ unQueueKillBrowser log_url = do
         return hashid
 
     markAnalysisStageAndAdvance
+
+    return $ simpleResponse 200 $ B.append "hashid=" (unHashId hashid)
+
+
+unQueueKillBrowserJ :: CurrentAnalysisStage -> B.ByteString -> ServiceHandler
+unQueueKillBrowserJ next_stage log_url = do
+    let
+      hashid = ?url_state ^. urlHashId
+    liftIO $ do
+        -- Let's wait a second before killing the process....
+        infoM "ResearchWorker" $ unpack $ B.append log_url " cleared for killing"
+        return hashid
+
+    markAnalysisStageAndMoveTo next_stage
 
     return $ simpleResponse 200 $ B.append "hashid=" (unHashId hashid)
 
@@ -1087,6 +1192,27 @@ markAnalysisStageAndAdvance  = do
             Nothing ->
                 markReportedAnalysisStage hashid Done_RAS research_dir
 
+
+markAnalysisStageAndMoveTo :: (?url_state::UrlState) => CurrentAnalysisStage  -> ServiceStateMonad ()
+markAnalysisStageAndMoveTo next_stage  = do
+    let
+        analysis_stage = ?url_state ^. currentAnalysisStage
+        hashid = ?url_state ^. urlHashId
+
+    research_dir  <- L.view researchDir
+    url_state_tmvar <- L.view urlState
+
+    liftIO $ do
+        atomically $ do
+            url_state <- takeTMVar url_state_tmvar
+            let
+                new_url_state = L.set currentAnalysisStage next_stage url_state
+            putTMVar url_state_tmvar new_url_state
+
+        markReportedAnalysisStage hashid (Processing_RAS next_stage)  research_dir
+        infoM "ResearchWorker" $ "Jumped to " ++ (show analysis_stage) ++ " to " ++ (show next_stage)
+
+
 eraseStatusFiles :: HashId -> FilePath -> IO ()
 eraseStatusFiles url_hash research_dir = do
     let
@@ -1168,8 +1294,8 @@ waitRequestBody source =
 
 
 shiftAnalysisStage :: CurrentAnalysisStage -> Maybe CurrentAnalysisStage
-shiftAnalysisStage x | x < maxBound  = Just . toEnum . ( + 1) . fromEnum $ x
-                     | otherwise     = Nothing
+shiftAnalysisStage x | x < WaitingForKillingStationB_CAS   = Just . toEnum . ( + 1) . fromEnum $ x
+                     | otherwise                           = Nothing
 
 
 

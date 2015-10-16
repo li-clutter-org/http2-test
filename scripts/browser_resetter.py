@@ -221,7 +221,7 @@ def work():
     except sp.CalledProcessError as e:
         logger.error(" .... Err in curl, returncode: %d ", e.returncode)
         # Sleep a little bit
-        time.sleep(3.0)
+        time.sleep(1.0)
     else:
         try:
             status_code, hashid = token_and_status_from_curl_output(process_output)
@@ -250,7 +250,7 @@ def work():
 
             # And then, exit and re-spawn (not that this may solve the problem)
         else:
-            logger.debug("Invalid status code in HTTP response: %s", status_code )
+            logger.info("Invalid status code in HTTP response: %s", status_code )
             time.sleep(1.0)
 
 
